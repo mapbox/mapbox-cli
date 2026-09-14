@@ -292,6 +292,52 @@ fn an_unrecognized_subcommand_carries_claps_suggestion_into_json() {
     );
 }
 
+/// The other thing clap suggests about. A flag is the likelier typo of the
+/// two, and nothing pinned that the same path carries it.
+#[test]
+fn a_misspelled_flag_also_carries_the_suggestion() {
+    let out = run(&["styles", "list", "--usernam", "someone"]);
+
+    let error = &json(&stderr(&out));
+    assert!(
+        error["fix"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--username"),
+        "the fix should name the flag clap suggested: {error}"
+    );
+}
+
+/// Absent rather than empty, the rule every other optional key in this error
+/// follows: clap had no suggestion, and a `fix` saying nothing would invite a
+/// consumer to wonder whether one was computed and came out blank.
+#[test]
+fn a_usage_error_with_no_suggestion_has_no_fix() {
+    let out = run(&["styles", "list", "--zzz"]);
+
+    let error = &json(&stderr(&out));
+    assert_eq!(error["code"], "usage");
+    assert!(
+        error.get("fix").is_none(),
+        "no suggestion means no fix key: {error}"
+    );
+}
+
+/// And the `text` path is untouched — clap still prints its own rendering
+/// there, tip included. Worth pinning both ways round: the point of carrying
+/// the tip into `json` was that `text` already had it, so a change that
+/// silently moved it out of `text` would undo the reasoning.
+#[test]
+fn text_mode_still_prints_claps_own_tip() {
+    let out = run(&["styles", "lst", "-o", "text"]);
+
+    let text = stderr(&out);
+    assert!(
+        text.contains("tip:") && text.contains("'list'"),
+        "text mode should still carry clap's tip: {text:?}"
+    );
+}
+
 /// `-o` written on a line clap rejects still has to be honoured — that is
 /// the case `requested_in_argv` exists for.
 #[test]

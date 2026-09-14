@@ -51,6 +51,14 @@ the Mapbox APIs' own response bodies are not.
   `unsupported scheme socks5` in the message is the part that distinguishes
   it from the network being down.
 
+- `rand` moved from 0.8 to 0.10. No behaviour changes: the two places it is
+  used — the PKCE verifier and the OAuth `state` in `mapbox auth login` —
+  draw from `ThreadRng` before and after, which `rand` declares a CSPRNG, and
+  `thread_rng().gen()` becoming `random()` is a rename. Recorded because it
+  is the crate that generates those two values, so a login problem around
+  this release should be able to find it. Both are now covered by tests
+  against RFC 7636, which they were not before.
+
 ## 0.1.8 - 2026-09-14
 
 Initial beta release. The next release is `0.2.0`.

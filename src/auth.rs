@@ -1032,12 +1032,16 @@ fn verify_token(token: &str, debug: bool, timeout: Option<Duration>) -> Result<V
         .map_err(|e| crate::executor::transport_failure("Token check failed", e))?;
 
     let status = response.status();
+    // Before `text()` consumes the response — see `executor::request_id`.
+    let request_id = crate::executor::request_id(response.headers());
     let body = response
         .text()
         .map_err(|e| crate::executor::transport_failure("Failed to read the token check", e))?;
 
     if !status.is_success() {
-        return Err(CliError::http(status.as_u16(), &body).into());
+        return Err(CliError::http(status.as_u16(), &body)
+            .with_request_id(request_id)
+            .into());
     }
 
     serde_json::from_str(&body).context("Invalid JSON from the token check endpoint")

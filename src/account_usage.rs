@@ -614,12 +614,16 @@ fn fetch(
         .map_err(|e| executor::transport_failure("Request failed", e))?;
 
     let status = response.status();
+    // Before `text()` consumes the response: a 5xx here is worth escalating,
+    // and this is the only thing that lets support find the request.
+    let request_id = executor::request_id(response.headers());
     let text = response
         .text()
         .map_err(|e| executor::transport_failure("Failed to read response", e))?;
 
     if !status.is_success() {
         return Err(CliError::http(status.as_u16(), &text)
+            .with_request_id(request_id)
             .with_remedy(remedy_for(status.as_u16()))
             .into());
     }

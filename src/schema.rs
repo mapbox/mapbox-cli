@@ -258,7 +258,15 @@ fn relaxed(cmd: Command) -> Command {
 pub fn emit(mode: Mode, app: &Command, specs: &[ServiceSpec], matches: &ArgMatches) -> Result<()> {
     let path = target_path(matches);
     let schema = build(app, specs, &path);
-    output::emit_value(json_mode(mode), &serde_json::to_value(schema)?, None, None)
+    output::emit_value(
+        json_mode(mode),
+        &serde_json::to_value(schema)?,
+        None,
+        None,
+        // `--schema` describes the binary, not an API response; there is no
+        // page after it.
+        None,
+    )
 }
 
 /// `--schema` answers in JSON whatever `--output` says, because there is no

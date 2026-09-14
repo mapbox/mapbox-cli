@@ -5,9 +5,10 @@ use clap::ArgMatches;
 
 use crate::confirm;
 use crate::http;
+use crate::link;
 use crate::output::{self, CliError, Mode};
 use crate::remedy::{self, Remedy};
-use crate::spec::{Operation, RequestBody, ACCOUNT_PLACEHOLDERS, MULTIPART};
+use crate::spec::{Operation, Parameter, RequestBody, ACCOUNT_PLACEHOLDERS, MULTIPART};
 
 /// The query parameter the access token travels in, and what stands in for it
 /// anywhere the URL is shown. Named once because getting this wrong leaks a
@@ -247,13 +248,12 @@ fn dispatch(
         .send()
         .map_err(|e| transport_failure("Request failed", e))?;
     let status = response.status();
-    // Read the header before `bytes()` consumes the response.
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default()
-        .to_string();
+    // Read the headers before `bytes()` consumes the response — whatever is
+    // not taken here is gone by the next line. `Content-Type` was for a long
+    // time the only one that survived this point, which is what made
+    // pagination and support escalation unreachable; see [`ResponseHeaders`].
+    let headers = ResponseHeaders::read(response.headers());
+    let content_type = headers.content_type.clone();
     let body = response
         .bytes()
         .map_err(|e| transport_failure("Failed to read response", e))?;
@@ -279,6 +279,7 @@ fn dispatch(
             .as_deref()
             .expect("a failure always takes the text path");
         return Err(CliError::http(status.as_u16(), text)
+            .with_request_id(headers.request_id)
             .with_remedy(remedy::for_http(status.as_u16(), op, matches, username))
             .into());
     }
@@ -303,18 +304,33 @@ fn dispatch(
         );
     }
 
+    // `Some` only when the response is one page of several, which is the
+    // listings and nothing else.
+    let next_page = headers
+        .next_page
+        .as_deref()
+        .map(|next| NextPage::of(&op.query_params, next));
+
     match as_text {
         Some(text) => match serde_json::from_str::<serde_json::Value>(&text) {
             Ok(json) => match matches.get_one::<String>(output::FILTER_ARG) {
                 Some(wanted) => output::emit_value(
                     mode,
-                    &output::pick_row(&json, wanted)?,
+                    &output::pick_row(&json, wanted)
+                        .map_err(|err| with_page_context(err, next_page.as_ref()))?,
                     None,
                     Some(&op.service),
+                    // The row asked for is in hand; where the *other* rows
+                    // are is not advice about it.
+                    None,
                 )?,
-                None => {
-                    output::emit_value(mode, &json, detail_hint(op).as_deref(), Some(&op.service))?
-                }
+                None => output::emit_value(
+                    mode,
+                    &json,
+                    detail_hint(op).as_deref(),
+                    Some(&op.service),
+                    next_page.as_ref().map(NextPage::tip).as_deref(),
+                )?,
             },
             Err(_) => output::emit_text_body(mode, &text)?,
         },
@@ -326,6 +342,201 @@ fn dispatch(
     }
 
     Ok(())
+}
+
+/// The headers a Mapbox response may identify itself with, in the order they
+/// are preferred.
+///
+/// Measured rather than assumed, and the measurement is the reason there are
+/// two. `x-request-id` is the name the convention would predict and is what
+/// this looked for first — but no Mapbox endpoint reachable from here sends
+/// it: styles, tokens, fonts and geocoding v6 all answer without one, on both
+/// success and failure. What every one of them does carry is `x-amz-cf-id`,
+/// the CloudFront request id, because the whole API is fronted by it — and
+/// that is the id support traces a request with.
+///
+/// `x-request-id` stays first because a service that does send one means it
+/// more specifically than the CDN in front of it does, and it costs a lookup
+/// in a map that is already in memory.
+const REQUEST_ID_HEADERS: [&str; 2] = ["x-request-id", "x-amz-cf-id"];
+
+/// The request id from a response, for a caller that reads the body itself.
+///
+/// `text()` and `bytes()` both consume the response, so this has to be called
+/// before the body is read — which is the whole reason it is a named function
+/// rather than a line inlined at each of the three call sites.
+///
+/// Mapbox-bound requests only. `agent_skills` talks to GitHub codeload, which
+/// identifies requests with `x-github-request-id` and is not something Mapbox
+/// support can look up, so it deliberately does not call this.
+pub fn request_id(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    REQUEST_ID_HEADERS.iter().find_map(|name| {
+        headers
+            .get(*name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(String::from)
+    })
+}
+
+/// What a response says about itself, past its body.
+///
+/// A struct rather than three reads at the call site because `bytes()`
+/// consumes the response: whatever is not taken before it is unrecoverable.
+/// Taking only `Content-Type` is what left paginated listings truncating
+/// silently and left a 500 with nothing to quote to support
+/// (mapbox/mapbox-cli-private#117).
+struct ResponseHeaders {
+    /// Decides whether the body is read as text or written as bytes.
+    content_type: String,
+    /// The request id — what support needs to find this one request in their
+    /// logs. Carried into the error and never printed on success, because on
+    /// a response that worked it is noise.
+    request_id: Option<String>,
+    /// The `rel="next"` target of a `Link` header, when this response is one
+    /// page of several.
+    next_page: Option<String>,
+}
+
+impl ResponseHeaders {
+    fn read(headers: &reqwest::header::HeaderMap) -> Self {
+        // A header present but empty says nothing, and an empty request id
+        // would print as `Request ID:` with a blank after it.
+        let text = |name: &str| {
+            headers
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        };
+
+        ResponseHeaders {
+            content_type: text(reqwest::header::CONTENT_TYPE.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            request_id: request_id(headers),
+            next_page: text(reqwest::header::LINK.as_str())
+                .and_then(link::next_url)
+                .map(String::from),
+        }
+    }
+}
+
+/// A response that is one page of several, and how to ask for the next one.
+///
+/// Holds the flags rather than the URL: following the `Link` target verbatim
+/// would mean re-sending a URL the API built, token and all, while the flags
+/// are something a caller can read, edit and run.
+struct NextPage(Option<String>);
+
+impl NextPage {
+    /// Derives the flags from the operation rather than hardcoding `--start`.
+    ///
+    /// The next URL's query is matched against the parameters this command
+    /// declares, so the tip names whatever the spec calls its paging
+    /// parameters, and a service that pages some other way needs no change
+    /// here.
+    ///
+    /// **The access token cannot appear in the result.** It rides in the
+    /// query string of every request, so the API echoes it back in this very
+    /// URL. Two things keep it out, and the second is why the first is not
+    /// enough: `dispatch` adds it directly rather than declaring it in
+    /// `op.query_params`, so matching against the declared parameters
+    /// excludes it today — but a spec is free to declare a parameter by that
+    /// name, and then "by construction" would quietly stop being true, so it
+    /// is also refused explicitly. `the_page_tip_never_names_the_access_token`
+    /// and `a_declared_parameter_named_access_token_is_still_withheld` hold
+    /// both halves.
+    fn of(declared: &[Parameter], next: &str) -> Self {
+        let flags: Vec<String> = query_pairs(next)
+            .into_iter()
+            .filter(|(name, _)| name != ACCESS_TOKEN)
+            .filter_map(|(name, value)| {
+                declared
+                    .iter()
+                    .find(|param| param.name == name)
+                    .map(|param| format!("--{} {}", param.arg_name, shell_value(&value)))
+            })
+            .collect();
+
+        NextPage((!flags.is_empty()).then(|| flags.join(" ")))
+    }
+
+    /// The line printed under a listing that has more pages.
+    fn tip(&self) -> String {
+        match &self.0 {
+            Some(flags) => format!("More results: add `{flags}` for the next page."),
+            // Reachable only if the API pages an operation whose spec
+            // declares no paging parameter — a spec gap, not a user error.
+            // Saying so beats saying nothing, because the result is
+            // incomplete either way and only this knows it.
+            None => "More results exist, but this command declares no parameter to reach them."
+                .to_string(),
+        }
+    }
+
+    /// The `fix` on a `--id` that found nothing on this page.
+    fn fix(&self) -> String {
+        match &self.0 {
+            Some(flags) => format!(
+                "This is one page of results, so the id may be on a later one. \
+                 Add `{flags}` to search the next page."
+            ),
+            None => "This is one page of results, so the id may be on a later one.".to_string(),
+        }
+    }
+}
+
+/// A URL's query, decoded.
+///
+/// Percent-decoded on purpose: the values go into a tip meant to be copied
+/// onto a command line, and the CLI re-encodes whatever it is given — so
+/// handing back `%2B` would round-trip to `%252B` and ask for the wrong page.
+/// An unparseable URL yields nothing rather than failing: a tip is not worth
+/// turning a successful request into an error.
+fn query_pairs(url: &str) -> Vec<(String, String)> {
+    match reqwest::Url::parse(url) {
+        Ok(parsed) => parsed
+            .query_pairs()
+            .map(|(name, value)| (name.into_owned(), value.into_owned()))
+            .collect(),
+        Err(_) => vec![],
+    }
+}
+
+/// A query value as it would have to be typed into a shell.
+///
+/// Paging cursors are opaque ids in practice, but the tip is advice a reader
+/// pastes, and an unquoted value with a space in it would silently become
+/// two arguments.
+fn shell_value(value: &str) -> String {
+    let safe = |c: char| c.is_ascii_alphanumeric() || "-_.~:@+,".contains(c);
+    if !value.is_empty() && value.chars().all(safe) {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Adds "there are more pages" to a `--id` that matched nothing.
+///
+/// `pick_row` searches the rows it was handed and says "No row has the id",
+/// which is true of the page and may well be false of the listing. On a
+/// paginated response that is the most misleading form of the truncation
+/// this whole path exists to stop, so the error says which it means.
+fn with_page_context(err: anyhow::Error, next_page: Option<&NextPage>) -> anyhow::Error {
+    let Some(next_page) = next_page else {
+        return err;
+    };
+    match err.downcast::<CliError>() {
+        // `not_a_list` is about the shape of the response, which another
+        // page would not change.
+        Ok(cli) if cli.code == "not_found" => cli
+            .with_remedy(Remedy::default().with_fix(&next_page.fix()))
+            .into(),
+        Ok(cli) => cli.into(),
+        Err(other) => other,
+    }
 }
 
 /// The request line a reader may safely see: URL, query, token replaced.
@@ -933,11 +1144,13 @@ fn write_binary(body: &[u8], content_type: &str) -> Result<()> {
 mod tests {
     use super::{
         describe_body, empty_success_line, file_name_of, is_binary_content_type, part_media_type,
-        payload_of, redacted_url, resolve_body_source, substitute_path_param, BodySource,
+        payload_of, query_pairs, redacted_url, request_id, resolve_body_source, shell_value,
+        substitute_path_param, with_page_context, BodySource, NextPage, ResponseHeaders,
+        ACCESS_TOKEN, REQUEST_ID_HEADERS,
     };
     use crate::http::Payload;
     use crate::output::CliError;
-    use crate::spec::RequestBody;
+    use crate::spec::{Parameter, RequestBody};
 
     /// The `CliError` inside a refusal, so a test can name the code the
     /// caller would see rather than match on prose.
@@ -1393,5 +1606,250 @@ mod tests {
         assert_eq!(payload_of(Some(&BodySource::Empty)), Payload::Bounded);
         assert_eq!(payload_of(Some(&BodySource::Json("{}"))), Payload::Bounded);
         assert_eq!(payload_of(Some(&text)), Payload::Bounded);
+    }
+
+    /// A declared query parameter, with only the fields these tests read set
+    /// to anything meaningful.
+    fn param(name: &str) -> Parameter {
+        Parameter {
+            name: name.to_string(),
+            arg_name: name.to_string(),
+            required: false,
+            description: None,
+            enum_values: vec![],
+            is_boolean: false,
+            numeric: None,
+        }
+    }
+
+    #[test]
+    fn the_page_tip_names_the_flags_the_spec_declares() {
+        let declared = [param("start"), param("limit")];
+        let next = "https://api.mapbox.com/styles/v1/u?start=cjk2&limit=10";
+
+        let tip = NextPage::of(&declared, next).tip();
+        assert!(tip.contains("--start cjk2"), "{tip}");
+        assert!(tip.contains("--limit 10"), "{tip}");
+    }
+
+    /// A parameter the API sent back but this command does not declare has no
+    /// flag to name, so it is left out rather than invented.
+    #[test]
+    fn an_undeclared_query_parameter_is_not_named() {
+        let declared = [param("start")];
+        let next = "https://api.mapbox.com/a?start=7&fresh=true";
+
+        let tip = NextPage::of(&declared, next).tip();
+        assert!(tip.contains("--start 7"), "{tip}");
+        assert!(!tip.contains("fresh"), "{tip}");
+    }
+
+    /// **The security property of this whole path.**
+    ///
+    /// The access token rides in the query string, so the URL the API echoes
+    /// back in `Link` contains a live token. It is excluded by construction —
+    /// `dispatch` adds it to the query directly rather than declaring it in
+    /// `op.query_params`, and only declared parameters become flags — but
+    /// "by construction" is worth a test, because the cost of being wrong is
+    /// printing a credential to a terminal and into whatever captured it.
+    #[test]
+    fn the_page_tip_never_names_the_access_token() {
+        let secret = "pk.eyJ1IjoibWFwYm94IiwiYSI6ImNqa2xpdmV0b2tlbiJ9.aaaaaaaaaaaaaaaaaaaaaa";
+        let declared = [param("start"), param("limit")];
+        let next =
+            format!("https://api.mapbox.com/styles/v1/u?access_token={secret}&start=cjk2&limit=10");
+
+        let page = NextPage::of(&declared, &next);
+        for rendered in [page.tip(), page.fix()] {
+            assert!(!rendered.contains(secret), "leaked the token: {rendered}");
+            assert!(!rendered.contains("access_token"), "{rendered}");
+            assert!(!rendered.contains("pk.ey"), "{rendered}");
+        }
+    }
+
+    /// Even if someone later declares a parameter by that name, which is the
+    /// way the guarantee above could be undone from a spec rather than from
+    /// this file.
+    #[test]
+    fn a_declared_parameter_named_access_token_is_still_withheld() {
+        let declared = [param(ACCESS_TOKEN), param("start")];
+        let next = "https://api.mapbox.com/a?access_token=pk.secret&start=3";
+
+        let tip = NextPage::of(&declared, next).tip();
+        assert!(!tip.contains("pk.secret"), "{tip}");
+        assert!(tip.contains("--start 3"), "{tip}");
+    }
+
+    /// The values are decoded, because the CLI re-encodes whatever it is
+    /// given: handing back `%2B` would round-trip to `%252B` and fetch the
+    /// wrong page.
+    #[test]
+    fn the_page_tip_decodes_percent_escapes() {
+        let declared = [param("start")];
+        let next = "https://api.mapbox.com/a?start=a%2Bb";
+
+        let tip = NextPage::of(&declared, next).tip();
+        assert!(tip.contains("--start a+b"), "{tip}");
+    }
+
+    /// A value with a space in it would silently become two arguments if the
+    /// tip were pasted unquoted.
+    #[test]
+    fn a_value_needing_a_shell_quote_gets_one() {
+        assert_eq!(shell_value("cjk2ab"), "cjk2ab");
+        assert_eq!(shell_value("2026-09-01"), "2026-09-01");
+        assert_eq!(shell_value("a b"), "'a b'");
+        assert_eq!(shell_value(""), "''");
+        assert_eq!(shell_value("it's"), r"'it'\''s'");
+    }
+
+    /// An operation the API pages but whose spec declares no paging
+    /// parameter. The result is incomplete either way, so saying so beats
+    /// saying nothing — but it must not claim a flag that does not exist.
+    #[test]
+    fn no_declared_paging_parameter_still_says_the_result_is_partial() {
+        let tip = NextPage::of(&[param("unrelated")], "https://api.mapbox.com/a?start=3").tip();
+        assert!(tip.contains("More results exist"), "{tip}");
+        assert!(!tip.contains("--"), "{tip}");
+    }
+
+    /// An unparseable `Link` target costs nothing: the request succeeded, and
+    /// a tip is not worth turning that into a failure.
+    #[test]
+    fn an_unparseable_next_url_yields_no_flags() {
+        assert!(query_pairs("not a url").is_empty());
+        assert!(query_pairs("").is_empty());
+    }
+
+    #[test]
+    fn response_headers_read_the_three_things_that_survive() {
+        let mut map = reqwest::header::HeaderMap::new();
+        map.insert(
+            reqwest::header::CONTENT_TYPE,
+            "application/json".parse().unwrap(),
+        );
+        map.insert(REQUEST_ID_HEADERS[0], "req-abc123".parse().unwrap());
+        map.insert(
+            reqwest::header::LINK,
+            r#"<https://api.mapbox.com/a?start=3>; rel="next""#.parse().unwrap(),
+        );
+
+        let headers = ResponseHeaders::read(&map);
+        assert_eq!(headers.content_type, "application/json");
+        assert_eq!(headers.request_id.as_deref(), Some("req-abc123"));
+        assert_eq!(
+            headers.next_page.as_deref(),
+            Some("https://api.mapbox.com/a?start=3")
+        );
+    }
+
+    /// The header that actually arrives in practice.
+    ///
+    /// No Mapbox endpoint reachable from here sends `x-request-id` — styles,
+    /// tokens, fonts and geocoding v6 were all checked, on success and on a
+    /// 404. Every one of them sends `x-amz-cf-id`, because the API is fronted
+    /// by CloudFront. Looking for the conventional name alone would have made
+    /// this feature inert, which is what this test exists to stop happening
+    /// again.
+    #[test]
+    fn the_cloudfront_id_is_read_when_there_is_no_request_id() {
+        let mut map = reqwest::header::HeaderMap::new();
+        map.insert(
+            "x-amz-cf-id",
+            "E5Kat8az0mUkEYObB4Nvhm6Bi49kt50A".parse().unwrap(),
+        );
+
+        assert_eq!(
+            request_id(&map).as_deref(),
+            Some("E5Kat8az0mUkEYObB4Nvhm6Bi49kt50A")
+        );
+    }
+
+    /// A service that sends its own id means it more specifically than the
+    /// CDN in front of it does.
+    #[test]
+    fn an_explicit_request_id_outranks_the_cloudfront_one() {
+        let mut map = reqwest::header::HeaderMap::new();
+        map.insert("x-amz-cf-id", "cloudfront".parse().unwrap());
+        map.insert("x-request-id", "from-the-service".parse().unwrap());
+
+        assert_eq!(request_id(&map).as_deref(), Some("from-the-service"));
+    }
+
+    /// A response with neither claims nothing.
+    #[test]
+    fn no_identifying_header_is_none() {
+        let mut map = reqwest::header::HeaderMap::new();
+        map.insert(
+            reqwest::header::CONTENT_TYPE,
+            "application/json".parse().unwrap(),
+        );
+        assert_eq!(request_id(&map), None);
+    }
+
+    /// A header present but blank says nothing, and an empty request id would
+    /// print as `Request ID:` with nothing after it.
+    #[test]
+    fn a_blank_header_reads_as_absent() {
+        let mut map = reqwest::header::HeaderMap::new();
+        map.insert(REQUEST_ID_HEADERS[0], "   ".parse().unwrap());
+        map.insert(reqwest::header::LINK, "".parse().unwrap());
+
+        let headers = ResponseHeaders::read(&map);
+        assert_eq!(headers.content_type, "");
+        assert_eq!(headers.request_id, None);
+        assert_eq!(headers.next_page, None);
+    }
+
+    /// The last page of a listing still carries a `Link`, naming the pages
+    /// behind it. "Has a header" must not read as "has more".
+    #[test]
+    fn a_link_without_a_next_relation_is_not_another_page() {
+        let mut map = reqwest::header::HeaderMap::new();
+        map.insert(
+            reqwest::header::LINK,
+            r#"<https://api.mapbox.com/a?start=1>; rel="prev""#.parse().unwrap(),
+        );
+        assert_eq!(ResponseHeaders::read(&map).next_page, None);
+    }
+
+    /// `--id` searches the page it was handed. On a paginated response
+    /// "No row has the id" is true of the page and may be false of the
+    /// listing, which is the most misleading form of the truncation this
+    /// path exists to stop.
+    #[test]
+    fn an_id_miss_on_a_paginated_listing_says_the_row_may_be_later() {
+        let page = NextPage::of(&[param("start")], "https://api.mapbox.com/a?start=3");
+        let err = with_page_context(
+            CliError::new("not_found", "No row has the id `x`.").into(),
+            Some(&page),
+        );
+
+        let cli = err.downcast_ref::<CliError>().expect("still a CliError");
+        let fix = cli.fix.as_deref().expect("a fix was added");
+        assert!(fix.contains("one page of results"), "{fix}");
+        assert!(fix.contains("--start 3"), "{fix}");
+    }
+
+    /// `not_a_list` is about the shape of the response, which another page
+    /// would not change — so it keeps its own advice.
+    #[test]
+    fn a_shape_error_is_not_given_paging_advice() {
+        let page = NextPage::of(&[param("start")], "https://api.mapbox.com/a?start=3");
+        let err = with_page_context(
+            CliError::new("not_a_list", "`--id` only applies to a list.").into(),
+            Some(&page),
+        );
+        assert_eq!(err.downcast_ref::<CliError>().unwrap().fix, None);
+    }
+
+    /// An unpaginated response leaves every error exactly as it was.
+    #[test]
+    fn without_another_page_an_error_passes_through_untouched() {
+        let err = with_page_context(
+            CliError::new("not_found", "No row has the id `x`.").into(),
+            None,
+        );
+        assert_eq!(err.downcast_ref::<CliError>().unwrap().fix, None);
     }
 }

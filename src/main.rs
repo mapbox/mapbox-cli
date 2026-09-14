@@ -23,6 +23,7 @@ mod executor;
 mod feature_flags;
 mod generate_skills;
 mod http;
+mod link;
 mod output;
 mod remedy;
 mod schema;

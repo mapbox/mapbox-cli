@@ -10,6 +10,29 @@ breaking is [written down in CONTRIBUTING.md](CONTRIBUTING.md#compatibility) —
 command names, flags, the two output modes and the exit codes are promises;
 the Mapbox APIs' own response bodies are not.
 
+## Unreleased
+
+### Added
+
+- Paginated listings now say when there is more to fetch. A response the API
+  paged answers with one page, and the CLI prints the flags that fetch the
+  next one — "More results: add `--limit 2 --start …` for the next page" —
+  on stderr in both output modes. Before this the extra pages were
+  unreachable: the API signals them in a `Link` header, which nothing read,
+  so `-o text` and `-o json` both looked complete. `--id` on a paged listing
+  now also distinguishes "not on this page" from "does not exist", and says
+  how to look further. Following the pages is still the caller's job; there
+  is no `--all` yet.
+
+- Failures now carry the response's request id, which is what Mapbox support
+  needs to find one request in their logs. In practice that is CloudFront's
+  `x-amz-cf-id`, which every Mapbox response carries; a service sending its
+  own `x-request-id` is preferred when one does. Present on every failure
+  under `-o json` as `request_id`; printed under `-o text` for a 5xx only,
+  where the server is at fault and there is nothing the caller can do about
+  it. `mapbox agent-skills` is exempt — it fetches from GitHub, whose request
+  id Mapbox support cannot look up.
+
 ## 0.1.8 - 2026-09-14
 
 Initial beta release. The next release is `0.2.0`.

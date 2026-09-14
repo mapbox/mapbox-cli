@@ -531,9 +531,9 @@ new_case_env() { # case-name
     PATH="${CASE_SHIMS}:${SAFE_PATH}"
     unset MAPBOX_CLI_VERSION MAPBOX_CLI_AUTH MAPBOX_INSTALL_TILESETS MAPBOX_TILESETS_CLI
     unset MAPBOX_CLI_INSTALL_SOURCE
-    # A developer with this set in their own shell would otherwise turn every
-    # marker case into a failure that looks like the marker broke.
-    unset DISABLE_TELEMETRY
+    # A developer with either of these set in their own shell would otherwise
+    # turn every marker case into a failure that looks like the marker broke.
+    unset DISABLE_TELEMETRY MAPBOX_CLI_NO_TELEMETRY
     export MAPBOX_CLI_BASE_URL MAPBOX_INSTALL_DIR PATH
 }
 
@@ -657,6 +657,41 @@ run_piped || true
 expect_in_file "$CURL_LOG" "-A ${INSTALLER_UA} (${TARGET}" 'DISABLE_TELEMETRY=0 is not an opt-out'
 expect_in_file "$CURL_LOG" ' src/dockerfile' 'and the tag comes back with it'
 unset MAPBOX_TEST_CURL_LOG DISABLE_TELEMETRY MAPBOX_CLI_INSTALL_SOURCE
+
+start 'MAPBOX_CLI_NO_TELEMETRY is honoured, and outranks the old name'
+new_case_env telemetry-new-name
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_CLI_INSTALL_SOURCE=dockerfile
+shim curl-recording curl
+CURL_LOG="${CASE_DIR}/curl-args"
+export MAPBOX_TEST_CURL_LOG="$CURL_LOG"
+
+# The documented name, which the binary reads and this script did not until
+# mapbox/mapbox-cli-private#140.
+: >"$CURL_LOG"
+export MAPBOX_CLI_NO_TELEMETRY=1
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0 — the install is not what is being switched off'
+expect_in_file "$CURL_LOG" "-A ${INSTALLER_UA} " 'still names the installer'
+expect_not_in_file "$CURL_LOG" "${INSTALLER_UA} (" 'no platform rides behind it'
+expect_not_in_file "$CURL_LOG" ' src/' 'and no source tag either'
+
+# Both set, disagreeing. The new name is the documented one, so an explicit
+# `0` on it beats a `DISABLE_TELEMETRY=1` left in an image from before the
+# rename — otherwise the old variable could never be retired.
+: >"$CURL_LOG"
+export MAPBOX_CLI_NO_TELEMETRY=0
+export DISABLE_TELEMETRY=1
+run_piped || true
+expect_in_file "$CURL_LOG" "-A ${INSTALLER_UA} (${TARGET}" 'the new name wins when the two disagree'
+
+# And the other direction, so precedence is pinned rather than implied.
+: >"$CURL_LOG"
+export MAPBOX_CLI_NO_TELEMETRY=1
+export DISABLE_TELEMETRY=0
+run_piped || true
+expect_not_in_file "$CURL_LOG" "${INSTALLER_UA} (" 'and wins in the opt-out direction too'
+unset MAPBOX_TEST_CURL_LOG MAPBOX_CLI_NO_TELEMETRY DISABLE_TELEMETRY MAPBOX_CLI_INSTALL_SOURCE
 
 start 'both installers send the same marker'
 # The one thing about this marker that cannot be checked by watching a request:

@@ -86,21 +86,33 @@
     # because this value comes from the environment and ends up in a header.
     $InstallSource = $env:MAPBOX_CLI_INSTALL_SOURCE
 
-    # The switch src/http.rs honours for the CLI's own User-Agent, read here
-    # the same way, because someone who put DISABLE_TELEMETRY=1 in a Dockerfile
-    # and then runs `irm ... | iex` in the same file has already said which way
-    # they want it. The product token above survives it - the equivalent of
+    # The switch src/telemetry.rs honours for the CLI's own User-Agent, read
+    # here the same way, because someone who put it in a Dockerfile and then
+    # runs `irm ... | iex` in the same file has already said which way they
+    # want it. The product token above survives it - the equivalent of
     # `mapbox-cli/<version>` going out either way - and the triple and the
     # source tag are what it drops.
     #
+    # Two names, and only the binary dropped the old one.
+    # MAPBOX_CLI_NO_TELEMETRY is the documented switch; DISABLE_TELEMETRY is
+    # what it was called before, and this script still honours it. The rename
+    # was announced as breaking for the binary; nothing announced it for the
+    # installers, which are fetched and run in one line with no release notes
+    # in front of the reader - and breaking an opt-out is the one change that
+    # must not happen quietly. So both work here, and the new name wins when
+    # both are set. See mapbox/mapbox-cli-private#140.
+    #
     # Unset, empty or whitespace is a cleared variable. `0`, `f`, `false`, `n`,
     # `no` and `off` are clap's false spellings, the same reading this script
-    # already gives MAPBOX_NO_MODIFY_PATH, so DISABLE_TELEMETRY=0 is someone
-    # declining the opt-out rather than taking it. Anything else opts out,
-    # including a spelling nobody planned for: the safe reading of a value we
-    # do not know, on a variable by that name, is the one that sends less.
+    # already gives MAPBOX_NO_MODIFY_PATH, so a `0` is someone declining the
+    # opt-out rather than taking it. Anything else opts out, including a
+    # spelling nobody planned for: the safe reading of a value we do not know,
+    # on a variable by that name, is the one that sends less.
     $TelemetryAllowed = $true
-    $disableTelemetry = $env:DISABLE_TELEMETRY
+    $disableTelemetry = $env:MAPBOX_CLI_NO_TELEMETRY
+    if ($null -eq $disableTelemetry) {
+        $disableTelemetry = $env:DISABLE_TELEMETRY
+    }
     if ($null -ne $disableTelemetry) {
         $disableTelemetry = $disableTelemetry.Trim().ToLowerInvariant()
         $TelemetryAllowed = (

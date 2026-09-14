@@ -62,24 +62,45 @@ USER_AGENT='mapbox-cli-install/1'
 # header.
 INSTALL_SOURCE="${MAPBOX_CLI_INSTALL_SOURCE:-}"
 
-# The switch `src/http.rs` honours for the CLI's own User-Agent, read here the
-# same way, because someone who put DISABLE_TELEMETRY=1 in a Dockerfile and
-# then pipes this script into sh in the same file has already said which way
-# they want it. The product token above is what survives it — the equivalent of
+# The switch `src/telemetry.rs` honours for the CLI's own User-Agent, read here
+# the same way, because someone who put it in a Dockerfile and then pipes this
+# script into sh in the same file has already said which way they want it. The
+# product token above is what survives it — the equivalent of
 # `mapbox-cli/<version>` going out either way — and everything appended below
 # is what it drops.
 #
+# **Two names, and only the binary dropped the old one.**
+# `MAPBOX_CLI_NO_TELEMETRY` is the documented switch; `DISABLE_TELEMETRY` is
+# what it was called before, and this script still honours it. The rename was
+# announced as breaking for the binary, so a `DISABLE_TELEMETRY=1` there
+# genuinely stopped working and the changelog says so. Nothing announced it for
+# the installers — this file is fetched and run in one line, so a reader has no
+# release notes in front of them — and breaking an opt-out is the one change
+# that must not happen quietly. So both work here, the new name wins when both
+# are set, and the old one keeps working for the Dockerfile the comment above
+# describes. See mapbox/mapbox-cli-private#140.
+#
 # Unset, empty, or whitespace: a cleared variable. `0`, `f`, `false`, `n`, `no`
-# and `off` are clap's false spellings, so DISABLE_TELEMETRY=0 is someone
-# declining the opt-out rather than taking it. Anything else opts out,
-# including a spelling nobody planned for: the safe reading of a value we do
-# not know, on a variable by that name, is the one that sends less.
+# and `off` are clap's false spellings, so a `0` is someone declining the
+# opt-out rather than taking it. Anything else opts out, including a spelling
+# nobody planned for: the safe reading of a value we do not know, on a variable
+# by that name, is the one that sends less.
 telemetry_allowed() {
-    # ASCII-only on purpose, the way `to_ascii_lowercase` is in src/http.rs:
-    # [:upper:]/[:lower:] would bring the locale into a decision about six
-    # ASCII spellings, and this script sets no LC_ALL.
+    # Set at all — even to empty, which is how a shell clears one — means the
+    # new name is the answer. Otherwise fall back, so the two never have to be
+    # reconciled: an explicit `MAPBOX_CLI_NO_TELEMETRY=0` beats a stale
+    # `DISABLE_TELEMETRY=1` left in an image from before the rename.
+    if [ -n "${MAPBOX_CLI_NO_TELEMETRY+set}" ]; then
+        _telemetry_switch=$MAPBOX_CLI_NO_TELEMETRY
+    else
+        _telemetry_switch=${DISABLE_TELEMETRY-}
+    fi
+
+    # ASCII-only on purpose, the way `to_ascii_lowercase` is in
+    # src/telemetry.rs: [:upper:]/[:lower:] would bring the locale into a
+    # decision about six ASCII spellings, and this script sets no LC_ALL.
     # shellcheck disable=SC2018,SC2019
-    case "$(printf '%s' "${DISABLE_TELEMETRY-}" |
+    case "$(printf '%s' "$_telemetry_switch" |
         tr 'A-Z' 'a-z' |
         sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" in
         '' | 0 | f | false | n | no | off) return 0 ;;

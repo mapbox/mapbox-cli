@@ -170,3 +170,73 @@ fn only_output_completion_and_binary_responses_write_to_stdout() {
         unexpected.join("\n  ")
     );
 }
+
+/// Modules that turn a Mapbox API failure into a `CliError::http`, and so
+/// must carry the response's `X-Request-Id` into it.
+const CARRIES_A_REQUEST_ID: &[&str] = &["account_usage.rs", "auth.rs", "executor.rs"];
+
+/// Modules that raise `CliError::http` and deliberately carry no request id.
+///
+/// `agent_skills.rs` talks to GitHub codeload, which identifies requests with
+/// `x-github-request-id`. That is not something Mapbox support can look up,
+/// so an id there would point at the wrong company — worse than none.
+const NO_REQUEST_ID_TO_CARRY: &[&str] = &["agent_skills.rs"];
+
+/// `output.rs` defines `CliError::http` rather than calling it over a wire.
+const NOT_A_SEND_PATH: &[&str] = &["output.rs"];
+
+/// A new path that reports an API failure has to decide about the request id.
+///
+/// The failure this is aimed at is not a missing field — it is the shape of
+/// the mistake that made #117 worth filing: `bytes()` and `text()` both
+/// consume the response, so every header not read *before* the body is gone
+/// for good. Someone adding a fifth send path will read the status and the
+/// body, because those are what the code after it needs, and the id will be
+/// unrecoverable by the time anyone wants it. Being on one of two lists is a
+/// decision; being on neither is an oversight, which is what this catches.
+#[test]
+fn every_mapbox_failure_path_carries_the_request_id() {
+    for (name, body) in sources() {
+        let file = name.as_str();
+        if NOT_A_SEND_PATH.contains(&file) {
+            continue;
+        }
+        let raises = body.contains("CliError::http(");
+        let carries = CARRIES_A_REQUEST_ID.contains(&file);
+        let exempt = NO_REQUEST_ID_TO_CARRY.contains(&file);
+
+        assert!(
+            !(carries && exempt),
+            "{file} is on both lists; it cannot both carry an id and have none to carry"
+        );
+
+        if carries {
+            assert!(
+                raises,
+                "{file} is listed in CARRIES_A_REQUEST_ID but no longer raises \
+                 CliError::http — drop it from the list"
+            );
+            assert!(
+                body.contains("with_request_id") || body.contains("request_id("),
+                "{file} reports an API failure without carrying its request id. \
+                 Read `executor::request_id(response.headers())` before the body, \
+                 because `text()`/`bytes()` consume the response and the header is \
+                 gone afterwards."
+            );
+        } else if exempt {
+            assert!(
+                raises,
+                "{file} is listed in NO_REQUEST_ID_TO_CARRY but no longer raises \
+                 CliError::http — drop it from the list"
+            );
+        } else {
+            assert!(
+                !raises,
+                "{file} raises CliError::http but is on neither request-id list. \
+                 Either carry the id (see `executor::request_id`) and add it to \
+                 CARRIES_A_REQUEST_ID, or add it to NO_REQUEST_ID_TO_CARRY with the \
+                 reason this endpoint has no id Mapbox support could look up."
+            );
+        }
+    }
+}

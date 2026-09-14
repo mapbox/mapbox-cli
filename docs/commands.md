@@ -571,6 +571,55 @@ map.png: PNG image data, 600 x 400
 </td></tr>
 </table>
 
+#### One page at a time
+
+Several listings are paginated by the API, which returns one page and a
+`Link` header naming the next. **The CLI says so rather than leaving the
+result looking complete**, and names the flags that fetch the next page:
+
+```
+$ mapbox accounts list-tokens --username user --limit 2
+ID                         NOTE            CREATED     USAGE
+cmtoken00000000000000001a  CI deploy key   2026-09-04  sk
+cmtoken00000000000000002b  Local dev       2026-09-03  pk
+
+Tips:
+  `-o json` for the response as the API sent it.
+  To see one row: add `--id cmtoken00000000000000001a`
+  More results: add `--limit 2 --start cmtoken00000000000000002b` for the next page.
+```
+
+Under `-o json` the same note is the only thing printed to stderr on a
+success, and as the lone tip it takes the singular form:
+
+```
+$ mapbox accounts list-tokens --username user --limit 2 -o json > page1.json
+Tip: More results: add `--limit 2 --start cmtoken00000000000000002b` for the next page.
+```
+
+The flags are derived from the response, not hardcoded: whatever the spec
+calls an operation's paging parameters is what the line names. The access
+token is never among them, even though the API echoes it back in that header.
+
+Two details worth knowing:
+
+- **The note goes to stderr in both modes**, including `-o json`. The result
+  is just as partial there, and the API's own document cannot carry the fact
+  without an envelope this CLI has promised not to add — so a `-o json`
+  consumer reading stdout alone is unaffected, and one watching stderr is
+  told. There is no `--all` yet; following the pages is the caller's job,
+  and [#117](https://github.com/mapbox/mapbox-cli-private/issues/117) tracks
+  changing that.
+- **`--id` searches the page it was given.** On a paginated listing a miss
+  means "not on this page", which is not the same as "does not exist", so
+  the error says which and how to look further:
+
+  ```
+  Error: No row has the id `cmtoken00000000000000009z`.
+  Fix: This is one page of results, so the id may be on a later one. Add
+  `--start cmtoken00000000000000002b --limit 2` to search the next page.
+  ```
+
 ---
 
 ## Accounts
@@ -593,8 +642,8 @@ Lists the access tokens for an account. Secret (`sk`) entries omit the
 | `--usage <pk\|sk\|tk>` | Only tokens of that kind. |
 | `--default` | Only the account's default token. |
 
-Results are paginated: a `Link` header with `rel="next"` signals more, and
-its `start` value is what `--start` wants.
+Results are paginated. When more exist the CLI prints the `--start` value to
+continue from — see [One page at a time](#one-page-at-a-time).
 
 #### Examples
 
@@ -3420,6 +3469,30 @@ answers "was this computed?".
 | `fix` | One line: why it failed, and what would make it work. |
 | `next_actions` | Commands to run, and nothing else — no prose to strip before running one. |
 | `docs` | The pages that bear on the failure: the command's own, plus the tokens page when it was the credential that was refused. |
+| `request_id` | The response's request id, for quoting to Mapbox support. |
+
+`request_id` is the one field whose two renderings differ on purpose. Under
+`-o json` it is there on **every** failure that carried one, whatever the
+status, because a caller logging failures wants it on all of them and a field
+costs nothing to ignore. Under `-o text` it is printed for a **5xx only**:
+
+```
+Error: Internal server error (HTTP 500)
+Fix: The service failed rather than refusing the request. Retry, and check https://status.mapbox.com if it persists.
+Request ID: 01JC8K3Q7V9XZ4M2 (quote this to Mapbox support)
+```
+
+That is the failure a person escalates, and the id is what lets support find
+the request in their logs. A 404 on a mistyped id is the reader's own to fix,
+so an id under it would be noise on the common case.
+
+The id is whatever identified the response: `x-request-id` from a service
+that sends one, and otherwise `x-amz-cf-id`, the CloudFront id every Mapbox
+response carries. Quote it as printed — support can trace either.
+
+`mapbox agent-skills` is the one command whose failures carry no
+`request_id`, and deliberately: it fetches from GitHub, which identifies
+requests with its own header that Mapbox support cannot look up.
 
 The advice is keyed on the HTTP status, with the command filling in what only
 it knows — and it is read off the parsed spec, so a suggestion can only name

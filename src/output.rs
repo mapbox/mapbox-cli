@@ -230,6 +230,14 @@ pub struct CliError {
     /// The documentation for what failed. Attached per service and per
     /// status by [`crate::remedy`], which is where the URLs live.
     pub docs: Vec<String>,
+    /// The request id from the response that failed — see
+    /// `executor::REQUEST_ID_HEADERS` for which header it comes from.
+    ///
+    /// Always in the `json` rendering, where a field costs a reader nothing.
+    /// In `text` only for a 5xx, because that is the failure a person takes
+    /// to support — a 404 on a mistyped style id is theirs to fix, and an id
+    /// under it would be noise on the common case.
+    pub request_id: Option<String>,
 }
 
 impl CliError {
@@ -243,6 +251,7 @@ impl CliError {
             fix: None,
             next_actions: Vec::new(),
             docs: Vec::new(),
+            request_id: None,
         }
     }
 
@@ -316,7 +325,30 @@ impl CliError {
             fix: None,
             next_actions: Vec::new(),
             docs: Vec::new(),
+            request_id: None,
         }
+    }
+
+    /// Records the response's request id for this failure.
+    ///
+    /// Takes the `Option` rather than a value so the caller hands over
+    /// whatever the response had without a branch of its own.
+    pub fn with_request_id(mut self, request_id: Option<String>) -> Self {
+        self.request_id = request_id;
+        self
+    }
+
+    /// The request id worth showing a person, as opposed to a program.
+    ///
+    /// A 5xx only. The server broke, nothing the reader typed will fix it,
+    /// and this is what lets support find the request. Under a 404 on a
+    /// mistyped id it would be a line of noise beneath an error the reader
+    /// can already act on — so the `json` rendering carries it always and
+    /// this decides the `text` one.
+    fn support_request_id(&self) -> Option<&str> {
+        self.request_id
+            .as_deref()
+            .filter(|_| self.status.is_some_and(|status| status >= 500))
     }
 }
 
@@ -375,14 +407,27 @@ fn encode(value: &Value, pretty: bool) -> Result<String> {
 /// `service` gates the exception — see [`list_rendering`]: `search`'s,
 /// `geocoder`'s and `tilequery`'s GeoJSON render as a list instead. Every
 /// other value takes the path it always has.
+///
+/// `page` is the note that this response is one page of several. It goes to
+/// stderr **in both modes**, unlike the other notes here: the result is just
+/// as incomplete under `json`, and the API's own answer cannot carry the
+/// fact without wrapping it in an envelope this CLI has promised not to add.
 pub fn emit_value(
     mode: Mode,
     value: &Value,
     footer: Option<&str>,
     service: Option<&str>,
+    page: Option<&str>,
 ) -> Result<()> {
     if let Mode::Json { pretty } = mode {
-        return write_stdout(&encode(value, pretty)?);
+        write_stdout(&encode(value, pretty)?)?;
+        // The only thing `json` prints to stderr on a success. A consumer
+        // reading stdout alone is unaffected; one that would otherwise
+        // believe it had the whole list is told. Through `print_tips` like
+        // every other note, so the one thing `json` says on stderr is not
+        // also the one thing shaped differently.
+        print_tips(page.map(String::from).as_slice());
+        return Ok(());
     }
 
     match list_rendering(value, service).or_else(|| render_human(value)) {
@@ -411,6 +456,9 @@ pub fn emit_value(
                 "`-o json` for the response as the API sent it.".to_string()
             }];
             tips.extend(next);
+            // Last, because it is about the response as a whole rather than
+            // about the rendering above it.
+            tips.extend(page.map(String::from));
             print_tips(&tips);
             Ok(())
         }
@@ -1386,6 +1434,46 @@ pub fn progress(message: &str) {
     eprintln!("{message}");
 }
 
+/// A `CliError` as the object `json` mode prints.
+///
+/// Split out from [`emit_error`] because it is the machine-readable contract
+/// — a consumer branches on these keys — and a function returning a value
+/// can be tested, where one that writes to stderr cannot.
+fn error_payload(e: &CliError) -> Value {
+    let mut obj = json!({ "code": e.code, "message": e.message });
+    if let Some(status) = e.status {
+        obj["status"] = json!(status);
+    }
+    // Same rule the text rendering uses: a body whose only key is `message`
+    // has already been said, and repeating it makes a consumer wonder which
+    // of the two to read.
+    if let Some(body) = e.body.as_ref().filter(|b| adds_detail(b)) {
+        obj["body"] = body.clone();
+    }
+    if let Some(text) = &e.body_text {
+        obj["body_text"] = json!(text);
+    }
+    if let Some(fix) = &e.fix {
+        obj["fix"] = json!(fix);
+    }
+    // Absent rather than empty. `[]` invites a consumer to wonder whether the
+    // list was computed and came out empty, which is the question a missing
+    // key already answers.
+    if !e.next_actions.is_empty() {
+        obj["next_actions"] = json!(e.next_actions);
+    }
+    if !e.docs.is_empty() {
+        obj["docs"] = json!(e.docs);
+    }
+    // Here whatever the status, unlike the `text` rendering: a field costs a
+    // consumer nothing to ignore, and a caller logging failures wants the id
+    // on all of them, not only the ones a person would escalate.
+    if let Some(request_id) = &e.request_id {
+        obj["request_id"] = json!(request_id);
+    }
+    obj
+}
+
 /// Renders a failure to stderr.
 ///
 /// Flat, not wrapped in an `{"error": …}` object. Under `json`, stderr never
@@ -1398,34 +1486,7 @@ pub fn emit_error(mode: Mode, err: &anyhow::Error) {
 
     if mode.is_json() {
         let payload = match cli {
-            Some(e) => {
-                let mut obj = json!({ "code": e.code, "message": e.message });
-                if let Some(status) = e.status {
-                    obj["status"] = json!(status);
-                }
-                // Same rule the text rendering uses: a body whose only key
-                // is `message` has already been said, and repeating it makes
-                // a consumer wonder which of the two to read.
-                if let Some(body) = e.body.as_ref().filter(|b| adds_detail(b)) {
-                    obj["body"] = body.clone();
-                }
-                if let Some(text) = &e.body_text {
-                    obj["body_text"] = json!(text);
-                }
-                if let Some(fix) = &e.fix {
-                    obj["fix"] = json!(fix);
-                }
-                // Absent rather than empty. `[]` invites a consumer to
-                // wonder whether the list was computed and came out empty,
-                // which is the question a missing key already answers.
-                if !e.next_actions.is_empty() {
-                    obj["next_actions"] = json!(e.next_actions);
-                }
-                if !e.docs.is_empty() {
-                    obj["docs"] = json!(e.docs);
-                }
-                obj
-            }
+            Some(e) => error_payload(e),
             // `{:#}` flattens anyhow's context chain into one line, so a
             // wrapped error keeps the context that explains it.
             None => json!({ "code": GENERIC_CODE, "message": format!("{err:#}") }),
@@ -1459,6 +1520,9 @@ pub fn emit_error(mode: Mode, err: &anyhow::Error) {
             }
             if let Some(fix) = &e.fix {
                 eprintln!("Fix: {fix}");
+            }
+            if let Some(request_id) = e.support_request_id() {
+                eprintln!("Request ID: {request_id} (quote this to Mapbox support)");
             }
             eprint_labelled("Next", &e.next_actions);
             eprint_labelled("Docs", &e.docs);
@@ -2931,5 +2995,61 @@ request-id: abc123
         assert!(!adds_detail(&json!({ "message": "nope" })));
         assert!(adds_detail(&json!({ "message": "nope", "code": 12 })));
         assert!(adds_detail(&json!(["a"])));
+    }
+
+    /// The `json` rendering carries the request id on every failure that had
+    /// one. A consumer logging errors wants it on all of them, and a field
+    /// costs nothing to ignore.
+    #[test]
+    fn the_json_error_carries_the_request_id_at_any_status() {
+        for status in [404u16, 429, 500, 503] {
+            let err = CliError::http(status, r#"{"message":"nope"}"#)
+                .with_request_id(Some("req-abc123".to_string()));
+            let payload = error_payload(&err);
+            assert_eq!(
+                payload["request_id"],
+                json!("req-abc123"),
+                "missing at {status}"
+            );
+        }
+    }
+
+    /// Absent rather than null, the same rule the other optional keys follow.
+    #[test]
+    fn a_failure_without_a_request_id_has_no_such_key() {
+        let payload = error_payload(&CliError::http(404, r#"{"message":"nope"}"#));
+        assert!(payload.get("request_id").is_none(), "{payload}");
+    }
+
+    /// The `text` rendering shows it for a server fault and nothing else:
+    /// a 404 on a mistyped id is the reader's to fix, and an id under it
+    /// would be noise on the common case.
+    #[test]
+    fn the_text_error_shows_the_request_id_only_for_a_server_fault() {
+        let with_id = |status: u16| {
+            CliError::http(status, r#"{"message":"nope"}"#)
+                .with_request_id(Some("req-abc123".to_string()))
+        };
+
+        for quiet in [400u16, 401, 403, 404, 422, 429] {
+            assert_eq!(with_id(quiet).support_request_id(), None, "at {quiet}");
+        }
+        for loud in [500u16, 502, 503, 504] {
+            assert_eq!(
+                with_id(loud).support_request_id(),
+                Some("req-abc123"),
+                "at {loud}"
+            );
+        }
+    }
+
+    /// A failure with no HTTP status at all — a local one, like an unreadable
+    /// `--file` — cannot have come with a request id, and must not claim one.
+    #[test]
+    fn a_local_failure_shows_no_request_id() {
+        let err = CliError::new("invalid_file", "no such file")
+            .with_request_id(Some("req-abc123".to_string()));
+        assert_eq!(err.status, None);
+        assert_eq!(err.support_request_id(), None);
     }
 }

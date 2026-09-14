@@ -169,11 +169,16 @@ fn dispatch(
     // `--data` and `--file` are declared per-operation, so either may be
     // absent from this command entirely; `get_one` panics on an argument
     // that was never registered.
-    let data = matches
-        .try_get_one::<String>("data")
-        .ok()
-        .flatten()
-        .map(String::as_str);
+    // Resolved before anything reads it, `--dry-run` included, so a `@path`
+    // that does not exist fails here rather than being described as a request
+    // and then failing at send time. `resolve_data` says why.
+    let data_argument = match matches.try_get_one::<String>("data").ok().flatten() {
+        Some(value) => Some(resolve_data(value)?),
+        None => None,
+    };
+    let data = data_argument
+        .as_ref()
+        .map(|argument| argument.body.as_ref());
     let files: Vec<&str> = matches
         .try_get_many::<String>("file")
         .ok()
@@ -238,7 +243,15 @@ fn dispatch(
     // `reqwest` prefers the request's own over the client's — 0.12.28's
     // `execute_request` reads `req.timeout().copied().or(self.timeout.0)` —
     // so this is what actually applies to everything sent from here.
-    .timeout(http::budget(timeout, payload_of(body_source.as_ref())));
+    .timeout(http::budget(
+        timeout,
+        payload_of(
+            body_source.as_ref(),
+            data_argument
+                .as_ref()
+                .is_some_and(|argument| argument.streamed),
+        ),
+    ));
 
     if let Some(source) = body_source {
         req = attach_body(req, source)?;
@@ -754,6 +767,117 @@ enum BodySource<'a> {
     },
 }
 
+/// What `--data` was given, once a `@path` or `@-` has been read.
+#[derive(Debug)]
+struct DataArgument<'a> {
+    /// The body itself. Borrowed when it was typed, owned when it was read.
+    body: std::borrow::Cow<'a, str>,
+    /// Whether it came from a file or stdin rather than from argv.
+    ///
+    /// Carried because the timeout budget turns on it and on nothing else a
+    /// caller can see: argv caps what can be typed at roughly a megabyte, and
+    /// nothing caps a file. See [`payload_of`].
+    streamed: bool,
+}
+
+/// The `--data` prefix that means "read this rather than send it".
+const DATA_FROM_PATH: char = '@';
+
+/// The `@` path that means stdin, spelled as curl and every other tool spell
+/// it.
+const STDIN_PATH: &str = "-";
+
+/// Resolves a `--data` argument that names a file instead of carrying a body.
+///
+/// `@path` reads the file, `@-` reads stdin, and anything else is the body
+/// itself — the spelling curl has used for long enough that it is what people
+/// try first.
+///
+/// The ambiguity this inherits is curl's: a body whose first character is a
+/// literal `@` cannot be passed this way. It costs nothing here, because every
+/// operation reachable with `--data` today sends JSON, and `@` is not valid
+/// JSON. If a text body that could start with one is ever wired up, `--data-raw`
+/// is the established escape hatch — see mapbox/mapbox-cli-private#118.
+///
+/// Read here rather than at send time so that a `--dry-run` validates the file
+/// too. A dry run that skipped this would describe a request that could not
+/// actually be sent, which is the one thing it exists to rule out.
+fn resolve_data(value: &str) -> Result<DataArgument<'_>> {
+    let Some(path) = value.strip_prefix(DATA_FROM_PATH) else {
+        return Ok(DataArgument {
+            body: std::borrow::Cow::Borrowed(value),
+            streamed: false,
+        });
+    };
+
+    if path.is_empty() {
+        return Err(CliError::new(
+            "invalid_data",
+            "`--data @` names nothing to read. Use `@<path>` for a file, or `@-` for stdin.",
+        )
+        .into());
+    }
+
+    let (body, source) = if path == STDIN_PATH {
+        (read_stdin()?, "stdin".to_string())
+    } else {
+        (read_data_file(path)?, format!("`{path}`"))
+    };
+
+    // An empty body reaches `attach_body` as invalid JSON and is reported as
+    // one — "EOF while parsing a value" — which describes the symptom and not
+    // the mistake. The mistake is almost always a pipe that produced nothing
+    // (`cat missing.json | mapbox …`, whose own error went to the same stderr
+    // and scrolled past), and naming the source is what points at it.
+    if body.trim().is_empty() {
+        return Err(CliError::new(
+            "invalid_data",
+            format!("{source} was empty, so there is no request body to send."),
+        )
+        .into());
+    }
+
+    Ok(DataArgument {
+        body: std::borrow::Cow::Owned(body),
+        streamed: true,
+    })
+}
+
+/// A `--data @path` file, as text.
+///
+/// Text rather than bytes, and that is a check rather than a convenience: a
+/// JSON body has to be UTF-8, so a file that is not says so here instead of
+/// being lossily converted into a body the API would reject for reasons that
+/// name nothing the caller did.
+fn read_data_file(path: &str) -> Result<String> {
+    std::fs::read_to_string(path).map_err(|e| {
+        let message = if e.kind() == std::io::ErrorKind::InvalidData {
+            format!("`{path}` is not valid UTF-8, so it cannot be sent as a JSON body.")
+        } else {
+            format!("Cannot read `{path}`: {e}")
+        };
+        CliError::new("invalid_file", message).into()
+    })
+}
+
+/// A `--data @-` body, from stdin.
+fn read_stdin() -> Result<String> {
+    use std::io::Read;
+
+    let mut body = String::new();
+    std::io::stdin()
+        .read_to_string(&mut body)
+        .map_err(|e| -> anyhow::Error {
+            let message = if e.kind() == std::io::ErrorKind::InvalidData {
+                "stdin is not valid UTF-8, so it cannot be sent as a JSON body.".to_string()
+            } else {
+                format!("Cannot read the request body from stdin: {e}")
+            };
+            CliError::new("invalid_file", message).into()
+        })?;
+    Ok(body)
+}
+
 /// Picks between `--data` and `--file` for an operation that takes a body.
 ///
 /// Pure, and kept that way: every rejection here is a mistake the caller can
@@ -822,19 +946,23 @@ fn resolve_body_source<'a>(
 
 /// How much the request is about to move, which is all the budget turns on.
 ///
-/// Only `--file` counts as unbounded. A `--data` body was typed on a command
-/// line, and every operating system caps how much one of those can hold — two
-/// megabytes at the outside, which goes out inside the ordinary budget with
-/// room to spare. `--file` names something on disk, and the sprite and upload
-/// operations exist precisely for the cases where that is large.
+/// `--file` is unbounded, and so is a `--data @path` or `--data @-`, which is
+/// why this takes a second argument rather than reading the body alone. A
+/// `--data` body *typed* on a command line is capped by argv at a megabyte or
+/// so and goes out inside the ordinary budget with room to spare — that was
+/// once true of every `--data` body, and the reasoning is the thing `@path`
+/// broke: `BodySource::Json` looks identical whether it was typed or read from
+/// a 200 MB file, and the second would have been given a sixty-second budget
+/// it could not meet.
 ///
 /// The response is not consulted, because nothing here knows it yet: six of
 /// the twelve services answer with bytes, but a tile, a glyph range and a
 /// style ZIP all arrive well inside a minute, so the one shape worth
 /// separating out is the one this CLI is sending.
-fn payload_of(body: Option<&BodySource<'_>>) -> http::Payload {
+fn payload_of(body: Option<&BodySource<'_>>, data_was_read: bool) -> http::Payload {
     match body {
         Some(BodySource::Raw { .. } | BodySource::Multipart { .. }) => http::Payload::File,
+        _ if data_was_read => http::Payload::File,
         _ => http::Payload::Bounded,
     }
 }
@@ -1144,9 +1272,9 @@ fn write_binary(body: &[u8], content_type: &str) -> Result<()> {
 mod tests {
     use super::{
         describe_body, empty_success_line, file_name_of, is_binary_content_type, part_media_type,
-        payload_of, query_pairs, redacted_url, request_id, resolve_body_source, shell_value,
-        substitute_path_param, with_page_context, BodySource, NextPage, ResponseHeaders,
-        ACCESS_TOKEN, REQUEST_ID_HEADERS,
+        payload_of, query_pairs, redacted_url, request_id, resolve_body_source, resolve_data,
+        shell_value, substitute_path_param, with_page_context, BodySource, NextPage,
+        ResponseHeaders, ACCESS_TOKEN, REQUEST_ID_HEADERS,
     };
     use crate::http::Payload;
     use crate::output::CliError;
@@ -1595,17 +1723,158 @@ mod tests {
             paths: vec!["a.svg", "b.svg"],
             field: "images",
         };
-        assert_eq!(payload_of(Some(&raw)), Payload::File);
-        assert_eq!(payload_of(Some(&multipart)), Payload::File);
+        assert_eq!(payload_of(Some(&raw), false), Payload::File);
+        assert_eq!(payload_of(Some(&multipart), false), Payload::File);
 
         let text = BodySource::Text {
             data: "true",
             content_type: "text/plain",
         };
-        assert_eq!(payload_of(None), Payload::Bounded);
-        assert_eq!(payload_of(Some(&BodySource::Empty)), Payload::Bounded);
-        assert_eq!(payload_of(Some(&BodySource::Json("{}"))), Payload::Bounded);
-        assert_eq!(payload_of(Some(&text)), Payload::Bounded);
+        assert_eq!(payload_of(None, false), Payload::Bounded);
+        assert_eq!(
+            payload_of(Some(&BodySource::Empty), false),
+            Payload::Bounded
+        );
+        assert_eq!(
+            payload_of(Some(&BodySource::Json("{}")), false),
+            Payload::Bounded
+        );
+        assert_eq!(payload_of(Some(&text), false), Payload::Bounded);
+    }
+
+    /// A body read from `@path` or `@-` is indistinguishable from a typed one
+    /// by the time it reaches `BodySource::Json`, and nothing bounds its size.
+    /// Given the sixty-second budget, a large one would fail on a timeout that
+    /// described the network rather than the choice of flag.
+    #[test]
+    fn a_data_body_that_was_read_gets_the_transfer_budget() {
+        assert_eq!(
+            payload_of(Some(&BodySource::Json("{}")), true),
+            Payload::File
+        );
+        let text = BodySource::Text {
+            data: "true",
+            content_type: "text/plain",
+        };
+        assert_eq!(payload_of(Some(&text), true), Payload::File);
+    }
+
+    #[test]
+    fn a_plain_data_argument_is_the_body_itself() {
+        let resolved = resolve_data(r#"{"version":8}"#).expect("a literal body");
+        assert_eq!(resolved.body, r#"{"version":8}"#);
+        assert!(!resolved.streamed, "argv bounds it");
+    }
+
+    #[test]
+    fn an_at_path_is_read_from_disk() {
+        let dir = tempdir();
+        let path = dir.join("style.json");
+        std::fs::write(&path, "{\"version\":8}\n").expect("write the style");
+
+        let spec = format!("@{}", path.display());
+        let resolved = resolve_data(&spec).expect("the file is read");
+        assert_eq!(resolved.body, "{\"version\":8}\n");
+        assert!(resolved.streamed, "nothing bounds a file");
+    }
+
+    /// The trailing newline a text editor leaves is *not* stripped. It is
+    /// insignificant to every JSON parser, and trimming a body the caller
+    /// supplied would be this CLI quietly editing what it was asked to send.
+    #[test]
+    fn a_read_body_is_sent_byte_for_byte() {
+        let dir = tempdir();
+        let path = dir.join("body.json");
+        std::fs::write(&path, "  {\"a\": 1}  \n\n").expect("write the body");
+
+        let spec = format!("@{}", path.display());
+        let resolved = resolve_data(&spec).expect("read");
+        assert_eq!(resolved.body, "  {\"a\": 1}  \n\n");
+    }
+
+    #[test]
+    fn a_missing_at_path_names_the_path_rather_than_crashing() {
+        let cli = refusal(resolve_data("@/no/such/style.json").unwrap_err());
+        assert_eq!(cli.code, "invalid_file");
+        assert!(
+            cli.message.contains("/no/such/style.json"),
+            "{}",
+            cli.message
+        );
+    }
+
+    /// A JSON body has to be UTF-8, so this is a check rather than a
+    /// convenience — the alternative is a lossy conversion the API rejects for
+    /// reasons that name nothing the caller did.
+    #[test]
+    fn a_non_utf8_file_says_so_rather_than_being_mangled() {
+        let dir = tempdir();
+        let path = dir.join("bytes.json");
+        std::fs::write(&path, [0x7b, 0xff, 0xfe, 0x7d]).expect("write the bytes");
+
+        let spec = format!("@{}", path.display());
+        let cli = refusal(resolve_data(&spec).unwrap_err());
+        assert_eq!(cli.code, "invalid_file");
+        assert!(cli.message.contains("not valid UTF-8"), "{}", cli.message);
+    }
+
+    /// The mistake is almost always a pipe that produced nothing, and the
+    /// symptom without this is "EOF while parsing a value", which names the
+    /// parser rather than the pipe.
+    #[test]
+    fn an_empty_file_says_which_source_was_empty() {
+        let dir = tempdir();
+        let path = dir.join("empty.json");
+        std::fs::write(&path, "   \n").expect("write whitespace");
+
+        let spec = format!("@{}", path.display());
+        let cli = refusal(resolve_data(&spec).unwrap_err());
+        assert_eq!(cli.code, "invalid_data");
+        assert!(cli.message.contains("was empty"), "{}", cli.message);
+        assert!(cli.message.contains("empty.json"), "{}", cli.message);
+    }
+
+    #[test]
+    fn a_bare_at_sign_names_both_forms() {
+        let cli = refusal(resolve_data("@").unwrap_err());
+        assert_eq!(cli.code, "invalid_data");
+        assert!(cli.message.contains("@<path>"), "{}", cli.message);
+        assert!(cli.message.contains("@-"), "{}", cli.message);
+    }
+
+    /// A body that merely *contains* an `@` is not a path. Only the first
+    /// character decides, which is what makes `--data '{"a":"b@c"}'` safe.
+    #[test]
+    fn an_at_sign_inside_the_body_is_not_a_path() {
+        let resolved = resolve_data(r#"{"email":"a@b.example"}"#).expect("a literal body");
+        assert!(!resolved.streamed);
+        assert_eq!(resolved.body, r#"{"email":"a@b.example"}"#);
+    }
+
+    /// A scratch directory that cleans itself up, so these tests leave
+    /// nothing behind and cannot collide with each other.
+    fn tempdir() -> TempDir {
+        let base = std::env::temp_dir().join(format!(
+            "mapbox-cli-data-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&base).expect("create a scratch directory");
+        TempDir(base)
+    }
+
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn join(&self, name: &str) -> std::path::PathBuf {
+            self.0.join(name)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     /// A declared query parameter, with only the fields these tests read set

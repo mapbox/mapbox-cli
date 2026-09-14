@@ -242,10 +242,13 @@ fn build_operation_command(op: &spec::Operation) -> Command {
                     .long("data")
                     .short('d')
                     .help(match text_body {
-                        Some(content_type) => {
-                            format!("Request body, sent verbatim as {content_type}")
-                        }
-                        None => "Request body as JSON string".to_string(),
+                        Some(content_type) => format!(
+                            "Request body, sent verbatim as {content_type}. \
+                             `@<path>` reads a file, `@-` reads stdin"
+                        ),
+                        None => "Request body as a JSON string, or `@<path>` to read a file \
+                                 and `@-` to read stdin"
+                            .to_string(),
                     }),
             );
         }

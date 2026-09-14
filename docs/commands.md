@@ -453,7 +453,7 @@ either.
 | `--profile <name>` | Which stored credentials to use. |
 | `--output`, `-o` | `auto` \| `text` \| `json`. |
 | `--id <value>` | On a command that returns a list, print just the row with that `id` or `name`. |
-| `--timeout <seconds>` | How long one request may take, connection included. Defaults to 60 seconds, or 900 for a body read from `--file`. Also `MAPBOX_TIMEOUT`. |
+| `--timeout <seconds>` | How long one request may take, connection included. Defaults to 60 seconds, or 900 for a body read from `--file` or from a `--data @<path>`/`@-`. Also `MAPBOX_TIMEOUT`. |
 
 An operation with a request body takes `--data`/`-d` when that body is text
 the caller types — JSON for most, a bare `true`/`false` for `star-file` —
@@ -3541,6 +3541,20 @@ names the flag rather than offering a login that could not outrank it.
 | --- | --- |
 | `http_<status>` | The API answered non-2xx. Carries `status` and the response `body`. |
 | `request_failed` | Transport failure — proxy, DNS, TLS. Never carries the URL, because the access token rides in its query string. |
+
+The CLI honours `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY`, and
+needs no proxy configuration of its own. Two things that look like network
+faults and are not:
+
+- **`HTTP_PROXY` alone does not carry Mapbox requests.** Every base URL is
+  `https`, and that variable covers `http` URLs only — so a request goes
+  direct and a proxy-only network refuses it. `HTTPS_PROXY` or `ALL_PROXY` is
+  the one to set.
+- **SOCKS is not supported.** `ALL_PROXY=socks5://…` fails rather than being
+  ignored, with `unsupported scheme socks5` in the message. `tests/proxy.rs`
+  pins that wording, because a bare "the network failed" on a machine where
+  every other tool works is the expensive version of this answer.
+
 | `request_timed_out` | The request ran out of its time budget. Its own code because it is the one transport failure worth retrying or raising `--timeout` for. |
 | `missing_path_parameters` | A `{username}`/`{owner}`/`{account}` placeholder went unresolved. |
 | `invalid_data` | `--data` was not valid JSON, or a `@<path>`/`@-` body was empty. |

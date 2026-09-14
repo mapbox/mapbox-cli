@@ -245,11 +245,26 @@ not before. A read-only command rejects it.
 
 | Request | Budget |
 | --- | --- |
-| A normal request (`GET`, or a `--data` body) | 60 seconds |
-| A `--file` upload | 15 minutes |
+| A normal request (`GET`, or a typed `--data` body) | 60 seconds |
+| A `--file` upload, or a `--data @<path>` / `@-` body | 15 minutes |
 
 `--timeout <SECONDS>` overrides either, `MAPBOX_TIMEOUT` sets it for a
 whole shell.
+
+### Proxies
+
+The standard variables are honoured — `HTTPS_PROXY`, `HTTP_PROXY`,
+`ALL_PROXY` and `NO_PROXY` — so a CLI behind a corporate proxy needs no
+configuration of its own.
+
+Two things are worth knowing, because both are easy to spend an afternoon on:
+
+- **`HTTP_PROXY` alone does not carry Mapbox requests.** Every Mapbox base
+  URL is `https`, and that variable applies to `http` URLs only. Set
+  `HTTPS_PROXY` (or `ALL_PROXY`) instead.
+- **A SOCKS proxy is not supported.** `ALL_PROXY=socks5://…` fails the request
+  rather than being ignored, and the failure says `unsupported scheme socks5`
+  — so if you see that, it is the proxy and not the network.
 
 ### Output format
 

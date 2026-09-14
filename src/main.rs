@@ -1194,11 +1194,21 @@ mod tests {
 
         let positional = app.clone().try_get_matches_from([
             "mapbox",
-            "tilequery",
-            "get",
-            "mapbox.mapbox-streets-v8",
+            "static",
+            "get-image",
+            "--username",
+            "mapbox",
+            "streets-v11",
+            "pin-s+f00(-74,40)",
             "-74.0",
             "40.7",
+            "12",
+            "0",
+            "0",
+            "600",
+            "400",
+            "",
+            "",
         ]);
         assert!(
             positional.is_ok(),
@@ -1209,7 +1219,7 @@ mod tests {
         let flag_value = app.try_get_matches_from([
             "mapbox",
             "geocoder",
-            "reverse-geocode",
+            "reverse",
             "--longitude",
             "-74.0",
             "--latitude",
@@ -1235,15 +1245,7 @@ mod tests {
         for argv in [
             ["mapbox", "search", "category", "coffee", "--proximity"].as_slice(),
             ["mapbox", "search", "forward", "--q", "coffee", "--bbox"].as_slice(),
-            [
-                "mapbox",
-                "geocoder",
-                "forward-geocode",
-                "--q",
-                "x",
-                "--proximity",
-            ]
-            .as_slice(),
+            ["mapbox", "geocoder", "forward", "--q", "x", "--proximity"].as_slice(),
         ] {
             let mut argv = argv.to_vec();
             argv.push("-121.90662,37.42827");
@@ -1272,7 +1274,7 @@ mod tests {
                 "mapbox", "search", "forward", "--q", "x", "--types", "--limit",
             ]
             .as_slice(),
-            ["mapbox", "geocoder", "forward-geocode", "--q", "--limit"].as_slice(),
+            ["mapbox", "geocoder", "forward", "--q", "--limit"].as_slice(),
         ] {
             let matches = build_app(&specs).try_get_matches_from(argv);
             assert!(

@@ -80,7 +80,7 @@ paths:
           access_token: YOUR_MAPBOX_ACCESS_TOKEN
       x-mapbox-cli-command:
       - tilesets
-      - get-rastertile
+      - get-tile
 components:
   parameters:
     tilesets:

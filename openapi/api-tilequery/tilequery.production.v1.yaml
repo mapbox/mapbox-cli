@@ -213,8 +213,8 @@ paths:
         '500':
           $ref: '#/components/responses/ErrorResponse'
       x-mapbox-cli-command:
-      - tilequery
-      - get
+      - tilesets
+      - query
 components:
   securitySchemes:
     AccessTokenQuery:

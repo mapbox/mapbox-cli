@@ -348,7 +348,7 @@ paths:
           access_token: YOUR_MAPBOX_ACCESS_TOKEN
       x-mapbox-cli-command:
       - geocoder
-      - forward-geocode
+      - forward
   /search/geocode/v6/reverse:
     get:
       summary: Reverse geocoding
@@ -448,7 +448,7 @@ paths:
           access_token: YOUR_MAPBOX_ACCESS_TOKEN
       x-mapbox-cli-command:
       - geocoder
-      - reverse-geocode
+      - reverse
   /search/geocode/v6/batch:
     post:
       summary: Batch geocoding
@@ -670,7 +670,7 @@ paths:
           access_token: YOUR_MAPBOX_ACCESS_TOKEN
       x-mapbox-cli-command:
       - geocoder
-      - batch-geocode
+      - batch
 x-mapbox-restrictions-and-limits: |
   To protect the Geocoding API and maximize service stability, Mapbox rate limits Geocoding API requests.
 

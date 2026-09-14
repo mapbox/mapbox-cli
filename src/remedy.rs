@@ -68,6 +68,11 @@ impl Remedy {
 /// `every_service_has_a_documentation_page` in `main.rs` fails the build if
 /// a service is ever added without an entry, which is the only thing keeping
 /// this list complete.
+// `rasterarrays` and `tilequery` are absent on purpose, not by omission:
+// #116 folded their one operation each into `tilesets` (see
+// command-config.yaml), so neither is a service `bundled_specs()` ever
+// returns any more — an entry here for either would fail
+// `every_documentation_page_belongs_to_a_service`.
 const SERVICE_DOCS: &[(&str, &str)] = &[
     ("accounts", TOKENS_DOC),
     ("fonts", "https://docs.mapbox.com/api/maps/fonts/"),
@@ -75,27 +80,19 @@ const SERVICE_DOCS: &[(&str, &str)] = &[
         "geocoder",
         "https://docs.mapbox.com/api/search/geocoding-v6/",
     ),
-    (
-        "rasterarrays",
-        "https://docs.mapbox.com/api/maps/raster-arrays/",
-    ),
     ("search", "https://docs.mapbox.com/api/search/search-box/"),
-    (
-        "static-images",
-        "https://docs.mapbox.com/api/maps/static-images/",
-    ),
-    (
-        "static-tiles",
-        "https://docs.mapbox.com/api/maps/static-tiles/",
-    ),
+    // Static Images and Static Tiles merged into one `static` command group
+    // (#116); neither upstream page covers both, so this points at Static
+    // Images, the one `getStaticImage` (this group's more-used half) documents.
+    ("static", "https://docs.mapbox.com/api/maps/static-images/"),
     // The sprite endpoints are part of the Styles API upstream — the command
     // group is this CLI's own split, so both point at the same page.
     ("sprites", "https://docs.mapbox.com/api/maps/styles/"),
     ("styles", "https://docs.mapbox.com/api/maps/styles/"),
-    ("tilequery", "https://docs.mapbox.com/api/maps/tilequery/"),
-    // The index rather than one of the two pages under it: this service
-    // holds a raster-tiles command and a vector-tiles command, documented
-    // separately, and picking either page would be wrong for the other.
+    // The index rather than one of the pages under it: this service now
+    // holds a raster-tile, an MRT-tile, a tilequery and a vector-tile
+    // command (#116), documented separately upstream, and picking any one
+    // of those pages would be wrong for the other three.
     ("tilesets", "https://docs.mapbox.com/api/maps/"),
 ];
 

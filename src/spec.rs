@@ -574,6 +574,10 @@ pub struct SpecEntry {
 /// a command, and this repo drops it from the running CLI now rather than
 /// carrying a command group with nothing in it — so the vendoring step no
 /// longer writes a file for it at all.
+///
+/// `maps` and `vectortiles` are listed, but each contributes only one
+/// operation, and both now target the merged `tilesets` command group
+/// (#116) rather than a group of their own — see [`MERGED_SERVICES`].
 pub const MAPBOX_SPEC_ENTRIES: &[SpecEntry] = &[
     SpecEntry {
         name: "accounts",
@@ -701,10 +705,12 @@ fn assert_no_duplicate_name(entries: &[SpecEntry], table: &str) {
 ///
 /// [`CLI_COMMAND_EXTENSION`] assembles these out of operations that live in
 /// other files — `sprites` out of five of `styles.yaml`'s, `tilesets` out of
-/// one each from `rastertiles.yaml` and `vectortiles.yaml` — so there is no
-/// `info.title` left that describes either. Hand-written for that reason and
-/// only that reason: a service that still owns a file keeps that file's
-/// `info` exactly as before.
+/// one each from `rastertiles.yaml`, `rasterarrays.yaml`, `tilequery.yaml`
+/// and `vectortiles.yaml` (#116), `static` out of one each from
+/// `static-images.yaml` and `static-tiles.yaml` — so there is no
+/// `info.title` left that describes any of them. Hand-written for that
+/// reason and only that reason: a service that still owns a file keeps that
+/// file's `info` exactly as before.
 const MERGED_SERVICES: &[(&str, &str, &str)] = &[
     (
         "sprites",
@@ -715,6 +721,11 @@ const MERGED_SERVICES: &[(&str, &str, &str)] = &[
         "tilesets",
         "Tiles API",
         "Raster and vector tiles, by tileset id.",
+    ),
+    (
+        "static",
+        "Static API",
+        "Static map images and raster tiles rendered from a Mapbox style.",
     ),
 ];
 

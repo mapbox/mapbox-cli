@@ -242,9 +242,10 @@ fn globals_written_after_the_subcommand_are_forwarded() {
 }
 
 /// `tilesets` was reserved for a command of our own, and is now one: the
-/// generated group holding `get-rastertile` and `get-vectortile`. Nothing
-/// about it is the proxy, so a line written against the Python CLI's own
-/// subcommands has to fail here rather than being forwarded.
+/// generated group holding `get-tile`, `get-mvt`, `get-mrt` and `query`
+/// (#116). Nothing about it is the proxy, so a line written against the
+/// Python CLI's own subcommands has to fail here rather than being
+/// forwarded.
 #[test]
 fn the_tilesets_name_does_not_reach_the_proxy() {
     let stub = stub_for("reserved-name");

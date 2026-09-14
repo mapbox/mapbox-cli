@@ -128,8 +128,8 @@ paths:
           jobid: clnf3oau5005g08kzhr460vut
       operationId: getMrtTile
       x-mapbox-cli-command:
-      - rasterarrays
-      - get-mrt-tile
+      - tilesets
+      - get-mrt
 components:
   securitySchemes:
     AccessTokenQuery:

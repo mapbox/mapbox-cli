@@ -163,7 +163,7 @@ fn command_in_heading(line: &str) -> Option<String> {
 ///
 /// The whole section counts — table, prose and worked examples alike, not
 /// only the `#### Parameters` table. The page legitimately introduces a flag
-/// in prose (forward-geocode's structured input is a paragraph naming nine of
+/// in prose (forward's structured input is a paragraph naming nine of
 /// them, and `--fresh` is one sentence) or in an example, and a check that
 /// read only the tables would be enforcing a house style rather than finding
 /// drift.

@@ -73,12 +73,9 @@ nests, and is typed `mapbox styles draft get`.
 [fonts.upload](#mapbox-fonts-upload) · [fonts.delete](#mapbox-fonts-delete)
 
 **[Geocoder](#geocoder)** —
-[geocoder.forward-geocode](#mapbox-geocoder-forward-geocode) ·
-[geocoder.reverse-geocode](#mapbox-geocoder-reverse-geocode) ·
-[geocoder.batch-geocode](#mapbox-geocoder-batch-geocode)
-
-**[Raster arrays](#raster-arrays)** —
-[rasterarrays.get-mrt-tile](#mapbox-rasterarrays-get-mrt-tile)
+[geocoder.forward](#mapbox-geocoder-forward) ·
+[geocoder.reverse](#mapbox-geocoder-reverse) ·
+[geocoder.batch](#mapbox-geocoder-batch)
 
 **[Search](#search)** — [search.forward](#mapbox-search-forward) ·
 [search.reverse](#mapbox-search-reverse) ·
@@ -91,13 +88,8 @@ nests, and is typed `mapbox styles draft get`.
 [sprites.delete](#mapbox-sprites-delete) ·
 [sprites.delete-batch](#mapbox-sprites-delete-batch)
 
-**[Static images](#static-images)** —
-[static-images.get-static-image](#mapbox-static-images-get-static-image) ·
-[static-images.get-static-image-auto](#mapbox-static-images-get-static-image-auto) ·
-[static-images.get-static-image-bbox](#mapbox-static-images-get-static-image-bbox)
-
-**[Static tiles](#static-tiles)** —
-[static-tiles.get-static-tile](#mapbox-static-tiles-get-static-tile)
+**[Static](#static)** — [static.get-image](#mapbox-static-get-image) ·
+[static.get-tile](#mapbox-static-get-tile)
 
 **[Styles](#styles)** — [styles.list](#mapbox-styles-list) ·
 [styles.get](#mapbox-styles-get) · [styles.create](#mapbox-styles-create) ·
@@ -107,11 +99,11 @@ nests, and is typed `mapbox styles draft get`.
 [styles.draft.update](#mapbox-styles-draft-update) ·
 [styles.draft.delete](#mapbox-styles-draft-delete)
 
-**[Tilequery](#tilequery)** — [tilequery.get](#mapbox-tilequery-get)
-
 **[Tilesets](#tilesets)** —
-[tilesets.get-rastertile](#mapbox-tilesets-get-rastertile) ·
-[tilesets.get-vectortile](#mapbox-tilesets-get-vectortile)
+[tilesets.get-tile](#mapbox-tilesets-get-tile) ·
+[tilesets.get-mvt](#mapbox-tilesets-get-mvt) ·
+[tilesets.get-mrt](#mapbox-tilesets-get-mrt) ·
+[tilesets.query](#mapbox-tilesets-query)
 
 **[Tilesets CLI](#tilesets-cli)** — [tilesets-cli](#mapbox-tilesets-cli-args)
 
@@ -475,7 +467,7 @@ Like `--data`, it goes after the operation name.
 Two shapes, one with almost nothing and one with most of it:
 
 ```sh
-mapbox geocoder forward-geocode --q Helsinki
+mapbox geocoder forward --q Helsinki
 
 mapbox --use-login --profile work styles create --username user \
   --data '{"name":"My Style","version":8,"sources":{},"layers":[]}'
@@ -886,14 +878,13 @@ All three return GeoJSON, rendered as a numbered list under `-o text` —
 name and feature type on one line, the full address on the next,
 `longitude,latitude` on the one after that (the next thing a caller
 usually wants a result for), never clipped. The response's `attribution`,
-the terms the results come under, follows the list — once under a whole
-`batch-geocode` batch rather than once under each of up to fifty identical
-copies. `batch-geocode` gets one such list per query, under a `Query N:`
-header — omitted when the batch held a single query, since there is nothing
-to tell it apart from. `tilequery` gets the same list treatment for a
-different reason — see its own section.
+the terms the results come under, follows the list — once under `batch`'s
+whole result rather than once under each of up to fifty identical copies.
+`batch` gets one such list per query, under a `Query N:` header — omitted
+when the batch held a single query, since there is nothing to tell it apart
+from.
 
-### `mapbox geocoder forward-geocode`
+### `mapbox geocoder forward`
 
 Looks up a location from search text, and returns its standardized address,
 geographic context and coordinates.
@@ -923,9 +914,9 @@ Structured input is an alternative to `--q`: `--address-number`,
 #### Examples
 
 ```sh
-mapbox geocoder forward-geocode --q Helsinki --limit 1
-mapbox geocoder forward-geocode --q "1600 Pennsylvania Ave" --country us --types address
-mapbox geocoder forward-geocode --street "Kaivokatu" --place Helsinki --country fi
+mapbox geocoder forward --q Helsinki --limit 1
+mapbox geocoder forward --q "1600 Pennsylvania Ave" --country us --types address
+mapbox geocoder forward --street "Kaivokatu" --place Helsinki --country fi
 ```
 
 #### Outputs
@@ -953,7 +944,7 @@ Tip: `-o json` for the response as the API sent it.
 </td></tr>
 </table>
 
-### `mapbox geocoder reverse-geocode`
+### `mapbox geocoder reverse`
 
 Looks up the features at a pair of coordinates.
 
@@ -966,8 +957,8 @@ the same way they do for forward geocoding.
 #### Examples
 
 ```sh
-mapbox geocoder reverse-geocode --longitude 24.94 --latitude 60.16
-mapbox geocoder reverse-geocode --longitude -74.0 --latitude 40.7 --types address
+mapbox geocoder reverse --longitude 24.94 --latitude 60.16
+mapbox geocoder reverse --longitude -74.0 --latitude 40.7 --types address
 ```
 
 A negative coordinate is a value, not a flag. That took a fix — clap read
@@ -978,7 +969,7 @@ every coordinate west of Greenwich unusable.
 
 The same numbered list as forward geocoding.
 
-### `mapbox geocoder batch-geocode`
+### `mapbox geocoder batch`
 
 Up to 50 forward or reverse queries in one request. Each query is an object
 in a JSON array, with what would have been query parameters as its fields.
@@ -990,7 +981,7 @@ in a JSON array, with what would have been query parameters as its fields.
 #### Examples
 
 ```sh
-mapbox geocoder batch-geocode -d '[
+mapbox geocoder batch -d '[
   {"types":["place"],"q":"Helsinki"},
   {"types":["place"],"q":"Tampere"},
   {"longitude":24.94,"latitude":60.16}
@@ -1001,7 +992,7 @@ mapbox geocoder batch-geocode -d '[
 
 A `batch` array, one entry per query, in the order sent. Under `-o text`
 each query's results render as their own numbered list, same as
-`forward-geocode`/`reverse-geocode`, under a `Query N:` header — dropped
+`forward`/`reverse`, under a `Query N:` header — dropped
 when there is only one query, where the header names the only thing on
 screen:
 
@@ -1044,48 +1035,6 @@ single query.
 
 ---
 
-## Raster arrays
-
-### `mapbox rasterarrays get-mrt-tile`
-
-One MRT tile from a raster-array job.
-
-#### Parameters
-
-`--jobid <jobid>` is required and comes from the raster-array job that
-produced the tiles.
-
-#### Examples
-
-```sh
-mapbox rasterarrays get-mrt-tile --jobid <jobid> <tileset-id> 12 2048 1361 > tile.mrt
-```
-
-#### Outputs
-
-Not exercised: this account has no raster-array job. A `--jobid` that does
-not exist gets a 500 rather than a 404, so the error says nothing useful
-about what was wrong:
-
-<table>
-<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
-<tr><td>
-
-```
-Error: Internal Server Error (HTTP 500)
-```
-
-</td><td>
-
-```json
-{"code":"http_500","message":"Internal Server Error","status":500}
-```
-
-</td></tr>
-</table>
-
----
-
 ## Search
 
 The public, non-interactive surface of the Search Box API: text search,
@@ -1098,7 +1047,7 @@ the vendored specs the way the others do. `suggest` and
 around a person typing into a search box, not a one-shot CLI invocation —
 so there is no non-interactive way to use them.
 
-**vs. `geocoder`**: `geocoder reverse-geocode` and `search reverse` take
+**vs. `geocoder`**: `geocoder reverse` and `search reverse` take
 nearly identical coordinates and answer different questions. `geocoder`
 returns canonical addresses and administrative hierarchy (country, region,
 postcode, place); `search` returns POIs and businesses with the metadata a
@@ -1174,7 +1123,7 @@ becomes a list rather than staying pretty-printed):
 ### `mapbox search reverse`
 
 The POIs and addresses at a coordinate — `search`'s counterpart to
-`geocoder reverse-geocode`, answering with business metadata instead of
+`geocoder reverse`, answering with business metadata instead of
 administrative hierarchy.
 
 #### Parameters
@@ -1680,19 +1629,22 @@ And an object where an array belongs:
 
 ---
 
-## Static images
+## Static
 
-A rendered map image from a style. All three return image bytes, so
-`--output` does not apply — redirect to a file.
+A rendered map image or raster tile from a style. Both return image bytes,
+so `--output` does not apply — redirect to a file. Static Images and Static
+Tiles merged into this one command group (#116); `get-image` and `get-tile`
+are what were `static-images get-static-image` and `static-tiles
+get-static-tile`.
 
 `<format>` takes a **leading dot** — `.png`, `.jpeg`, `.webp`, or `""` for
-the style default. `<highRes>` is `@2x` or `""`. `<overlay>` is a
-marker/path/GeoJSON expression, or `""` for none.
+the style default. `<highRes>` is `@2x` or `""`. `<overlay>` (`get-image`
+only) is a marker/path/GeoJSON expression, or `""` for none.
 
 `""` for the overlay drops the segment entirely rather than sending an empty
 one, so a plain map image needs no overlay expression.
 
-### `mapbox static-images get-static-image`
+### `mapbox static get-image`
 
 A map image centred on a point.
 
@@ -1714,10 +1666,10 @@ both as integers — pass `0 0` rather than `"" ""`.
 #### Examples
 
 ```sh
-mapbox static-images get-static-image streets-v12 "" 24.94 60.16 12 0 0 600 400 "" .png \
+mapbox static get-image streets-v12 "" 24.94 60.16 12 0 0 600 400 "" .png \
   --username mapbox > map.png
 
-mapbox static-images get-static-image streets-v12 "pin-s+555555(24.94,60.16)" \
+mapbox static get-image streets-v12 "pin-s+555555(24.94,60.16)" \
   24.94 60.16 12 0 0 600 400 "@2x" .png --username mapbox > pin.png
 ```
 
@@ -1736,7 +1688,7 @@ it to a file, e.g. `... > out.png`.
 </td><td>
 
 ```
-$ mapbox static-images get-static-image … > map.png
+$ mapbox static get-image … > map.png
 $ file map.png
 map.png: PNG image data, 600 x 400
 ```
@@ -1744,58 +1696,9 @@ map.png: PNG image data, 600 x 400
 </td></tr>
 </table>
 
-### `mapbox static-images get-static-image-auto`
+### `mapbox static get-tile`
 
-The same image, with the viewport fitted to the overlay instead of given as
-a centre and zoom. Six positionals: `<style-id> <overlay> <width> <height>
-<highRes> <format>`.
-
-`--padding <n>` insets the fitted view from the edges. Bearing and pitch
-cannot be combined with `auto`. `--attribution`, `--logo`, `--addlayer`,
-`--before-layer`, `--setfilter` and `--layer-id` are the six
-[above](#mapbox-static-images-get-static-image), unchanged — all three
-static-image commands take them.
-
-#### Examples
-
-```sh
-mapbox static-images get-static-image-auto streets-v12 \
-  "pin-s+555555(24.94,60.16)" 600 400 "" .png --username mapbox > pin.png
-```
-
-#### Outputs
-
-Image bytes, as above. With an empty overlay there is nothing to fit to, and
-the API falls back to the style's own default view rather than failing.
-
-### `mapbox static-images get-static-image-bbox`
-
-The same image, fitted to a bounding box given as
-`[minlon,minlat,maxlon,maxlat]`. Seven positionals: `<style-id> <overlay>
-<bbox> <width> <height> <highRes> <format>`.
-
-`--padding <n>` applies here too, as do `--attribution`, `--logo`,
-`--addlayer`, `--before-layer`, `--setfilter` and `--layer-id`.
-
-#### Examples
-
-```sh
-mapbox static-images get-static-image-bbox streets-v12 "" \
-  "[24.9,60.1,25.0,60.2]" 600 400 "" .png --username mapbox > area.png
-```
-
-#### Outputs
-
-Image bytes, as above.
-
----
-
-## Static tiles
-
-### `mapbox static-tiles get-static-tile`
-
-One raster tile rendered from a style, rather than from a tileset — the
-`maps` command group does the latter.
+One raster tile rendered from a style, rather than from a tileset.
 
 #### Parameters
 
@@ -1805,15 +1708,15 @@ Seven positionals: `<style-id> <tilesize> <z> <x> <y> <highRes> <format>`.
 the same ground as 256 px tiles at *z+1*, so 256 needs four times as many
 requests for the same area.
 
-`<highRes>` is `@2x` or `""`; `<format>` takes a leading dot, as in static
-images.
+`<highRes>` is `@2x` or `""`; `<format>` takes a leading dot, as in
+`get-image`.
 
 #### Examples
 
 ```sh
-mapbox static-tiles get-static-tile streets-v12 512 2 1 1 "" .png \
+mapbox static get-tile streets-v12 512 2 1 1 "" .png \
   --username mapbox > tile.png
-mapbox static-tiles get-static-tile streets-v12 256 12 2048 1361 "@2x" .png \
+mapbox static get-tile streets-v12 256 12 2048 1361 "@2x" .png \
   --username mapbox > tile@2x.png
 ```
 
@@ -1832,7 +1735,7 @@ it to a file, e.g. `... > out.png`.
 </td><td>
 
 ```
-$ mapbox static-tiles get-static-tile … > tile.png
+$ mapbox static get-tile … > tile.png
 $ file tile.png
 tile.png: PNG image data, 512 x 512
 ```
@@ -2265,22 +2168,168 @@ beforehand.
 
 ---
 
-## Tilequery
+## Tilesets
 
-### `mapbox tilequery get`
+Tiles by tileset id, plus the raster-array and vector-tile lookups that key
+off one: raster from the Raster Tiles API, vector from the Vector Tiles
+API, MRT tiles from a raster-array job, and `query` from the Tilequery
+API. Four operations, out of four different specs, under one command
+group (#116) — a caller asking about a tileset is asking the same kind of
+question regardless of which API answers it.
+
+Not to be confused with [`mapbox tilesets-cli`](#tilesets-cli), which
+forwards to the separately installed Python Tilesets CLI and shares
+nothing with this but the word.
+
+The three tile commands return bytes, so `--output` does not apply on
+them — redirect to a file. `query` returns GeoJSON.
+
+### `mapbox tilesets get-tile`
+
+One raster tile at standard resolution, 256×256.
+
+#### Parameters
+
+`<tilesets>` may be several ids separated by commas, composited into one
+tile. `<z> <x> <y>` are the tile coordinates.
+
+`<format>` is `png`, `pngraw`, `jpg`, `jpeg` or `webp`. `<quality>` is
+appended to it rather than being a separate URL segment, so `jpg` with `70`
+fetches `.jpg70`; pass `""` for the format's default. Both are positional,
+in that order.
+
+#### Examples
+
+```sh
+mapbox tilesets get-tile mapbox.satellite 2 1 1 png "" > tile.png
+mapbox tilesets get-tile mapbox.satellite 12 2048 1361 jpg 70 > tile.jpg70
+```
+
+#### Outputs
+
+Image bytes; redirect to a file. The refusal to print them names an
+extension matching what the API sent, which is not always what was asked
+for — `mapbox.satellite` is stored as JPEG, so a `png` request still
+suggests `out.jpg`.
+
+<table>
+<tr><th width="50%">Terminal — refuses</th><th width="50%">Redirected — raw bytes</th></tr>
+<tr><td>
+
+```
+Error: Response is image/jpeg (9774 bytes).
+Refusing to write it to the terminal — redirect
+it to a file, e.g. `... > out.jpg`.
+```
+
+</td><td>
+
+```
+$ mapbox tilesets get-tile mapbox.satellite 2 1 1 png "" > tile.png
+$ file tile.png
+tile.png: JPEG image data
+```
+
+</td></tr>
+</table>
+
+### `mapbox tilesets get-mvt`
+
+One vector tile from one or more Mapbox-hosted tilesets. Up to 15 ids,
+comma-separated, composited into a single tile.
+
+#### Parameters
+
+`<format>` is `mvt` or `vector.pbf` — the same bytes under two names.
+
+`--style <owner>/<style-id>[@<timestamp>]` asks the API to filter the tile
+to what that style actually draws.
+
+#### Examples
+
+```sh
+mapbox tilesets get-mvt mapbox.mapbox-streets-v8 12 2048 1361 mvt > tile.mvt
+mapbox tilesets get-mvt mapbox.mapbox-streets-v8,mapbox.mapbox-terrain-v2 \
+  12 2048 1361 mvt > composite.mvt
+```
+
+#### Outputs
+
+Protobuf bytes; redirect to a file.
+
+<table>
+<tr><th width="50%">Terminal — refuses</th><th width="50%">Redirected — raw bytes</th></tr>
+<tr><td>
+
+```
+Error: Response is application/vnd.mapbox-vector-tile
+(80741 bytes). Refusing to write it to the terminal —
+redirect it to a file, e.g. `... > out.mvt`.
+```
+
+</td><td>
+
+```
+$ mapbox tilesets get-mvt … > tile.mvt
+$ ls -l tile.mvt
+-rw-r--r--  80741  tile.mvt
+```
+
+</td></tr>
+</table>
+
+### `mapbox tilesets get-mrt`
+
+One MRT tile from a raster-array job.
+
+#### Parameters
+
+`--jobid <jobid>` is required and comes from the raster-array job that
+produced the tiles.
+
+#### Examples
+
+```sh
+mapbox tilesets get-mrt --jobid <jobid> <tileset-id> 12 2048 1361 > tile.mrt
+```
+
+#### Outputs
+
+Not exercised: this account has no raster-array job. A `--jobid` that does
+not exist gets a 500 rather than a 404, so the error says nothing useful
+about what was wrong:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```
+Error: Internal Server Error (HTTP 500)
+```
+
+</td><td>
+
+```json
+{"code":"http_500","message":"Internal Server Error","status":500}
+```
+
+</td></tr>
+</table>
+
+### `mapbox tilesets query`
 
 What features a vector tileset has at or near a point.
 
-`get` is a hand-picked name, not the one this command would otherwise
+`query` is a hand-picked name, not the one this command would otherwise
 carry: tilequery's own spec spells its one operation's `operationId` after
 its own URL path (`getV4TilesetsTilequeryLonLatJson`) rather than after
 what it does, and that spec is not this repo's to rename. The name comes
 from the maintainer-only decision record instead.
 
-Neither older spelling still runs. `get-v4tilesets-tilequery-lon-lat-json`
-and the `get-tilequery` that briefly replaced it were both hidden aliases
-of a `COMMAND_ALIASES` row that no longer exists — see the `Breaking` entry
-in the changelog.
+Neither older spelling still runs. `get-v4tilesets-tilequery-lon-lat-json`,
+`tilequery get-tilequery` and `tilequery get` were each replaced in turn,
+the last one folding the whole command into this group (#116) — see the
+`Breaking` entry in the changelog.
 
 #### Parameters
 
@@ -2300,10 +2349,10 @@ the point.
 #### Examples
 
 ```sh
-mapbox tilequery get \
+mapbox tilesets query \
   mapbox.mapbox-streets-v8 24.94 60.16 --limit 2
 
-mapbox tilequery get \
+mapbox tilesets query \
   mapbox.mapbox-streets-v8 -74.0 40.7 --radius 100 --layers building
 ```
 
@@ -2383,115 +2432,6 @@ Tip: `-o json` for the response as the API sent it.
 
 ```json
 {"features":[{"geometry":{"coordinates":[-122.459,37.7754],"type":"Point"},"id":null,"properties":{"tilequery":{"band":"frame-0","layer":"data","units":"m","zoom":6},"val":[1.23]},"type":"Feature"}],"type":"FeatureCollection"}
-```
-
-</td></tr>
-</table>
-
----
-
-## Tilesets
-
-Tiles by tileset id: raster from the Raster Tiles API, vector from the
-Vector Tiles API. Two operations, out of two different specs, under one
-command group — a caller asking for a tile is asking the same question
-either way, and which API answers it is a detail of the URL.
-
-Not to be confused with [`mapbox tilesets-cli`](#tilesets-cli), which
-forwards to the separately installed Python Tilesets CLI and shares
-nothing with this but the word.
-
-Both return bytes, so `--output` does not apply — redirect to a file.
-
-### `mapbox tilesets get-rastertile`
-
-One raster tile at standard resolution, 256×256.
-
-#### Parameters
-
-`<tilesets>` may be several ids separated by commas, composited into one
-tile. `<z> <x> <y>` are the tile coordinates.
-
-`<format>` is `png`, `pngraw`, `jpg`, `jpeg` or `webp`. `<quality>` is
-appended to it rather than being a separate URL segment, so `jpg` with `70`
-fetches `.jpg70`; pass `""` for the format's default. Both are positional,
-in that order.
-
-#### Examples
-
-```sh
-mapbox tilesets get-rastertile mapbox.satellite 2 1 1 png "" > tile.png
-mapbox tilesets get-rastertile mapbox.satellite 12 2048 1361 jpg 70 > tile.jpg70
-```
-
-#### Outputs
-
-Image bytes; redirect to a file. The refusal to print them names an
-extension matching what the API sent, which is not always what was asked
-for — `mapbox.satellite` is stored as JPEG, so a `png` request still
-suggests `out.jpg`.
-
-<table>
-<tr><th width="50%">Terminal — refuses</th><th width="50%">Redirected — raw bytes</th></tr>
-<tr><td>
-
-```
-Error: Response is image/jpeg (9774 bytes).
-Refusing to write it to the terminal — redirect
-it to a file, e.g. `... > out.jpg`.
-```
-
-</td><td>
-
-```
-$ mapbox tilesets get-rastertile mapbox.satellite 2 1 1 png "" > tile.png
-$ file tile.png
-tile.png: JPEG image data
-```
-
-</td></tr>
-</table>
-
-### `mapbox tilesets get-vectortile`
-
-One vector tile from one or more Mapbox-hosted tilesets. Up to 15 ids,
-comma-separated, composited into a single tile.
-
-#### Parameters
-
-`<format>` is `mvt` or `vector.pbf` — the same bytes under two names.
-
-`--style <owner>/<style-id>[@<timestamp>]` asks the API to filter the tile
-to what that style actually draws.
-
-#### Examples
-
-```sh
-mapbox tilesets get-vectortile mapbox.mapbox-streets-v8 12 2048 1361 mvt > tile.mvt
-mapbox tilesets get-vectortile mapbox.mapbox-streets-v8,mapbox.mapbox-terrain-v2 \
-  12 2048 1361 mvt > composite.mvt
-```
-
-#### Outputs
-
-Protobuf bytes; redirect to a file.
-
-<table>
-<tr><th width="50%">Terminal — refuses</th><th width="50%">Redirected — raw bytes</th></tr>
-<tr><td>
-
-```
-Error: Response is application/vnd.mapbox-vector-tile
-(80741 bytes). Refusing to write it to the terminal —
-redirect it to a file, e.g. `... > out.mvt`.
-```
-
-</td><td>
-
-```
-$ mapbox tilesets get-vectortile … > tile.mvt
-$ ls -l tile.mvt
--rw-r--r--  80741  tile.mvt
 ```
 
 </td></tr>

@@ -2038,8 +2038,8 @@ mod tests {
         let image = schema
             .commands
             .iter()
-            .find(|entry| entry.name == "get-static-image")
-            .expect("get-static-image is a command");
+            .find(|entry| entry.name == "get-image")
+            .expect("get-image is a command");
         let high_res = image
             .arguments
             .iter()

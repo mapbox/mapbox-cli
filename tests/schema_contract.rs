@@ -142,7 +142,7 @@ fn the_root_describes_the_whole_surface() {
     assert_eq!(value["target"], "mapbox");
     for expected in [
         "mapbox styles list",
-        "mapbox geocoder forward-geocode",
+        "mapbox geocoder forward",
         "mapbox auth login",
         "mapbox tilesets-cli",
     ] {
@@ -246,7 +246,7 @@ fn the_values_the_schema_promises_are_the_values_the_cli_takes() {
     // CLI accepted any number. Both halves are asserted together, because
     // either one alone can regress into a description that is not true of the
     // command it describes.
-    let value = schema(&["static-tiles", "get-static-tile", "--schema"]);
+    let value = schema(&["static", "get-tile", "--schema"]);
     let tilesize = commands(&value)[0]["arguments"]
         .as_array()
         .expect("arguments")
@@ -259,8 +259,8 @@ fn the_values_the_schema_promises_are_the_values_the_cli_takes() {
     let refused = run(&[
         "--username",
         "u",
-        "static-tiles",
-        "get-static-tile",
+        "static",
+        "get-tile",
         "some-style",
         "300",
         "1",

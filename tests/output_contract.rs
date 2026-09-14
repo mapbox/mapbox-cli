@@ -252,7 +252,7 @@ fn a_failure_writes_nothing_to_stdout() {
 
 #[test]
 fn a_usage_error_is_json_on_a_pipe_and_keeps_claps_exit_code() {
-    let out = run(&["geocoder", "forward-geocode", "--nonsense"]);
+    let out = run(&["geocoder", "forward", "--nonsense"]);
 
     let error = &json(&stderr(&out));
     assert_eq!(error["code"], "usage");
@@ -272,7 +272,7 @@ fn a_usage_error_is_json_on_a_pipe_and_keeps_claps_exit_code() {
 /// the case `requested_in_argv` exists for.
 #[test]
 fn an_explicit_mode_survives_a_line_clap_could_not_parse() {
-    let out = run(&["-o", "text", "geocoder", "forward-geocode", "--nonsense"]);
+    let out = run(&["-o", "text", "geocoder", "forward", "--nonsense"]);
 
     let text = stderr(&out);
     assert!(
@@ -539,7 +539,7 @@ fn an_unusable_environment_value_does_not_brick_the_cli() {
 /// from the first line alone names none of them.
 #[test]
 fn a_missing_argument_error_names_the_arguments() {
-    let out = run(&["static-images", "get-static-image", "mapbox", "streets-v12"]);
+    let out = run(&["static", "get-image", "mapbox", "streets-v12"]);
 
     let message = json(&stderr(&out))["message"]
         .as_str()
@@ -572,7 +572,7 @@ fn an_unauthorized_response_carries_advice_a_caller_can_act_on() {
         "--token",
         "pk.bogus",
         "geocoder",
-        "forward-geocode",
+        "forward",
         "--q",
         "Helsinki",
     ]);

@@ -97,8 +97,8 @@ paths:
           format: ''
           access_token: YOUR_MAPBOX_ACCESS_TOKEN
       x-mapbox-cli-command:
-      - static-tiles
-      - get-static-tile
+      - static
+      - get-tile
 components:
   parameters:
     username:

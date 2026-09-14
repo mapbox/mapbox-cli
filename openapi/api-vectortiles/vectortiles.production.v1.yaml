@@ -92,7 +92,7 @@ paths:
           access_token: YOUR_MAPBOX_ACCESS_TOKEN
       x-mapbox-cli-command:
       - tilesets
-      - get-vectortile
+      - get-mvt
 components:
   parameters:
     tileset_id:

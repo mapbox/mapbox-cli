@@ -268,6 +268,30 @@ fn a_usage_error_is_json_on_a_pipe_and_keeps_claps_exit_code() {
     assert_eq!(out.status.code(), Some(2));
 }
 
+/// `-o text` prints clap's suggestion for a misspelled subcommand; `-o json`
+/// used to drop it, because `report_parse_result`'s `message` only ever
+/// takes clap's first paragraph and the tip is clap's second. That is
+/// exactly backwards for a rename with no alias: the caller a `tip:` line
+/// would save is a script or an agent, and that is the caller on `-o json`.
+#[test]
+fn an_unrecognized_subcommand_carries_claps_suggestion_into_json() {
+    let out = run(&["geocoder", "forward-geocode"]);
+
+    let error = &json(&stderr(&out));
+    assert_eq!(error["code"], "usage");
+    assert!(
+        error["message"]
+            .as_str()
+            .expect("a message")
+            .contains("forward-geocode"),
+        "{error}"
+    );
+    assert_eq!(
+        error["fix"], "a similar subcommand exists: 'forward'",
+        "{error}"
+    );
+}
+
 /// `-o` written on a line clap rejects still has to be honoured — that is
 /// the case `requested_in_argv` exists for.
 #[test]

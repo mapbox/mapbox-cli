@@ -806,13 +806,42 @@ fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> Exi
             Remedy::default().with_action(help_for_missing_subcommand(message, raw_argv))
         }
         // Clap rejected the line for a reason of its own — a misspelled flag,
-        // a value that would not parse. There is no command that answers
-        // that, and inventing one would be worse than the message alone.
-        _ => Remedy::default(),
+        // a value that would not parse. There is usually no command that
+        // answers that, and inventing one would be worse than the message
+        // alone — but clap's own suggester sometimes already has the answer,
+        // and `-o text` shows it; carry it over rather than losing it here.
+        _ => match clap_tip(&rendered) {
+            Some(tip) => Remedy::default().with_fix(&tip),
+            None => Remedy::default(),
+        },
     });
 
     output::emit_error(mode, &error.into());
     ExitCode::from(code)
+}
+
+/// The `tip: …` line clap's own suggester renders for an unrecognized
+/// subcommand or flag, if there is one.
+///
+/// Clap's rendering is an error paragraph, a blank line, then usage and a
+/// hint — but for a suggestion it inserts the tip as its own paragraph
+/// between the error and the usage line, which is exactly the paragraph
+/// `report_parse_result`'s `message` skips past. `-o text` gets it because
+/// clap prints the whole rendering there; this is what lets `-o json` carry
+/// the same answer instead of silently dropping it — the caller `-o json`
+/// is for (a script, an agent) is the one a rename breaks without an alias.
+fn clap_tip(rendered: &str) -> Option<String> {
+    let mut lines = rendered.lines().map(str::trim);
+    // The first paragraph is the error message; skip to its blank line.
+    for line in lines.by_ref() {
+        if line.is_empty() {
+            break;
+        }
+    }
+    // The next non-blank line is either the tip or, when there is none,
+    // the usage line — only the former is worth keeping.
+    let next = lines.find(|line| !line.is_empty())?;
+    next.strip_prefix("tip:").map(|tip| tip.trim().to_string())
 }
 
 /// The subcommand placeholder clap ends a usage line with when one is still

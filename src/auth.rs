@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use rand::Rng;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::io::{IsTerminal, Read, Write};
@@ -1373,7 +1372,11 @@ fn describe(wait: Duration) -> String {
 }
 
 fn generate_pkce() -> (String, String) {
-    let verifier_bytes: [u8; 32] = rand::thread_rng().gen();
+    // `rand::random` draws from `ThreadRng`, which `rand` declares
+    // `TryCryptoRng` — a CSPRNG, which is the only kind a PKCE verifier may
+    // come from. `rand 0.8`'s `thread_rng().gen()` gave the same guarantee;
+    // the rename is all that changed.
+    let verifier_bytes: [u8; 32] = rand::random();
     let verifier = URL_SAFE_NO_PAD.encode(verifier_bytes);
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     (verifier, challenge)
@@ -1763,7 +1766,10 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     let registration = register_client(&redirect_uri, debug, &scopes)?;
 
     let (code_verifier, code_challenge) = generate_pkce();
-    let state: String = URL_SAFE_NO_PAD.encode(rand::thread_rng().gen::<[u8; 16]>());
+    // Same generator as the verifier above, and for the same reason: `state`
+    // is what ties the redirect back to this run, so a guessable one is a
+    // CSRF hole rather than a cosmetic flaw.
+    let state: String = URL_SAFE_NO_PAD.encode(rand::random::<[u8; 16]>());
 
     let auth_url = format!(
         "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
@@ -2883,5 +2889,85 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// RFC 7636 §4.1: the verifier is 43–128 characters from the unreserved
+    /// set, and §4.2: the challenge is `BASE64URL(SHA256(ASCII(verifier)))`.
+    ///
+    /// Untested until the `rand 0.8 → 0.10` migration, which is how it came to
+    /// be written: the two calls that produce these values changed, the suite
+    /// had nothing to say about it, and "it compiles" is not the standard this
+    /// particular pair of strings should be held to.
+    #[test]
+    fn the_pkce_pair_satisfies_rfc_7636() {
+        let (verifier, challenge) = generate_pkce();
+
+        // 32 bytes, base64url without padding.
+        assert_eq!(verifier.len(), 43, "verifier: {verifier}");
+        assert!(
+            (43..=128).contains(&verifier.len()),
+            "RFC 7636 allows 43 to 128 characters"
+        );
+        assert_eq!(challenge.len(), 43, "challenge: {challenge}");
+
+        // The challenge has to be the hash *of the encoded verifier's ASCII*,
+        // not of the raw bytes behind it — getting that wrong yields a pair
+        // the authorization server rejects with nothing to say why.
+        let expected = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+        assert_eq!(challenge, expected);
+    }
+
+    /// Both strings go into a URL's query without further escaping, so the
+    /// alphabet is part of the contract: a `+`, `/` or `=` would arrive
+    /// meaning something else.
+    #[test]
+    fn the_pkce_pair_is_url_safe() {
+        let (verifier, challenge) = generate_pkce();
+        let unreserved = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+
+        assert!(verifier.chars().all(unreserved), "verifier: {verifier}");
+        assert!(challenge.chars().all(unreserved), "challenge: {challenge}");
+    }
+
+    /// **The property a botched migration would break.** A generator swapped
+    /// for a fixed seed, or a constant, still compiles and still produces a
+    /// well-formed pair of the right length — and every login would share one
+    /// verifier. Distinctness across calls is the cheapest thing that notices.
+    #[test]
+    fn every_pkce_pair_is_different() {
+        let pairs: Vec<(String, String)> = (0..16).map(|_| generate_pkce()).collect();
+
+        let verifiers: std::collections::BTreeSet<&str> =
+            pairs.iter().map(|(v, _)| v.as_str()).collect();
+        assert_eq!(verifiers.len(), pairs.len(), "a verifier repeated");
+
+        let challenges: std::collections::BTreeSet<&str> =
+            pairs.iter().map(|(_, c)| c.as_str()).collect();
+        assert_eq!(challenges.len(), pairs.len(), "a challenge repeated");
+    }
+
+    /// The `state` parameter is generated the same way and for a stronger
+    /// reason — it is what ties a redirect back to this run, so a predictable
+    /// one is a CSRF hole. Generated inline rather than in a function, so this
+    /// asserts the generator rather than the call site.
+    #[test]
+    fn the_oauth_state_is_random_and_url_safe() {
+        let states: Vec<String> = (0..16)
+            .map(|_| URL_SAFE_NO_PAD.encode(rand::random::<[u8; 16]>()))
+            .collect();
+
+        for state in &states {
+            assert_eq!(state.len(), 22, "16 bytes, base64url unpadded: {state}");
+            assert!(
+                state
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                "{state}"
+            );
+        }
+
+        let distinct: std::collections::BTreeSet<&str> =
+            states.iter().map(String::as_str).collect();
+        assert_eq!(distinct.len(), states.len(), "a state repeated");
     }
 }

@@ -386,9 +386,10 @@ function New-CaseEnv([string]$Name) {
     Clear-Env 'MAPBOX_CLI_AUTH'
     Clear-Env 'MAPBOX_TILESETS_CLI'
     Clear-Env 'MAPBOX_CLI_INSTALL_SOURCE'
-    # A developer with this set in their own shell would otherwise turn every
-    # marker case into a failure that looks like the marker broke.
+    # A developer with either of these set in their own shell would otherwise
+    # turn every marker case into a failure that looks like the marker broke.
     Clear-Env 'DISABLE_TELEMETRY'
+    Clear-Env 'MAPBOX_CLI_NO_TELEMETRY'
     # What install.ps1 reads to decide where it is running. Set explicitly so
     # the same case means the same thing on Windows and on the machine this is
     # written on.
@@ -510,6 +511,41 @@ try {
     $logged = @([IO.File]::ReadAllLines($RequestLog) | Where-Object { $_ })
     $marked = @($logged | Where-Object { $_ -like "* $InstallerUa ($Target) src/dockerfile" })
     Expect-Equal '2' ([string]$marked.Count) 'DISABLE_TELEMETRY=0 is not an opt-out'
+    Clear-Env 'DISABLE_TELEMETRY'
+    Clear-Env 'MAPBOX_CLI_INSTALL_SOURCE'
+
+    Start-Case 'MAPBOX_CLI_NO_TELEMETRY is honoured, and outranks the old name'
+    New-CaseEnv 'telemetry-new-name'
+    $env:MAPBOX_CLI_INSTALL_SOURCE = 'dockerfile'
+    # The documented name, which the binary reads and this script did not until
+    # mapbox/mapbox-cli-private#140.
+    $env:MAPBOX_CLI_NO_TELEMETRY = '1'
+    [IO.File]::WriteAllText($RequestLog, '')
+    Invoke-Installer
+    Expect-Status 0 'exits 0 - the install is not what is being switched off'
+    $logged = @([IO.File]::ReadAllLines($RequestLog) | Where-Object { $_ })
+    $bare = @($logged | Where-Object { $_ -like "* $InstallerUa" })
+    Expect-Equal '2' ([string]$logged.Count) 'still made both requests'
+    Expect-Equal '2' ([string]$bare.Count) 'each carries the product token and nothing else'
+    # Both set and disagreeing. The new name is the documented one, so an
+    # explicit 0 on it beats a DISABLE_TELEMETRY=1 left in an image from before
+    # the rename - otherwise the old variable could never be retired.
+    $env:MAPBOX_CLI_NO_TELEMETRY = '0'
+    $env:DISABLE_TELEMETRY = '1'
+    [IO.File]::WriteAllText($RequestLog, '')
+    Invoke-Installer
+    $logged = @([IO.File]::ReadAllLines($RequestLog) | Where-Object { $_ })
+    $marked = @($logged | Where-Object { $_ -like "* $InstallerUa ($Target) src/dockerfile" })
+    Expect-Equal '2' ([string]$marked.Count) 'the new name wins when the two disagree'
+    # And the other direction, so precedence is pinned rather than implied.
+    $env:MAPBOX_CLI_NO_TELEMETRY = '1'
+    $env:DISABLE_TELEMETRY = '0'
+    [IO.File]::WriteAllText($RequestLog, '')
+    Invoke-Installer
+    $logged = @([IO.File]::ReadAllLines($RequestLog) | Where-Object { $_ })
+    $bare = @($logged | Where-Object { $_ -like "* $InstallerUa" })
+    Expect-Equal '2' ([string]$bare.Count) 'and wins in the opt-out direction too'
+    Clear-Env 'MAPBOX_CLI_NO_TELEMETRY'
     Clear-Env 'DISABLE_TELEMETRY'
     Clear-Env 'MAPBOX_CLI_INSTALL_SOURCE'
 

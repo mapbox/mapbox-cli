@@ -59,6 +59,15 @@ the Mapbox APIs' own response bodies are not.
   this release should be able to find it. Both are now covered by tests
   against RFC 7636, which they were not before.
 
+- Both installers now honour `MAPBOX_CLI_NO_TELEMETRY`, the name the binary
+  reads. They were left on the old `DISABLE_TELEMETRY` when the binary was
+  renamed, so neither name silenced both halves: the documented variable
+  stopped the CLI's markers but not the installer's, and the old one did the
+  reverse. `DISABLE_TELEMETRY` keeps working **in the installers only** — the
+  binary's break was announced, and a script fetched and run in one line has
+  no release notes in front of the reader, so breaking an opt-out there would
+  have happened silently. When both are set the new name wins.
+
 ## 0.1.8 - 2026-09-14
 
 Initial beta release. The next release is `0.2.0`.

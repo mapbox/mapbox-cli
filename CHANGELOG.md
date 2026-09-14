@@ -10,6 +10,18 @@ breaking is [written down in CONTRIBUTING.md](CONTRIBUTING.md#compatibility) —
 command names, flags, the two output modes and the exit codes are promises;
 the Mapbox APIs' own response bodies are not.
 
+## Unreleased
+
+### Security
+
+- `rustls` moved to 0.23.45 in `Cargo.lock`, fixing
+  [RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285) —
+  "TLS 1.3 handshake messages incorrectly accepted across encryption level
+  boundaries", medium severity, published 2026-09-14. `rustls` is reached
+  through `reqwest`, so every HTTPS request this CLI makes used the affected
+  version; nothing in this crate had to change. Lockfile only, and the one
+  crate.
+
 ## 0.1.8 - 2026-09-14
 
 Initial beta release. The next release is `0.2.0`.

@@ -43,6 +43,14 @@ the Mapbox APIs' own response bodies are not.
   gets the 900-second transfer budget rather than the 60-second one, since
   nothing bounds a file the way a command line bounds what can be typed.
 
+### Changed
+
+- The advice under a transport failure now names `ALL_PROXY` alongside
+  `HTTPS_PROXY` and `NO_PROXY`, and says that a SOCKS proxy is not supported.
+  `ALL_PROXY=socks5://…` fails the request rather than being ignored, and
+  `unsupported scheme socks5` in the message is the part that distinguishes
+  it from the network being down.
+
 ## 0.1.8 - 2026-09-14
 
 Initial beta release. The next release is `0.2.0`.

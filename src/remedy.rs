@@ -210,7 +210,9 @@ pub fn for_transport() -> Remedy {
         .with_fix(
             "Nothing was reached, so nothing was rejected — this is the network, not \
              the request. Check connectivity and any proxy in the environment \
-             (HTTPS_PROXY, NO_PROXY).",
+             (HTTPS_PROXY, ALL_PROXY, NO_PROXY). A SOCKS proxy is not supported: \
+             the message above says `unsupported scheme socks5` when that is the \
+             cause.",
         )
         .with_doc(Some(STATUS_PAGE))
 }

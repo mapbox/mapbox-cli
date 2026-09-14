@@ -1,0 +1,97 @@
+[package]
+name = "mapbox-cli"
+version = "0.1.8"
+edition = "2021"
+description = "A command-line interface for Mapbox APIs, with commands generated at build time from OpenAPI specs."
+repository = "https://github.com/mapbox/cli"
+# The file rather than an SPDX expression: LICENSE is Mapbox's own terms and
+# not an OSI licence, so there is no identifier that says what it grants.
+license-file = "LICENSE"
+# A rail against an accidental `cargo publish`, not a decision that it never
+# could be reconsidered: crates.io is for crates anyone may use under an open
+# licence, and a publish cannot be taken back.
+publish = false
+# The oldest Rust this crate compiles on, measured rather than aspirational:
+# `CredentialLock` in src/auth.rs calls `File::lock`/`unlock`, stabilised in
+# 1.89, and 1.88 rejects the crate with five `use of unstable library feature
+# file_lock` errors. Every other recent std call here lands below that floor
+# (`Option::is_none_or` 1.82, `u64::is_multiple_of` 1.87), so `file_lock` is
+# the whole constraint.
+#
+# Declaring it buys one thing: cargo refuses a too-old toolchain with a single
+# line naming this number, rather than a page of E0658s pointing into std that
+# read like a broken checkout. Distinct from the toolchain we build and
+# release with, which is pinned separately and may be newer than this floor.
+rust-version = "1.89"
+# Records the `openapi-specs` commit for `mapbox generate-skills` to print in
+# the header of every file it writes. Best-effort — see build.rs for why it
+# can never fail the build.
+build = "build.rs"
+
+[[bin]]
+name = "mapbox"
+path = "src/main.rs"
+
+# Rules the compiler can hold, rather than a reader. Each of these is an
+# invariant this repo already had and only documented — the kind that survives
+# until somebody writes the obvious thing at two in the morning.
+[lints.rust]
+# There is no `unsafe` in this crate outside a couple of `env::set_var` calls
+# in tests, and there is no reason for there to be: nothing here does FFI,
+# manual memory management or lock-free anything. Denying it means adding some
+# is a deliberate `#[allow]` with a reason next to it rather than a diff nobody
+# looks twice at.
+unsafe_code = "deny"
+
+[lints.clippy]
+# The output contract, made mechanical. This repo's rule is: don't reintroduce a
+# `println!` for a result — stdout belongs to `output::emit`, which is the
+# single place `--output` is honoured and the single place a result is
+# written. There are no violations today; this keeps it that way.
+# `print_stderr` is deliberately *not* denied: warnings and progress go to
+# stderr from a dozen places on purpose, several of them outside the output
+# machinery by design (`tilesets_cli`, `http`'s timeout warning).
+print_stdout = "deny"
+# Debugging aids that should never reach a release. `dbg!` writes to stderr
+# and would sail past the rule above.
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env", "string"] }
+# Renders `mapbox completion <shell>` from the same `Command` tree everything
+# else here is built from. Kept to the default features on purpose: the
+# dynamic-completion half is `unstable-dynamic`, and value completion is out
+# of scope (see src/completion.rs).
+clap_complete = "4"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "blocking",
+    "multipart",
+    "rustls-tls",
+    "charset",
+    "http2",
+] }
+anyhow = "1"
+# `agent-skills` fetches one gzipped tarball from codeload and extracts the
+# `skills/` prefix. Per-file fetching is the alternative and it is not one:
+# 158 files against an unauthenticated 60-requests-an-hour API budget.
+# Default features off on both: this reads entries itself rather than calling
+# `Archive::unpack`, so `tar`'s xattr and file-time preservation are weight
+# with no caller, and `miniz_oxide` is the pure-Rust inflate that keeps the
+# graph free of a C zlib.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+tar = { version = "0.4", default-features = false }
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+open = "5"
+dirs = "5"
+
+[dev-dependencies]
+# Integration tests build fake Mapbox tokens; same crate the CLI already uses.
+base64 = "0.22"

@@ -1,0 +1,479 @@
+openapi: 3.0.3
+info:
+  title: Mapbox Tokens API
+  version: 2.0.0
+  description: |-
+    The Tokens API lets you programmatically create, read, update, and delete the access tokens that authorize requests to Mapbox APIs. It also lets you validate a token and list the scopes available to an account.
+    Mapbox uses access tokens to associate API requests with your account. There are three kinds of tokens:
+
+      - **Public tokens** (`pk`) are safe to embed in client-side code. They may
+        only contain public scopes.
+      - **Secret tokens** (`sk`) must be kept private and are used server-side.
+        They may contain both public and secret scopes. The `token` string for a
+        secret token is only returned once, when the token is created.
+      - **Temporary tokens** (`tk`) are short-lived tokens that expire within one
+        hour. They embed their metadata in the token itself.
+  x-mapbox-docs-path: accounts/tokens
+  x-mapbox-docs-products:
+  - accounts
+  x-mapbox-docs-description: Create, retrieve, update, delete, and validate Mapbox access tokens, and
+    list the scopes available to an account.
+  license:
+    name: Mapbox Terms of Service
+    url: https://www.mapbox.com/legal/tos
+servers:
+- url: https://api.mapbox.com
+  description: Mapbox production API
+security:
+- access_token: []
+tags:
+- name: Tokens
+  description: Create, list, update, delete, and validate access tokens.
+- name: Scopes
+  description: List the token scopes available to an account.
+paths:
+  /tokens/v2/{username}:
+    get:
+      tags:
+      - Tokens
+      summary: List tokens
+      description: Lists the access tokens for an account. The requesting token must have the `tokens:read`
+        scope. Secret token (`sk`) entries do not include the `token` string. Results are paginated; when
+        more results are available a `Link` header with `rel="next"` is returned.
+      operationId: listTokens
+      x-mapbox-docs-examples:
+      - example-id: list-tokens
+        title: List tokens for an account
+      parameters:
+      - $ref: '#/components/parameters/Username'
+      - name: default
+        in: query
+        required: false
+        description: If `true`, return only the account's default token. If `false`, exclude the default
+          token from the results.
+        schema:
+          type: boolean
+      - name: limit
+        in: query
+        required: false
+        description: The maximum number of tokens to return.
+        schema:
+          type: integer
+          minimum: 1
+      - name: sortby
+        in: query
+        required: false
+        description: Sort the tokens by their creation or last-modified date.
+        schema:
+          type: string
+          enum:
+          - created
+          - modified
+      - name: start
+        in: query
+        required: false
+        description: The token ID after which to start the listing, used for pagination. Supply the value
+          from the `Link` header of the previous response.
+        schema:
+          type: string
+      - name: usage
+        in: query
+        required: false
+        description: Filter the returned tokens by token type.
+        schema:
+          type: string
+          enum:
+          - pk
+          - sk
+      responses:
+        '200':
+          description: An array of token metadata objects.
+          headers:
+            Link:
+              description: A pagination link with `rel="next"`, present only when more tokens are available.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Token'
+              examples:
+                list-tokens:
+                  summary: A list of tokens
+                  value:
+                  - id: cijucimbe000brbkt48d0dhcx
+                    usage: pk
+                    client: api
+                    default: false
+                    note: a public token
+                    scopes:
+                    - styles:read
+                    - fonts:read
+                    created: '2016-01-25T19:07:07.621Z'
+                    modified: '2016-01-26T00:39:57.941Z'
+                    allowedUrls:
+                    - https://docs.mapbox.com
+                    token: pk.eyJ1Ijoic2NvdGhpcyIsImEi.sbihZCZJ56-fsFNKHXF8YQ
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      x-mapbox-cli-command:
+      - accounts
+      - list-tokens
+  /tokens/v2:
+    get:
+      tags:
+      - Tokens
+      summary: Retrieve a token
+      description: Checks whether a token is valid and returns metadata about it. Provide the token to
+        check as the `access_token` query parameter. The response always uses HTTP `200` and reports the
+        outcome in the `code` field (`TokenValid`, `TokenMalformed`, `TokenInvalid`, `TokenExpired`, or
+        `TokenRevoked`).
+      operationId: retrieveToken
+      x-mapbox-docs-examples:
+      - example-id: retrieve-token
+        title: Retrieve a valid token
+      responses:
+        '200':
+          description: The validation result for the supplied token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenValidationResult'
+              examples:
+                retrieve-token:
+                  summary: A valid public token
+                  value:
+                    code: TokenValid
+                    token:
+                      usage: pk
+                      user: mapbox
+                      authorization: cijucimbe000brbkt48d0dhcx
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      x-mapbox-cli-command:
+      - accounts
+      - retrieve-token
+  /scopes/v1/{username}:
+    get:
+      tags:
+      - Scopes
+      summary: List scopes
+      description: 'Lists the token scopes available to an account. The requesting token must have the
+        `scopes:list` scope. Public scopes (those usable with public `pk` tokens) include `"public": true`.'
+      operationId: listScopes
+      x-mapbox-docs-examples:
+      - example-id: list-scopes
+        title: List the scopes available to an account
+      parameters:
+      - $ref: '#/components/parameters/Username'
+      responses:
+        '200':
+          description: An array of scope objects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Scope'
+              examples:
+                list-scopes:
+                  summary: A list of scopes
+                  value:
+                  - id: scopes:list
+                    description: List all available scopes.
+                  - id: styles:read
+                    public: true
+                    description: Read styles.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      x-mapbox-cli-command:
+      - accounts
+      - list-scopes
+components:
+  securitySchemes:
+    access_token:
+      type: apiKey
+      in: query
+      name: access_token
+      description: A Mapbox access token supplied as the `access_token` query parameter. The token must
+        carry the scope required by the endpoint.
+  parameters:
+    Username:
+      name: username
+      in: path
+      required: true
+      description: The username of the account that owns the tokens.
+      schema:
+        type: string
+    TokenId:
+      name: token_id
+      in: path
+      required: true
+      description: The unique identifier of the token (the `id` field of a token object), not the token
+        string itself.
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: The request was malformed — for example, the token string was supplied where a token
+        ID was expected.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: The access token is missing or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: The account or token was not found, or the requesting token lacks the required scope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnprocessableEntity:
+      description: The request could not be processed — for example, the requested scopes exceed those
+        of the authorizing token, or `expires` is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: The rate limit (100 requests per minute per account) has been exceeded.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Token:
+      type: object
+      description: Metadata describing a permanent (public or secret) access token.
+      properties:
+        id:
+          type: string
+          description: The unique identifier for the token.
+          example: cijucimbe000brbkt48d0dhcx
+        usage:
+          type: string
+          description: The token type.
+          enum:
+          - pk
+          - sk
+        client:
+          type: string
+          description: The client that created the token. Always `api`.
+          example: api
+        default:
+          type: boolean
+          description: Whether this is the account's default token.
+        note:
+          type: string
+          maxLength: 128
+          description: A human-readable description of the token.
+        scopes:
+          type: array
+          description: The scopes granted to the token.
+          items:
+            type: string
+          example:
+          - styles:read
+          - fonts:read
+        created:
+          type: string
+          format: date-time
+          description: The date and time the token was created.
+        modified:
+          type: string
+          format: date-time
+          description: The date and time the token was last modified.
+        allowedUrls:
+          type: array
+          description: The URLs the token is restricted to. A maximum of 100 URLs is allowed per token.
+          items:
+            type: string
+          example:
+          - https://docs.mapbox.com
+        token:
+          type: string
+          description: The token string. Omitted from list and update responses for secret (`sk`) tokens,
+            which are only returned in full when first created.
+          example: pk.eyJ1Ijoic2NvdGhpcyIsImEi.sbihZCZJ56-fsFNKHXF8YQ
+      required:
+      - id
+      - usage
+      - client
+      - scopes
+    TemporaryToken:
+      type: object
+      description: A newly created temporary (`tk`) token.
+      properties:
+        token:
+          type: string
+          description: The temporary token string. Its metadata is embedded in the token.
+          example: tk.eyJ1IjoibWFwYm94IiwiZXhwIjoxNDcz.ZepsWvpjTMlpePE4IQBs0g
+        issued_at:
+          type: string
+          format: date-time
+          description: The date and time the token was issued.
+        expires:
+          type: string
+          format: date-time
+          description: The date and time the token expires.
+        expires_in:
+          type: integer
+          description: The number of seconds until the token expires.
+          example: 3600
+      required:
+      - token
+      - issued_at
+      - expires
+      - expires_in
+    CreateTokenRequest:
+      type: object
+      description: The request body for creating a permanent public (`pk`) or secret (`sk`) token.
+      properties:
+        note:
+          type: string
+          maxLength: 128
+          description: A human-readable description of the token.
+        scopes:
+          type: array
+          description: The scopes to grant the token. Every requested scope must also be present on the
+            authorizing token.
+          items:
+            type: string
+        allowedUrls:
+          type: array
+          description: The URLs to restrict the token to (maximum 100).
+          items:
+            type: string
+      additionalProperties: false
+      required:
+      - scopes
+    CreateTemporaryTokenRequest:
+      type: object
+      description: The request body for creating a temporary (`tk`) token.
+      properties:
+        expires:
+          type: string
+          format: date-time
+          description: The date and time the token should expire, as an ISO 8601 timestamp. Must be in
+            the future and no more than one hour from now.
+        scopes:
+          type: array
+          description: The scopes to grant the token. Every requested scope must also be present on the
+            authorizing token.
+          items:
+            type: string
+      additionalProperties: false
+      required:
+      - expires
+      - scopes
+    UpdateTokenRequest:
+      type: object
+      description: The request body for updating a token. Only the fields supplied are changed.
+      properties:
+        note:
+          type: string
+          maxLength: 128
+          description: A new human-readable description for the token.
+        scopes:
+          type: array
+          description: The new set of scopes for the token. Every scope must also be present on the authorizing
+            token.
+          items:
+            type: string
+        allowedUrls:
+          type: array
+          description: The new set of URLs to restrict the token to (maximum 100). Set to `null` to remove
+            the URL restriction.
+          nullable: true
+          items:
+            type: string
+    TokenValidationResult:
+      type: object
+      description: The result of validating a token.
+      properties:
+        code:
+          type: string
+          description: The validation outcome.
+          enum:
+          - TokenValid
+          - TokenMalformed
+          - TokenInvalid
+          - TokenExpired
+          - TokenRevoked
+        token:
+          type: object
+          description: Metadata about the token. Present when the token could be parsed.
+          properties:
+            usage:
+              type: string
+              enum:
+              - pk
+              - sk
+              - tk
+            user:
+              type: string
+              description: The username the token belongs to.
+            authorization:
+              type: string
+              description: The token's ID. Present for permanent tokens.
+            client:
+              type: string
+              description: The client that created the token. Present for `tk` tokens.
+            created:
+              type: string
+              format: date-time
+              description: The creation time. Present for `tk` tokens.
+            expires:
+              type: string
+              format: date-time
+              description: The expiry time. Present for `tk` tokens.
+            scopes:
+              type: array
+              description: The token's scopes. Present for `tk` tokens.
+              items:
+                type: string
+      required:
+      - code
+    Scope:
+      type: object
+      description: A token scope.
+      properties:
+        id:
+          type: string
+          description: The scope identifier.
+          example: styles:read
+        description:
+          type: string
+          description: A human-readable description of what the scope permits.
+        public:
+          type: boolean
+          description: Whether the scope is available to public (`pk`) tokens. Absent for non-public scopes.
+      required:
+      - id
+      - description
+    Error:
+      type: object
+      description: A standard error response.
+      properties:
+        message:
+          type: string
+          description: A human-readable description of the error.
+      required:
+      - message

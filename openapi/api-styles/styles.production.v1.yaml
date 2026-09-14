@@ -1,0 +1,1035 @@
+openapi: 3.1.0
+info:
+  title: Mapbox Styles API
+  description: |
+    The Mapbox Styles API lets you read and change map styles, fonts, and images.
+    Map styles are JSON documents that conform to the Mapbox Style Specification.
+
+    The Styles API powers Mapbox Studio and is used by Mapbox GL JS and the Mobile SDKs.
+
+    **Limits:**
+    - 2,000 requests per minute (default rate limit)
+    - Styles cannot exceed 1 MB
+    - Maximum 15 sources per style
+    - Responses are cached for 15 minutes
+  version: 1.0.0
+  x-mapbox-docs-path: /api/maps/styles
+  x-mapbox-docs-products:
+  - Styles API
+  x-mapbox-docs-description: Read and change map styles, sprites, and fonts. The Styles API powers Mapbox
+    Studio and is used by Mapbox GL JS and the Mobile SDKs.
+  contact:
+    name: Mapbox
+    url: https://docs.mapbox.com/api/maps/styles/
+  license:
+    name: Mapbox Terms of Service
+    url: https://www.mapbox.com/legal/tos
+servers:
+- url: https://api.mapbox.com
+  description: Production
+security:
+- ApiKeyAuth: []
+tags:
+- name: Styles
+  description: Create, read, update, and delete map styles
+- name: Sprites
+  description: Manage SVG images within a style's sprite
+- name: Folders
+  description: Organize styles, tilesets, and datasets into folders
+- name: Sessions
+  description: Billing session tracking endpoints
+paths:
+  /styles/v1/{username}:
+    get:
+      operationId: listStyles
+      x-mapbox-docs-examples:
+      - example-id: list-styles
+        title: List styles
+      summary: List styles
+      description: |
+        Retrieve metadata for all styles in an account, with pagination support.
+
+        Supports pagination via `limit` and `start` query parameters. Use the
+        `Link` response header to retrieve subsequent pages.
+      tags:
+      - Styles
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - name: draft
+        in: query
+        description: When present, includes draft styles in the listing.
+        schema:
+          type: boolean
+      - name: start
+        in: query
+        description: Style ID to use as a pagination cursor (exclusive).
+        schema:
+          type: string
+      - name: limit
+        in: query
+        description: Maximum number of styles to return.
+        schema:
+          type: integer
+          minimum: 1
+      - name: deleted
+        in: query
+        description: When `true`, returns recently deleted styles instead of active ones.
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: A list of style metadata objects.
+          headers:
+            Link:
+              description: Points to the next page when more results are available (`rel="next"`).
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StyleListItem'
+              examples:
+                list-styles:
+                  summary: A list of styles
+                  value:
+                  - version: 8
+                    name: Basic
+                    created: '2015-10-30T22:18:31.111Z'
+                    id: cjikt35x83t1z2rnxpdmjs7y7
+                    modified: '2015-10-30T22:18:31.111Z'
+                    owner: examples
+                    visibility: private
+                    protected: false
+                    draft: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      x-mapbox-cli-command:
+      - styles
+      - list
+    post:
+      operationId: createStyle
+      x-mapbox-docs-examples:
+      - example-id: create-style
+        title: Create a style
+      summary: Create a style
+      description: |
+        Add a new style to an account. The server automatically generates the
+        `created`, `id`, `modified`, and `owner` fields. Glyph and sprite
+        endpoints are overwritten unless Mapbox defaults are used.
+
+        If `name` is omitted, it defaults to the style ID. The style must be
+        valid JSON conforming to the Mapbox Style Specification — invalid styles
+        return a 422.
+      tags:
+      - Styles
+      parameters:
+      - $ref: '#/components/parameters/username'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StyleInput'
+            example:
+              name: cool_map
+              version: 8
+              sources: {}
+              layers: []
+              glyphs: mapbox://fonts/mapbox/{fontstack}/{range}.pbf
+              sprite: mapbox://sprites/mapbox/streets-v12
+      responses:
+        '201':
+          description: Style created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Style'
+              examples:
+                create-style:
+                  summary: A newly created style
+                  value:
+                    version: 8
+                    name: cool_map
+                    metadata: {}
+                    sources: {}
+                    layers: []
+                    created: '2015-10-30T22:18:31.111Z'
+                    id: cjikt35x83t1z2rnxpdmjs7y7
+                    modified: '2015-10-30T22:18:31.111Z'
+                    owner: examples
+                    visibility: private
+                    protected: false
+                    draft: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/InvalidStyle'
+      x-mapbox-cli-command:
+      - styles
+      - create
+  /styles/v1/{username}/{style_id}:
+    get:
+      operationId: getStyle
+      x-mapbox-docs-examples:
+      - example-id: retrieve-a-style
+        title: Retrieve a style
+      summary: Retrieve a style
+      description: |
+        Obtain a style document in JSON format conforming to the Mapbox Style Specification.
+      tags:
+      - Styles
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      - name: download
+        in: query
+        description: When present, returns the style as a downloadable JSON file attachment.
+        schema:
+          type: boolean
+      - name: optimize
+        in: query
+        description: When `true`, rewrites vector source URLs for cache optimization.
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: The style object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Style'
+              examples:
+                retrieve-a-style:
+                  summary: A style object
+                  value:
+                    version: 8
+                    name: Basic
+                    metadata: {}
+                    sources: {}
+                    layers: []
+                    created: '2015-10-30T22:18:31.111Z'
+                    id: cjikt35x83t1z2rnxpdmjs7y7
+                    modified: '2015-10-30T22:18:31.111Z'
+                    owner: examples
+                    visibility: private
+                    protected: false
+                    draft: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-mapbox-cli-command:
+      - styles
+      - get
+    patch:
+      operationId: updateStyle
+      x-mapbox-docs-examples:
+      - example-id: update-a-style
+        title: Update a style
+      summary: Update a style
+      description: |
+        Modify an existing style. The `name` property is required. Remove
+        `created` and `modified` fields before submitting — including them
+        returns a 422. Glyph and sprite endpoints are overwritten the same
+        way as on creation. Cross-version updates (e.g. v7 to v8) are rejected.
+      tags:
+      - Styles
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StyleInput'
+      responses:
+        '200':
+          description: Updated style object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Style'
+              examples:
+                update-a-style:
+                  summary: An updated style object
+                  value:
+                    version: 8
+                    name: cool_map
+                    metadata: {}
+                    sources: {}
+                    layers: []
+                    created: '2015-10-30T22:18:31.111Z'
+                    id: cjikt35x83t1z2rnxpdmjs7y7
+                    modified: '2015-10-30T22:18:45.000Z'
+                    owner: examples
+                    visibility: private
+                    protected: false
+                    draft: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/InvalidStyle'
+      x-mapbox-cli-command:
+      - styles
+      - update
+    delete:
+      operationId: deleteStyle
+      x-mapbox-docs-examples:
+      - example-id: delete-a-style
+        title: Delete a style
+      summary: Delete a style
+      description: |
+        Remove a style and all associated sprites permanently.
+        Deleted styles can be restored within 30 days via the restore endpoint.
+      tags:
+      - Styles
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      responses:
+        '204':
+          description: Style deleted successfully.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-mapbox-cli-command:
+      - styles
+      - delete
+  /styles/v1/{username}/{style_id}/draft:
+    get:
+      operationId: getStyleDraft
+      x-mapbox-docs-examples:
+      - example-id: get-style-draft
+        title: Retrieve a style draft
+      summary: Retrieve a style draft
+      description: |
+        Returns the draft version of a style. Each style maintains separate
+        published and draft versions — Mapbox Studio always edits the draft.
+        If no draft exists, the published style is returned.
+      tags:
+      - Styles
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      responses:
+        '200':
+          description: The style object (draft or published).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Style'
+              examples:
+                get-style-draft:
+                  summary: A style draft object
+                  value:
+                    version: 8
+                    name: Basic
+                    metadata: {}
+                    sources: {}
+                    layers: []
+                    created: '2015-10-30T22:18:31.111Z'
+                    id: cjikt35x83t1z2rnxpdmjs7y7
+                    modified: '2015-10-30T22:18:31.111Z'
+                    owner: examples
+                    visibility: private
+                    protected: false
+                    draft: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-mapbox-cli-command:
+      - styles
+      - draft
+      - get
+    patch:
+      operationId: updateStyleDraft
+      x-mapbox-docs-examples:
+      - example-id: update-style-draft
+        title: Update a style draft
+      summary: Update a style draft
+      description: |
+        Updates the draft version of a style. If no draft exists, one is created
+        from the published version. Draft changes do not affect the published
+        version automatically.
+      tags:
+      - Styles
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StyleInput'
+      responses:
+        '200':
+          description: Updated draft style object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Style'
+              examples:
+                update-style-draft:
+                  summary: An updated style draft object
+                  value:
+                    version: 8
+                    name: cool_map
+                    metadata: {}
+                    sources: {}
+                    layers: []
+                    created: '2015-10-30T22:18:31.111Z'
+                    id: cjikt35x83t1z2rnxpdmjs7y7
+                    modified: '2015-10-30T22:18:45.000Z'
+                    owner: examples
+                    visibility: private
+                    protected: false
+                    draft: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/InvalidStyle'
+      x-mapbox-cli-command:
+      - styles
+      - draft
+      - update
+    delete:
+      operationId: deleteStyleDraft
+      x-mapbox-docs-examples:
+      - example-id: delete-style-draft
+        title: Delete a style draft
+      summary: Delete a style draft
+      description: |
+        Deletes only the draft version of a style, reverting it to the published
+        version. The published style is not affected.
+      tags:
+      - Styles
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      responses:
+        '204':
+          description: Draft deleted successfully.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-mapbox-cli-command:
+      - styles
+      - draft
+      - delete
+  /styles/v1/{username}/{style_id}/sprite:
+    get:
+      operationId: getSpriteJson
+      x-mapbox-docs-examples:
+      - example-id: request-sprite-json
+        title: Request sprite JSON
+      summary: Retrieve sprite JSON
+      description: |
+        Fetch sprite JSON metadata containing image coordinates and dimensions.
+        Immutable sprite URLs enable long caching.
+      tags:
+      - Sprites
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      responses:
+        '200':
+          description: Sprite layout JSON.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpriteLayout'
+              examples:
+                request-sprite-json:
+                  summary: Sprite layout JSON
+                  value:
+                    aerialway-15:
+                      x: 0
+                      y: 0
+                      width: 15
+                      height: 15
+                      pixelRatio: 1
+                      sdf: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-mapbox-cli-command:
+      - sprites
+      - get-json
+    post:
+      operationId: batchUploadSprite
+      x-mapbox-docs-examples:
+      - example-id: add-multiple-images-to-sprite
+        title: Add two new images from local files ('star.svg' and 'square.svg') to existing sprite
+      summary: Add multiple images to a sprite
+      description: |
+        Batch add up to 25 SVG images to a style's sprite via multipart form data.
+        Images must be submitted under the `images` field.
+
+        Limits:
+        - Maximum 25 images per request
+        - Maximum 100 KB per image
+        - Images must be SVG format
+      tags:
+      - Sprites
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - images
+              properties:
+                images:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '200':
+          description: Updated sprite layout JSON.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpriteLayout'
+              examples:
+                add-multiple-images-to-sprite:
+                  summary: Updated sprite after batch upload
+                  value:
+                    star:
+                      x: 0
+                      y: 0
+                      width: 15
+                      height: 15
+                      pixelRatio: 1
+                      sdf: false
+                    square:
+                      x: 15
+                      y: 0
+                      width: 15
+                      height: 15
+                      pixelRatio: 1
+                      sdf: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-mapbox-cli-command:
+      - sprites
+      - upload-batch
+    delete:
+      operationId: batchDeleteSprite
+      x-mapbox-docs-examples:
+      - example-id: delete-multiple-images-from-sprite
+        title: Delete two images named 'star' and 'square' from existing sprite
+      summary: Delete multiple images from a sprite
+      description: |
+        Batch remove images from a style's sprite. The request body must be a
+        JSON array of image name strings. Maximum 150 image names per request.
+      tags:
+      - Sprites
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: string
+              maxItems: 150
+            example:
+            - airfield-15
+            - airport-15
+      responses:
+        '200':
+          description: Updated sprite layout JSON.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpriteLayout'
+              examples:
+                delete-multiple-images-from-sprite:
+                  summary: Sprite layout after batch delete
+                  value:
+                    aerialway-15:
+                      x: 0
+                      y: 0
+                      width: 15
+                      height: 15
+                      pixelRatio: 1
+                      sdf: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-mapbox-cli-command:
+      - sprites
+      - delete-batch
+  /styles/v1/{username}/{style_id}/sprite/{icon_name}:
+    put:
+      operationId: uploadSpriteImage
+      x-mapbox-docs-examples:
+      - example-id: add-image-to-sprite
+        title: Add a new image (`aerialway`) to an existing sprite
+      summary: Add image to a sprite
+      description: |
+        Insert a single SVG image into a style's sprite. Send raw SVG data in
+        the request body — form encoding is not supported.
+
+        Limits:
+        - Images can be up to 512 pixels in each dimension
+        - Each image must be smaller than 400 KB
+        - Image names limited to 255 characters
+        - Sprites can contain up to 1,000 images
+        - Must be SVG format
+      tags:
+      - Sprites
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      - $ref: '#/components/parameters/icon_name'
+      requestBody:
+        required: true
+        content:
+          image/svg+xml:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Updated sprite layout JSON.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpriteLayout'
+              examples:
+                add-image-to-sprite:
+                  summary: Sprite layout after adding aerialway image
+                  value:
+                    aerialway-15:
+                      x: 0
+                      y: 0
+                      width: 15
+                      height: 15
+                      pixelRatio: 1
+                      sdf: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-mapbox-cli-command:
+      - sprites
+      - upload
+    delete:
+      operationId: deleteSpriteImage
+      x-mapbox-docs-examples:
+      - example-id: delete-image-from-sprite
+        title: Delete image from sprite
+      summary: Delete image from a sprite
+      description: Remove a single image from a style's sprite.
+      tags:
+      - Sprites
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      - $ref: '#/components/parameters/icon_name'
+      responses:
+        '200':
+          description: Updated sprite layout JSON.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpriteLayout'
+              examples:
+                delete-image-from-sprite:
+                  summary: Sprite layout after deleting an image
+                  value:
+                    aerialway-15:
+                      x: 0
+                      y: 0
+                      width: 15
+                      height: 15
+                      pixelRatio: 1
+                      sdf: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-mapbox-cli-command:
+      - sprites
+      - delete
+x-mapbox-restrictions-and-limits: |
+  - The default rate limit for the Mapbox Styles API is 2,000 requests per minute. <RateLimitRequest />
+  - If you exceed the rate limit, you will receive an `HTTP 429 Too Many Requests` response. For information on rate limit headers, see the [Rate limit headers](/guides/#rate-limit-headers) section.
+  - Styles cannot exceed 1 MB.
+  - A style may have at most 15 sources.
+  - Responses are cached for 15 minutes on the CDN.
+x-mapbox-pricing:
+  pricingProductOverviewProps:
+    unit: requests
+    lineItems: API requests
+    pricingSection: Maps
+    pricingSectionLink: '#styles'
+  description: |
+    Styles API requests are included with your Mapbox plan.
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: query
+      name: access_token
+      description: A valid Mapbox access token with the required scopes.
+  parameters:
+    username:
+      name: username
+      in: path
+      required: true
+      description: The account username owning the resource.
+      schema:
+        type: string
+      example: penny
+    style_id:
+      name: style_id
+      in: path
+      required: true
+      description: Unique identifier for the style.
+      schema:
+        type: string
+      example: cl9pxtzr4000714o4oe5b7stb
+    icon_name:
+      name: icon_name
+      in: path
+      required: true
+      description: URL-encoded name of the sprite image.
+      schema:
+        type: string
+        maxLength: 255
+      example: airfield-15
+  schemas:
+    Style:
+      type: object
+      description: A Mapbox GL style document with API-generated metadata.
+      properties:
+        id:
+          type: string
+          description: Unique style identifier (server-generated).
+          example: penny.k923bd4s
+        name:
+          type: string
+          description: Human-readable style name. Defaults to the style ID if not provided.
+          example: cool_map
+        owner:
+          type: string
+          description: Account username that owns this style (server-generated).
+          example: penny
+        created:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp when the style was created (server-generated).
+        modified:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of the last modification (server-generated).
+        draft:
+          type: boolean
+          description: Whether this style object represents a draft version.
+        visibility:
+          type: string
+          enum:
+          - public
+          - private
+          description: Access control for the style.
+        protected:
+          type: boolean
+          description: Whether the style is locked from editing and deletion.
+        version:
+          type: integer
+          description: GL style spec version. Accepted values are 6, 7, or 8.
+          enum:
+          - 6
+          - 7
+          - 8
+        sources:
+          type: object
+          description: Data sources for the map, as defined by the Mapbox Style Specification.
+          additionalProperties: true
+        layers:
+          type: array
+          description: Ordered list of style layers. Creation order is preserved.
+          items:
+            type: object
+            additionalProperties: true
+        sprite:
+          type: string
+          description: URL or identifier for the sprite sheet.
+        glyphs:
+          type: string
+          description: URL template for glyph fonts.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Arbitrary metadata, typically used by Mapbox Studio.
+    StyleInput:
+      type: object
+      description: Request body for creating or updating a style. Do not include `id`, `created`, `modified`,
+        or `owner`.
+      required:
+      - name
+      - version
+      - sources
+      - layers
+      properties:
+        name:
+          type: string
+          description: Human-readable style name.
+        version:
+          type: integer
+          enum:
+          - 6
+          - 7
+          - 8
+          description: GL style spec version.
+        sources:
+          type: object
+          additionalProperties: true
+          description: Data sources. Maximum 15 sources per style.
+        layers:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        sprite:
+          type: string
+        glyphs:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+    StyleListItem:
+      type: object
+      description: Style metadata returned in list responses (excludes the full style body).
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        owner:
+          type: string
+        version:
+          type: integer
+        visibility:
+          type: string
+          enum:
+          - public
+          - private
+        protected:
+          type: boolean
+        draft:
+          type: boolean
+        created:
+          type: string
+          format: date-time
+        modified:
+          type: string
+          format: date-time
+        draftModified:
+          type: string
+          format: date-time
+          description: Last modification time of the draft, if one exists.
+    SpriteLayout:
+      type: object
+      description: |
+        Sprite layout map where each key is an image name and the value describes its position and dimensions within the sprite sheet. PNG-8 optimization may cause minor color or dithering variations.
+      additionalProperties:
+        type: object
+        properties:
+          x:
+            type: integer
+          y:
+            type: integer
+          width:
+            type: integer
+          height:
+            type: integer
+          pixelRatio:
+            type: number
+          sdf:
+            type: boolean
+      example:
+        airfield-15:
+          x: 0
+          y: 0
+          width: 15
+          height: 15
+          pixelRatio: 1
+          sdf: false
+    Folder:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        owner:
+          type: string
+        parent:
+          oneOf:
+          - type: string
+          - type: boolean
+          description: Parent folder ID, or `false` for root folders.
+        type:
+          type: string
+          enum:
+          - folder
+        collection:
+          type: string
+        created:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: integer
+        modified:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: integer
+        organized:
+          oneOf:
+          - type: string
+            format: date-time
+          - type: integer
+        stats:
+          type: object
+    FileRef:
+      type: object
+      description: A reference to a file or folder by ID and type.
+      required:
+      - id
+      - type
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+          - style
+          - tileset
+          - dataset
+          - folder
+          - dataset2
+    FilesAndFolders:
+      type: object
+      properties:
+        folders:
+          type: array
+          items:
+            $ref: '#/components/schemas/Folder'
+        files:
+          type: array
+          description: Styles, tilesets, and datasets. Returns at most 5,000 items per file type.
+          items:
+            type: object
+            additionalProperties: true
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              message:
+                type: string
+  responses:
+    BadRequest:
+      description: Bad request. See the `message` field for details.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Authorization token was missing or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Not Authorized - Invalid Token
+    Forbidden:
+      description: The token does not have the required scope, or the account is inactive.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: This endpoint requires a token with styles:read scope
+    NotFound:
+      description: The requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Style not found
+    InvalidStyle:
+      description: The style JSON failed validation or uses an unsupported version.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Failed to create style
+            errors:
+            - message: 'layers[0]: unknown property "render"'

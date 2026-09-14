@@ -1,0 +1,66 @@
+# Inert until `oss/` is a repository root: GitHub reads a dependabot.yml only
+# at a repository's own `.github/`, never in a subdirectory of one. It is here
+# so that the day this directory becomes the repository, dependency updates
+# start on their own rather than being remembered later.
+#
+# `Cargo.lock` pins the whole graph behind the handful of crates `Cargo.toml`
+# names, and the only thing that ever read them was a person opening the file.
+# The `audit` job in ci.yml is the half that says when one of them becomes a
+# problem; this is the half that keeps the graph moving so that answer stays
+# "no" without anyone remembering to look.
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Etc/UTC
+
+    # The ranges in `Cargo.toml` are deliberately loose (`clap = "4"`,
+    # `serde = "1"`) and the thing that actually ships is `Cargo.lock` — every
+    # cargo call in CI passes `--locked`, and released binaries are compiled
+    # from it. So move the lockfile inside the ranges already declared and
+    # never edit the manifest. A semver-major step — clap 5, rand 0.9 — is a
+    # person's decision made in its own PR, the way bumping the toolchain pin
+    # is.
+    versioning-strategy: lockfile-only
+
+    # `all` rather than the default direct-only, because the graph is an order
+    # of magnitude larger than the declared set and the first advisory this
+    # code ever saw was in the indirect part: h2, reached through reqwest,
+    # named by nothing.
+    allow:
+      - dependency-type: all
+
+    # One PR a week for the whole lockfile. A lockfile bump asks one question
+    # — does the suite still pass — and splitting it across five PRs asks the
+    # same question five times of the same reviewer. Grouping is also what
+    # bounds the volume here, which is why there is no
+    # `open-pull-requests-limit` below it: a limit on top of a single grouped
+    # PR would be a number that never binds.
+    groups:
+      cargo:
+        patterns:
+          - "*"
+
+  # Not grouped, unlike cargo above, and for the opposite reason: each of
+  # these is a separate question about this repository's Actions settings, and
+  # an action the settings do not admit fails the entire run at startup — no
+  # jobs, no logs, nothing saying which one. A grouped PR mixing an admitted
+  # bump with a rejected one has to be taken apart by hand before anything can
+  # be learned about either. Reviewing one of these means checking the
+  # settings first and the changelog second.
+  #
+  # `dtolnay/rust-toolchain@stable` is a branch rather than a version and is
+  # left alone, which is what the note beside it in ci.yml wants.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Etc/UTC

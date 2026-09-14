@@ -1,0 +1,333 @@
+name: CI
+
+# Builds, tests and lints this crate on every push and pull request, and
+# checks the two installers beside it. Release, publish and spec-sync
+# automation live elsewhere, on infrastructure this repository does not have —
+# nothing here needs it.
+#
+# Everything runs on every PR: this is one crate on three runners, and a
+# check nobody remembers to ask for is a check that does not run.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# One run per ref. Without this, three pushes to a branch inside a few minutes
+# pay for three full runs of everything and only the last answer is read.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      # All three: the crate has `#[cfg(not(unix))]` arms no Unix leg
+      # compiles, so Windows is the only thing that checks them.
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      # One checkout and nothing else to fetch: the OpenAPI specs the commands
+      # are generated from are vendored in `openapi/`, so `cargo build` needs
+      # no second repository and no credential.
+      - uses: actions/checkout@v7
+
+      # rustup applies `rust-toolchain.toml` on its own, and it outranks the
+      # action below — that action ends in `rustup default`, which rustup
+      # ranks under a toolchain file. What the action would still do is fetch
+      # whatever stable is today and install the components onto *that*
+      # toolchain rather than the pinned one: two toolchains downloaded, and
+      # `cargo clippy` then run on the one that has no clippy. So it is told
+      # the version outright, read out of the file rather than written down
+      # here a second time.
+      #
+      # The sed is anchored to the line as written; a reformat that hides it
+      # empties this output and fails the install step, which is the loud half
+      # of the two ways this could go wrong.
+      - name: Read the pinned toolchain
+        id: toolchain
+        shell: bash
+        run: |
+          echo "toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -1)" >>"$GITHUB_OUTPUT"
+
+      # Both actions below have to be admitted by this repository's own
+      # Actions settings before the first push. A repository restricted to
+      # selected actions (Settings > Actions > General) that does not name
+      # them fails the entire run at startup: no jobs, no logs, and an error
+      # the REST API does not expose. Worth settling once, on the day this
+      # becomes a repository, rather than rediscovering it from a run that
+      # says nothing.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.toolchain.outputs.toolchain }}
+          components: rustfmt, clippy
+
+      # No cargo cache action here: this repo's Actions allowlist doesn't yet
+      # include one, so builds run uncached until that's settled. Slower, not
+      # broken.
+
+      # Platform-independent, so one leg is enough.
+      - name: Check formatting
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --check
+
+      # `--locked` on all three: without it cargo is free to re-resolve the
+      # graph, so CI can go green on a dependency set that is not the one
+      # `Cargo.lock` names.
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --locked --verbose
+
+      - name: Test
+        run: cargo test --locked --verbose
+
+      # The half of `mapbox completion`'s verification `cargo test` cannot
+      # reach: whether the shell the script names will actually load it. A
+      # shell the runner image does not have is skipped and named in the
+      # summary — the images carry bash, zsh and pwsh but not fish, so the
+      # fish leg is the one a laptop with fish installed covers.
+      - name: Source the completion scripts in real shells
+        shell: bash
+        run: sh scripts/test-completion.sh
+
+  # No Rust: this is where the repo's shell gets checked, install.sh above all
+  # — it is served to machines we do not control, and this is the only thing
+  # that checks it. Both runners, because the portability it has to get right
+  # — shasum vs sha256sum, BSD vs GNU tar and script(1) — differs between
+  # them.
+  installer:
+    name: install.sh (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Parse as POSIX sh
+        run: |
+          sh -n scripts/install.sh
+          sh -n scripts/test-install.sh
+          sh -n scripts/test-completion.sh
+
+      # -s sh, not the default: bash would accept things `curl | sh` will not.
+      # Once is enough — the findings do not depend on the runner. The version
+      # is whatever the image ships and it does drift: 0.9 and 0.10 report the
+      # trap-invoked cleanup as unreachable where 0.11 does not, so both codes
+      # are suppressed at the function rather than pinned to one analyzer.
+      # Kept clean against 0.9, 0.10 and 0.11.
+      - name: Shellcheck
+        if: runner.os == 'Linux'
+        run: shellcheck -s sh scripts/install.sh scripts/test-install.sh scripts/test-completion.sh
+
+      - name: Install, verify and prompt against a local channel
+        run: sh scripts/test-install.sh
+
+  # The other half of the same job, for the installer install.sh stops short
+  # of. Both shells, because both are on a stock Windows 11 and they differ
+  # exactly where this script lives: the default TLS versions, what `2>` does
+  # to a native command's stderr, and the parser itself.
+  installer-windows:
+    name: install.ps1 (${{ matrix.shell }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      # `sh -n` in PowerShell: parse it, run none of it. Under pwsh in both
+      # legs - `shell:` is one of the few keys that takes no expression, so it
+      # cannot follow the matrix - which costs nothing: PSUseCompatibleSyntax
+      # below is what says 5.1 can parse this, and the suite parses both files
+      # with the real 5.1 parser when that is the leg running.
+      - name: Parse
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bad = 0
+          foreach ($file in 'scripts/install.ps1', 'scripts/test-install.ps1') {
+              $errors = $null
+              [void][System.Management.Automation.Language.Parser]::ParseFile(
+                  (Resolve-Path $file).Path, [ref]$null, [ref]$errors)
+              foreach ($e in $errors) {
+                  Write-Host "::error file=$file,line=$($e.Extent.StartLineNumber)::$($e.Message)"
+                  $bad++
+              }
+          }
+          if ($bad) { exit 1 }
+
+      # Shellcheck's counterpart, and once is enough for the same reason: the
+      # findings do not depend on the shell running the analyzer. The module
+      # is installed rather than assumed - the runner image does not carry it.
+      - name: PSScriptAnalyzer
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+
+          # Write-Host is the point in an installer: the output is a message to
+          # a person, not data for a pipeline. The empty catches are
+          # best-effort cleanups, each with a comment saying what it is giving
+          # up on. The two naming rules are for modules that export cmdlets;
+          # these are scripts, and the harness's Expect-* names deliberately
+          # mirror test-install.sh's expect_*.
+          $exclude = @(
+              'PSAvoidUsingWriteHost'
+              'PSAvoidUsingEmptyCatchBlock'
+              'PSUseApprovedVerbs'
+              'PSUseShouldProcessForStateChangingFunctions'
+          )
+
+          # The rule that carries the weight here: it is what says Windows
+          # PowerShell 5.1 can parse what was written against 7. Not in the
+          # default set, so it has to be asked for.
+          $compat = @{
+              IncludeRules = @('PSUseCompatibleSyntax')
+              Rules = @{
+                  PSUseCompatibleSyntax = @{ Enable = $true; TargetVersions = @('5.1', '7.0') }
+              }
+          }
+
+          $bad = 0
+          foreach ($file in 'scripts/install.ps1', 'scripts/test-install.ps1') {
+              $findings = @(Invoke-ScriptAnalyzer -Path $file -Severity Error, Warning -ExcludeRule $exclude)
+              $findings += @(Invoke-ScriptAnalyzer -Path $file -Settings $compat)
+              foreach ($f in $findings) {
+                  Write-Host "::error file=$file,line=$($f.Line)::$($f.RuleName): $($f.Message)"
+                  $bad++
+              }
+          }
+          if ($bad) { exit 1 }
+
+      # PSUseBOMForUnicodeEncodedFile above says a non-ASCII byte needs a byte
+      # order mark; this says there may be no non-ASCII byte to need one. The
+      # reason is in install.ps1's header: 5.1 reads a BOM-less .ps1 as the
+      # machine's ANSI code page, and a BOM breaks `irm | iex`.
+      - name: ASCII only
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($file in 'scripts/install.ps1', 'scripts/test-install.ps1') {
+              $bytes = [IO.File]::ReadAllBytes((Resolve-Path $file).Path)
+              for ($i = 0; $i -lt $bytes.Length; $i++) {
+                  if ($bytes[$i] -gt 127) {
+                      Write-Host "::error file=$file::byte $i is 0x$('{0:x2}' -f $bytes[$i]); this file has to stay ASCII"
+                      $bad++
+                      break
+                  }
+              }
+          }
+          if ($bad) { exit 1 }
+
+      # The step the matrix exists for. The shell is named in the command
+      # rather than in `shell:`, which takes no expression; -ExecutionPolicy
+      # is a Windows-only switch both of them accept, and is what lets 5.1 run
+      # an unsigned script out of a checkout.
+      - name: Install, verify and PATH against a local channel
+        shell: pwsh
+        run: ${{ matrix.shell }} -NoProfile -ExecutionPolicy Bypass -File scripts/test-install.ps1
+
+  # The one job here that can block on something other than this repo's own
+  # code, and the split is the whole design: a vulnerability fails it, an
+  # unmaintained or unsound crate does not.
+  #
+  # `Cargo.lock` pins the whole graph behind the handful of crates
+  # `Cargo.toml` names, and a release compiles the binaries users download
+  # from exactly that graph — so the gap this closes was never "we might be
+  # shipping something old", it was that nothing here would have said so. A
+  # vulnerability names a crate, a version and a fixed version, so there is
+  # one action and it fits in a lockfile line; merging past it ships a known
+  # hole to people who ran a one-line installer. An unmaintained crate names
+  # no version to move to: the action is a migration, and making that the
+  # price of an unrelated PR buys an ignore entry written under time pressure,
+  # which is the kind nobody ever removes. The two answers are cargo-audit's
+  # own exit codes rather than anything configured here, which is a further
+  # reason to pin its version below — a change to those defaults then arrives
+  # in a diff somebody wrote.
+  audit:
+    name: advisories (blocks on a vulnerability)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # No toolchain: nothing here compiles. This job reads a text file
+      # against a git repository of advisories.
+      - uses: actions/checkout@v7
+
+      # Not `rustsec/audit-check`, for the reason the note in `build` gives:
+      # an action has to be admitted by this repository's Actions settings,
+      # and a disallowed one fails the whole run at startup with no logs. A
+      # pinned tarball needs no such permission. Pinned by version *and* by
+      # hash, because upstream publishes no checksum of its own and this
+      # should run the bytes we looked at rather than whatever the URL serves
+      # later. Bumping the version means replacing both lines.
+      - name: Install cargo-audit
+        env:
+          AUDIT_VERSION: "0.22.2"
+          AUDIT_SHA256: ab28a1bdb54db4d5d8ad5981cf1f959410370b3d28250dbd35f6a44248620e39
+        run: |
+          name="cargo-audit-x86_64-unknown-linux-gnu-v${AUDIT_VERSION}"
+          curl -fsSL -o /tmp/cargo-audit.tgz \
+            "https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv${AUDIT_VERSION}/${name}.tgz"
+          echo "${AUDIT_SHA256}  /tmp/cargo-audit.tgz" | sha256sum -c -
+          # The archive has a versioned top-level directory and carries a
+          # README and two licences beside the binary; name the one file that
+          # belongs on PATH.
+          tar xzf /tmp/cargo-audit.tgz -C "$HOME/.cargo/bin" \
+            --strip-components=1 "${name}/cargo-audit"
+          cargo-audit --version
+
+      # `cargo-audit`, not `cargo audit`. The `cargo` on the runner is a rustup
+      # shim and `rust-toolchain.toml` in this checkout outranks whatever the
+      # image installed, so going through it downloads the pinned toolchain in
+      # order to run a program that reads a text file.
+      #
+      # `--file` is how this keeps the property every cargo call in `build`
+      # gets from `--locked`. Left to its default, `cargo audit` with no
+      # lockfile in sight runs `cargo generate-lockfile` and audits the result
+      # — a graph nobody committed and nothing ships, reported green. Naming
+      # the file makes that an error instead: exit 2, "Couldn't load
+      # Cargo.lock".
+      #
+      # The advisory database is fetched every run and deliberately not cached.
+      # It is the one input here that is worthless the moment it is a day old.
+      #
+      # The output reaches the job summary whatever it said: an informational
+      # advisory exits 0, and a warning behind a green check is one nobody
+      # reads.
+      - name: Audit Cargo.lock
+        run: |
+          status=0
+          cargo-audit audit --color never --file Cargo.lock >audit.txt 2>&1 || status=$?
+          cat audit.txt
+          {
+            printf '```\n'
+            cat audit.txt
+            printf '```\n\n'
+            printf "A vulnerability fails this job; an unmaintained, unsound or "
+            printf "yanked crate is reported here and does not. "
+            printf "\`cargo audit\` says the same thing locally, before the push "
+            printf "rather than after it.\n"
+          } >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"

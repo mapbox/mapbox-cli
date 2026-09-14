@@ -1,0 +1,1835 @@
+openapi: 3.0.3
+info:
+  title: Geocoding v6 API
+  description: |
+    The **Mapbox Geocoding API** does two things: _forward geocoding_ and _reverse geocoding_:
+
+    - Forward geocoding converts location text into geographic coordinates, turning `2 Lincoln Memorial Circle SW` into `-77.050,38.889`.
+    - Reverse geocoding turns geographic coordinates into place names, turning `-77.050, 38.889` into `2 Lincoln Memorial Circle SW`. These location names can vary in specificity, from individual addresses to states and countries that contain the given coordinates.
+
+    <Note title="Building entrance locations in public preview" theme="beta">
+      The `entrances` parameter is in public preview. This parameter allows you to access building entrances in the responses of your geocoding queries - both with permanent and temporary geocoding. To learn more about this parameter, see the [Forward geocoding optional parameters table](https://docs.mapbox.com/api/search/geocoding/#forward-geocoding-with-search-text-input) in the Geocoding API documentation.
+    </Note>
+
+    <Note title="Geocoding v5">
+
+    If you are looking for the previous version, see the [Geocoding v5 API](/search/geocoding-v5/) documentation.
+
+    If you are migrating from v5 to v6, note the new changes below:
+
+    - Permanent and temporary geocoding are no longer different endpoints, and are now set via an optional parameter. The default behavior for all endpoints is temporary geocoding.
+    - Forward and reverse geocoding now have their own separate endpoints.
+    - Batch geocoding now has its own endpoint.
+    - The Geocoding v6 API no longer provides POI data (use the [Search Box API](https://docs.mapbox.com/api/search/search-box/) for POI search).
+    - Streets can now be returned as a feature type and be filtered for via the `types` parameter.
+
+    </Note>
+
+    <Note title="Geocoding from Snowflake">
+      [Snowflake](https://www.snowflake.com/) users can do batch geocoding operations on data stored in their data warehouse. The Mapbox Snowflake Native App is available [in the Snowflake Marketplace](https://app.snowflake.com/marketplace/listing/GZT0ZIFQPEA/mapbox-mapbox?originTab=provider&providerName=Mapbox).
+    </Note>
+
+    For more background information on the Mapbox Geocoding API and how it works, see the [How geocoding works guide](https://docs.mapbox.com/help/getting-started/geocoding/#how-geocoding-works).
+
+    You may also use one of several [wrapper libraries](https://docs.mapbox.com/help/getting-started/geocoding/#libraries-and-plugins) to integrate the Mapbox Geocoding API into an application instead of using it directly.
+
+    - For [Mapbox Search JS SDK](https://docs.mapbox.com/mapbox-search-js/guides/), Geocoding components are available on releases `1.0.0-beta.20` and later.
+
+    <RelatedPage
+      title="Geocoding API playground"
+      url="https://docs.mapbox.com/playground/geocoding/"
+      contentType="playground"
+    >
+      Try forward, reverse, and batch geocoding queries and see the results on a map.
+    </RelatedPage>
+  version: '6'
+  license:
+    name: Proprietary
+    url: https://www.mapbox.com/legal/tos
+  x-mapbox-docs-path: search/geocoding
+  x-mapbox-docs-products:
+  - Geocoding API
+  x-mapbox-docs-description: |
+    The Mapbox Geocoding API performs forward geocoding, structured-input geocoding, reverse geocoding, and batch geocoding. It returns standardized addresses, geographic context, and coordinates.
+servers:
+- url: https://api.mapbox.com
+  description: Mapbox API
+security:
+- AccessTokenAuth: []
+tags:
+- name: Forward Geocoding
+  description: Convert location text or structured address components into geographic coordinates
+- name: Reverse Geocoding
+  description: Convert geographic coordinates into place names and addresses
+- name: Batch Geocoding
+  description: Submit up to 50 forward or reverse geocoding queries in a single POST request
+paths:
+  /search/geocode/v6/forward:
+    get:
+      summary: Forward geocoding
+      description: |
+        The **forward geocoding** query type allows you to look up a location using a string of search text and returns its standardized address, geographic context, and coordinates.
+
+        ## Forward geocoding with search text input
+
+        Use the `q` parameter to search with a string of text. The search text should be expressed as a URL-encoded UTF-8 string, and must not contain the semicolon character (either raw or URL-encoded). Your search text, once decoded, must consist of at most 20 words and numbers separated by spacing and punctuation, and at most 256 characters.
+
+        The accuracy of coordinates returned by a forward geocoding request can be affected by how the addresses in the query are formatted. Learn more about address formatting best practices in the [Address geocoding format guide](https://docs.mapbox.com/help/troubleshooting/address-geocoding-format-guide/).
+
+
+        ## Forward geocoding with structured input
+
+        **Structured Input** is a type of forward geocoding search that allows you to define the feature type of each element of the search query by type. This can increase the accuracy of results for well-formed datasets. To use Structured Input, the `q` parameter is dropped in favor of separate parameters for each feature type: `address_line1`, `address_number`, `street`, `block`, `place`, `region`, `postcode`, `locality`, `neighborhood`, `country`.
+
+        For best results, each element of the query must be assigned a feature type, and set `autocomplete` to `false`.
+
+        For the `country` structured input parameter specifically: when the ISO code is passed it acts as a hard filter on search results; when a full country name is passed, it influences the search results but is not a hard filter.
+
+        ### Recommended testing method for entrance data
+
+        Run an offline comparison of entrance data to test it quickly at scale:
+
+        1. Run existing geocoder locations and Mapbox entrance points against the same set of addresses.
+        2. Compare each result to a known reference point (for example, a past delivery location or other ground-truth coordinate) and measure which point is closer to the reference.
+        3. The resulting distance-to-reference metric quantifies how often Mapbox entrance data places drivers closer to the correct entrance. The metric can be directly correlated to the efficiency gains, reduced dwell time, and lower support volume that would result from deploying Mapbox entrance locations in a production environment.
+
+        ## Intersection search support
+
+        Intersection search allows users to search for a point where two streets intersect, without a precise address. Make an intersection search request by inserting an intersection connector between 2 streets. Intersection search is not available in all countries.
+
+        | Connector    | Applicable countries                                 |
+        | ------------ | ---------------------------------------------------- |
+        | `&`          | All countries where intersection search is supported |
+        | `and` or `x` | IN, JM, US                                           |
+        | `e`          | AR, BO, BR, CO, CR, DO, EC, GT, NI, PA, PE, SV, UY  |
+
+        ```bash
+        # Intersection search using 'and'
+        $ curl "https://api.mapbox.com/search/geocode/v6/forward?q=Market%20Street%20and%20Fremont%20Street&proximity=-122.39738575285674,37.7925147111369453&access_token=YOUR_MAPBOX_ACCESS_TOKEN"
+
+        # Intersection search using '&'
+        $ curl "https://api.mapbox.com/search/geocode/v6/forward?q=Market%20Street%20%26%20Fremont%20Street&proximity=-122.39738575285674,37.7925147111369453&access_token=YOUR_MAPBOX_ACCESS_TOKEN"
+        ```
+      operationId: forwardGeocode
+      tags:
+      - Forward Geocoding
+      parameters:
+      - name: q
+        in: query
+        required: false
+        description: "The feature you're trying to look up. This could be an address, a city name, etc.\
+          \ The search text should be expressed as a URL-encoded UTF-8 string, and must not contain the\
+          \ semicolon character (either raw or URL-encoded). Your search text, once decoded, must consist\
+          \ of at most 20 words and numbers separated by spacing and punctuation, and at most 256 characters.\n\
+          \n>Please Note: If no types parameter is set, or the `secondary_address` type is included in\
+          \ the types filter, searching for secondary addresses will be enabled. Secondary address queries\
+          \ are detected after a \"designator\" token (e.g. \"Apt\", \"Suite\", \"Unit\", \"#\") is followed\
+          \ by an identifier token (e.g. \"12B\", \"A\", \"103\"). If a parent address is known to have\
+          \ secondary addresses, we will first return known units within our data matching the provided\
+          \ identifier. If the identifier is not known in our data, the unit will be \"extrapolated\"\
+          , i.e. returned as typed with the same coordinate as the parent address.        \n\nEither `q`\
+          \ or at least one structured input parameter (`address_line1`, `address_number`, `street`, `block`,\
+          \ `place`, `region`, `postcode`, `locality`, `neighborhood`, `country`) must be provided.\n"
+        schema:
+          type: string
+          maxLength: 256
+      - name: address_line1
+        in: query
+        required: false
+        description: 'Structured input: A string including address_number and street. These values can
+          also be provided as separate parameters `address_number` and `street`.'
+        schema:
+          type: string
+      - name: address_number
+        in: query
+        required: false
+        description: 'Structured input: The number associated with the house.'
+        schema:
+          type: string
+      - name: street
+        in: query
+        required: false
+        description: 'Structured input: The name of the street in the address.'
+        schema:
+          type: string
+      - name: block
+        in: query
+        required: false
+        description: 'Structured input: In some countries like Japan, the block is a component in the
+          address.'
+        schema:
+          type: string
+      - name: place
+        in: query
+        required: false
+        description: 'Structured input: Typically these are cities, villages, municipalities, etc. They''re
+          usually features used in postal addressing, and are suitable for display in ambient end-user
+          applications where current-location context is needed (for example, in weather displays).'
+        schema:
+          type: string
+      - name: region
+        in: query
+        required: false
+        description: 'Structured input: Top-level sub-national administrative features, such as states
+          in the United States or provinces in Canada or China.'
+        schema:
+          type: string
+      - name: postcode
+        in: query
+        required: false
+        description: 'Structured input: Postal codes used in country-specific national addressing systems.'
+        schema:
+          type: string
+      - name: locality
+        in: query
+        required: false
+        description: 'Structured input: Official sub-city features present in countries where such an
+          additional administrative layer is used in postal addressing. Examples include city districts
+          in Brazil and Chile and arrondissements in France.'
+        schema:
+          type: string
+      - name: neighborhood
+        in: query
+        required: false
+        description: 'Structured input: Colloquial sub-city features often referred to in local parlance.
+          Not available for reverse geocoding requests.'
+        schema:
+          type: string
+      - $ref: '#/components/parameters/access_token'
+      - $ref: '#/components/parameters/permanent'
+      - name: autocomplete
+        in: query
+        required: false
+        description: |
+          Specify whether to return autocomplete results (`true`, default) or not (`false`). When autocomplete is enabled, results will be included that start with the requested string, rather than responses that match it exactly. For example, a query for `India` might return both `India` and `Indiana` with autocomplete enabled, but only `India` if it's disabled.
+
+          When autocomplete is enabled, each user keystroke counts as one request to the Geocoding API. For example, a search for "Cali" would be reflected as four separate Geocoding API requests. To reduce the total requests sent, you can configure your application to only call the Geocoding API after a specific number of characters are typed.
+        schema:
+          type: boolean
+          default: true
+      - $ref: '#/components/parameters/bbox'
+      - name: country
+        in: query
+        required: false
+        description: |
+          Limit results to one or more countries. Permitted values are [ISO 3166 alpha 2](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2) country codes separated by commas.
+
+          When used as a structured input parameter (instead of a filter), you may also pass the full country name. When the ISO code is passed it acts as a hard filter; when a full name is passed it influences results but is not a hard filter.
+          ### Japan Geocoding
+
+            The Geocoding API includes a robust Japan address and place search. To access the new, high-accuracy and high-coverage Japan search, you must set both the `language` and `country` parameters:
+
+            - `language=ja`
+            - `country=jp`
+
+            Japan geocoding responses use the same geographic feature types as other countries to define a feature's context components (with the addition of a `block` component, where applicable). These feature types represent the following equivalents of a Japanese address structure:
+
+            | Geographic feature type | Japan address equivalent |
+            | ----------------------- | ------------------------ |
+            | `block`                 | block                    |
+            | `neighborhood`          | chome                    |
+            | `locality`              | oaza                     |
+            | `place`                 | city                     |
+            | `region`                | prefecture               |
+
+            Japan geocoding responses also contain a unique `feature.properties.reading` object for Japanese reading equivalents by script type:
+
+            ```json
+            {
+              "ja-Kana": "ヤマグチケンシモノセキシシンアカダニシマチ",
+              "ja-Latn": "yamaguchiken shimonosekishi shinakadanishimachi"
+            }
+            ```
+        schema:
+          type: string
+          example: us,ca
+      - name: format
+        in: query
+        required: false
+        description: Specify the desired response format of results (`geojson`, default) or for backwards
+          compatibility (`v5`).
+        schema:
+          type: string
+          enum:
+          - geojson
+          - v5
+          default: geojson
+      - $ref: '#/components/parameters/language'
+      - name: limit
+        in: query
+        required: false
+        description: Specify the maximum number of results to return. The default is `5` and the maximum
+          supported is `10`.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+      - $ref: '#/components/parameters/proximity'
+      - $ref: '#/components/parameters/types_v6'
+      - $ref: '#/components/parameters/worldview'
+      - $ref: '#/components/parameters/entrances'
+      responses:
+        '200':
+          description: A GeoJSON FeatureCollection of forward geocoding results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeocodingResponse'
+              examples:
+                forwardGeocodeBasic:
+                  $ref: '#/components/examples/ForwardGeocodeResult'
+                forwardGeocodeProximity:
+                  $ref: '#/components/examples/ForwardGeocodeResult'
+                forwardGeocodeTypes:
+                  $ref: '#/components/examples/ForwardGeocodeResult'
+                forwardGeocodeLimit:
+                  $ref: '#/components/examples/ForwardGeocodeResult'
+                forwardGeocodeWorldview:
+                  $ref: '#/components/examples/ForwardGeocodeResult'
+                forwardGeocodeStructured:
+                  $ref: '#/components/examples/ForwardGeocodeResult'
+                forwardGeocodeIntersection:
+                  $ref: '#/components/examples/ForwardGeocodeResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-mapbox-docs-examples:
+      - example-id: forwardGeocodeBasic
+        title: Find Los Angeles
+        request:
+          q: Los%20Angeles
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      - example-id: forwardGeocodeProximity
+        title: Find Chester, New Jersey using proximity
+        request:
+          q: chester
+          proximity: -74.70850,40.78375
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      - example-id: forwardGeocodeTypes
+        title: Search only for countries named Georgia
+        request:
+          q: georgia
+          types: country
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      - example-id: forwardGeocodeLimit
+        title: Limit results to two
+        request:
+          q: Washington
+          limit: 2
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      - example-id: forwardGeocodeWorldview
+        title: Search with a worldview
+        request:
+          q: Kaaleng
+          worldview: cn
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      - example-id: forwardGeocodeStructured
+        title: Forward geocoding with structured input
+        request:
+          country: us
+          address_number: '1600'
+          street: pennsylvania%20ave%20nw
+          postcode: '20500'
+          place: Washington%20dc
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      - example-id: forwardGeocodeIntersection
+        title: Intersection search
+        request:
+          q: Market%20Street%20and%20Fremont%20Street
+          proximity: -122.39738575285674,37.7925147111369453
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      x-mapbox-cli-command:
+      - geocoder
+      - forward-geocode
+  /search/geocode/v6/reverse:
+    get:
+      summary: Reverse geocoding
+      description: |
+        The **reverse geocoding** query type allows you to look up a pair of coordinates and returns the geographic features there, including a standardized address or place and full geographic context.
+      operationId: reverseGeocode
+      tags:
+      - Reverse Geocoding
+      parameters:
+      - name: longitude
+        in: query
+        required: true
+        description: The `longitude` decimal value from the geographic coordinate for the location being
+          queried.
+        schema:
+          type: number
+          minimum: -180
+          maximum: 180
+      - name: latitude
+        in: query
+        required: true
+        description: The `latitude` decimal value from the geographic coordinate for the location being
+          queried.
+        schema:
+          type: number
+          minimum: -90
+          maximum: 90
+      - $ref: '#/components/parameters/access_token'
+      - $ref: '#/components/parameters/permanent'
+      - name: country
+        in: query
+        required: false
+        description: Limit results to one or more countries. Permitted values are [ISO 3166 alpha 2](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2)
+          country codes separated by commas.
+        schema:
+          type: string
+          example: us,ca
+      - $ref: '#/components/parameters/language'
+      - name: limit
+        in: query
+        required: false
+        description: |
+          Specify the maximum number of results to return. The default is `1` and the maximum supported is `5`.
+
+          The default behavior in reverse geocoding is to return at most one feature at each of the multiple levels of the administrative hierarchy (for example, one address, one region, one country). Increasing the limit allows returning multiple features of the same type, but only for one type (for example, multiple `address` results). So, setting `limit` to a higher-than-default value requires specifying exactly one `types` parameter.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 5
+          default: 1
+      - $ref: '#/components/parameters/types_v6'
+      - $ref: '#/components/parameters/worldview'
+      responses:
+        '200':
+          description: A GeoJSON FeatureCollection of reverse geocoding results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeocodingResponse'
+              examples:
+                reverseGeocodeBasic:
+                  $ref: '#/components/examples/ReverseGeocodeResult'
+                reverseGeocodeTypes:
+                  $ref: '#/components/examples/ReverseGeocodeResult'
+                reverseGeocodeWorldview:
+                  $ref: '#/components/examples/ReverseGeocodeResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-mapbox-docs-examples:
+      - example-id: reverseGeocodeBasic
+        title: Retrieve places near a specific location
+        request:
+          longitude: -73.989
+          latitude: 40.733
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      - example-id: reverseGeocodeTypes
+        title: Filter results to only include addresses
+        request:
+          longitude: -73.989
+          latitude: 40.733
+          types: address
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      - example-id: reverseGeocodeWorldview
+        title: Query within the Ilemi Triangle for the US worldview
+        request:
+          longitude: 35.4628
+          latitude: 4.8975
+          worldview: us
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      x-mapbox-cli-command:
+      - geocoder
+      - reverse-geocode
+  /search/geocode/v6/batch:
+    post:
+      summary: Batch geocoding
+      description: |
+        The batch geocoding query type allows you to request up to 50 forward or reverse geocoding queries in a single request.
+
+        Batch geocoding requests are formatted as a JSON array passed as the `BODY` of the request, with multiple search queries one after another. Fields which were defined as query parameters in the URL string will become fields in the JSON object. Fields specifying multiple values (for example `types`, `country`, `bbox`, `proximity`) can be passed either as comma-separated strings or as JSON-formatted arrays (for example a types filter value could be represented as `"address,street,place"` or `["address", "street", "place"]`).
+
+        In a single batch geocoding request, you can bundle queries of different types, including forward queries, forward Structured Input queries, and reverse queries. Each query can also have parameters defined individually — for example one query could have IP proximity set to on while the rest have it off.
+
+        <Note title="Billing for batch geocoding requests">
+          Each individual search in a batch geocoding request counts as one request.
+        </Note>
+
+        ### Example request: Batch geocoding
+
+        ```bash
+        curl --location --request POST "https://api.mapbox.com/search/geocode/v6/batch?access_token=YOUR_MAPBOX_ACCESS_TOKEN" \
+        --header 'Content-Type: application/json' \
+        --data-raw '[
+            {
+                "types": ["address"],
+                "q": "1600 Pennsylvania Avenue NW, Washington, DC 20500, United States",
+                "bbox": [-80, 35, -70, 40],
+                "limit": 1
+            },
+            {
+                "country": "us",
+                "address_number": "1600",
+                "street": "Pennsylvania Avenue NW",
+                "postcode": "20500",
+                "place": "Washington, DC"
+            },
+            {
+                "types": ["address"],
+                "longitude": -73.986136,
+                "latitude": 40.748895
+            }
+        ]'
+        ```
+
+        ### Response: Batch geocoding
+
+        The response from a batch geocoding query is an object with a `batch` property. The batch property is an array of Geocoding response objects. The order of queries in the request determines the order of corresponding objects in the batch array. If there are no results returned for a particular query within the batch, the `features` array for that query is empty (`"features": []`).
+
+        ```json
+        {
+          "batch": [
+            {
+              "type": "FeatureCollection",
+              "features": [
+                {
+                  "type": "Feature",
+                  "id": "dXJuOm1ieGFkcjo2YzdhYjM4Yi05YzM4LTQ3ZDItODFkMS1jYzZlYjg5YzliMWM",
+                  "geometry": { "type": "Point", "coordinates": [-77.03655, 38.89768] },
+                  "properties": {
+                    "mapbox_id": "dXJuOm1ieGFkcjo2YzdhYjM4Yi05YzM4LTQ3ZDItODFkMS1jYzZlYjg5YzliMWM",
+                    "feature_type": "address",
+                    "name": "1600 Pennsylvania Avenue Northwest",
+                    "coordinates": { "longitude": -77.03655, "latitude": 38.89768, "accuracy": "rooftop" },
+                    "place_formatted": "Washington, District of Columbia 20500, United States",
+                    "match_code": {
+                      "address_number": "matched", "street": "matched", "postcode": "matched",
+                      "place": "matched", "region": "matched", "locality": "not_applicable",
+                      "country": "inferred", "confidence": "exact"
+                    }
+                  }
+                }
+              ],
+              "attribution": "NOTICE: © 2023 Mapbox and its suppliers. All rights reserved. Use of this data is subject to the Mapbox Terms of Service (https://www.mapbox.com/about/maps/). This response and the information it contains may not be retained."
+            },
+            {
+              "type": "FeatureCollection",
+              "features": [],
+              "attribution": "NOTICE: © 2023 Mapbox and its suppliers. All rights reserved. Use of this data is subject to the Mapbox Terms of Service (https://www.mapbox.com/about/maps/). This response and the information it contains may not be retained."
+            },
+            {
+              "type": "FeatureCollection",
+              "features": [
+                {
+                  "type": "Feature",
+                  "id": "dXJuOm1ieGFkcjplMzVmMzZiOC1kYjRmLTQyOWItOWE4ZC0yZGQ3ZmQ1OTUzMTY",
+                  "geometry": { "type": "Point", "coordinates": [-73.9861365, 40.7488949] },
+                  "properties": {
+                    "mapbox_id": "dXJuOm1ieGFkcjplMzVmMzZiOC1kYjRmLTQyOWItOWE4ZC0yZGQ3ZmQ1OTUzMTY",
+                    "feature_type": "address",
+                    "name": "20 West 34th Street",
+                    "coordinates": { "longitude": -73.9861365, "latitude": 40.7488949, "accuracy": "rooftop" },
+                    "place_formatted": "New York, New York 10118, United States"
+                  }
+                }
+              ],
+              "attribution": "NOTICE: © 2023 Mapbox and its suppliers. All rights reserved. Use of this data is subject to the Mapbox Terms of Service (https://www.mapbox.com/about/maps/). This response and the information it contains may not be retained."
+            }
+          ]
+        }
+        ```
+      operationId: batchGeocode
+      tags:
+      - Batch Geocoding
+      security:
+      - AccessTokenAuth: []
+      parameters:
+      - $ref: '#/components/parameters/access_token'
+      - $ref: '#/components/parameters/permanent'
+      requestBody:
+        required: true
+        description: A JSON array of up to 50 geocoding query objects. Each object can be a forward geocoding
+          query (with `q` or structured input fields), or a reverse geocoding query (with `longitude`
+          and `latitude`).
+        content:
+          application/json:
+            schema:
+              type: array
+              maxItems: 50
+              items:
+                $ref: '#/components/schemas/BatchQueryItem'
+            examples:
+              batchGeocodeMixed:
+                summary: Mixed forward, structured input, and reverse batch request
+                value:
+                - types:
+                  - address
+                  q: 1600 Pennsylvania Avenue NW, Washington, DC 20500, United States
+                  bbox: -80,35,-70,40
+                  limit: 1
+                - country: us
+                  address_number: '1600'
+                  street: Pennsylvania Avenue NW
+                  postcode: '20500'
+                  place: Washington, DC
+                - types:
+                  - address
+                  longitude: -73.986136
+                  latitude: 40.748895
+      responses:
+        '200':
+          description: An object with a `batch` array containing one GeoJSON FeatureCollection per query,
+            in the same order as the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchGeocodingResponse'
+              examples:
+                batchGeocodeMixed:
+                  summary: Batch geocoding response with mixed queries
+                  value:
+                    batch:
+                    - type: FeatureCollection
+                      features:
+                      - type: Feature
+                        id: dXJuOm1ieGFkcjo2YzdhYjM4Yi05YzM4LTQ3ZDItODFkMS1jYzZlYjg5YzliMWM
+                        geometry:
+                          type: Point
+                          coordinates:
+                          - -77.03655
+                          - 38.89768
+                        properties:
+                          mapbox_id: dXJuOm1ieGFkcjo2YzdhYjM4Yi05YzM4LTQ3ZDItODFkMS1jYzZlYjg5YzliMWM
+                          feature_type: address
+                          name: 1600 Pennsylvania Avenue Northwest
+                          coordinates:
+                            longitude: -77.03655
+                            latitude: 38.89768
+                            accuracy: rooftop
+                          place_formatted: Washington, District of Columbia 20500, United States
+                          match_code:
+                            address_number: matched
+                            street: matched
+                            postcode: matched
+                            place: matched
+                            region: matched
+                            locality: not_applicable
+                            country: inferred
+                            confidence: exact
+                      attribution: 'NOTICE: © 2023 Mapbox and its suppliers. All rights reserved. Use
+                        of this data is subject to the Mapbox Terms of Service (https://www.mapbox.com/about/maps/).
+                        This response and the information it contains may not be retained.'
+                    - type: FeatureCollection
+                      features: []
+                      attribution: 'NOTICE: © 2023 Mapbox and its suppliers. All rights reserved. Use
+                        of this data is subject to the Mapbox Terms of Service (https://www.mapbox.com/about/maps/).
+                        This response and the information it contains may not be retained.'
+                    - type: FeatureCollection
+                      features:
+                      - type: Feature
+                        id: dXJuOm1ieGFkcjplMzVmMzZiOC1kYjRmLTQyOWItOWE4ZC0yZGQ3ZmQ1OTUzMTY
+                        geometry:
+                          type: Point
+                          coordinates:
+                          - -73.9861365
+                          - 40.7488949
+                        properties:
+                          mapbox_id: dXJuOm1ieGFkcjplMzVmMzZiOC1kYjRmLTQyOWItOWE4ZC0yZGQ3ZmQ1OTUzMTY
+                          feature_type: address
+                          name: 20 West 34th Street
+                          coordinates:
+                            longitude: -73.9861365
+                            latitude: 40.7488949
+                            accuracy: rooftop
+                          place_formatted: New York, New York 10118, United States
+                      attribution: 'NOTICE: © 2023 Mapbox and its suppliers. All rights reserved. Use
+                        of this data is subject to the Mapbox Terms of Service (https://www.mapbox.com/about/maps/).
+                        This response and the information it contains may not be retained.'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-mapbox-docs-examples:
+      - example-id: batchGeocodeMixed
+        title: Batch geocoding with forward, structured input, and reverse queries
+        request:
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      x-mapbox-cli-command:
+      - geocoder
+      - batch-geocode
+x-mapbox-restrictions-and-limits: |
+  To protect the Geocoding API and maximize service stability, Mapbox rate limits Geocoding API requests.
+
+  - The default Geocoding API rate limit is 1000 requests per minute, but can be adjusted on a per-account basis. Mapbox may automatically adjust customer rate limits to accommodate high traffic applications, or prevent abuse, if deemed appropriate.
+  - An HTTP error code of `429` will be returned if the rate limit is reached.
+  - To request a rate limit increase, contact [Mapbox support](https://support.mapbox.com/hc/en-us).
+
+  ### Storing Geocoding Results
+
+  The Mapbox Geocoding API offers two types of result storage: **Permanent** and **Temporary**.
+
+  Temporary results are not allowed to be cached, while Permanent results are allowed to be cached and stored indefinitely.
+
+  Using Permanent storage with the Geocoding API requires that you have a [valid credit card on file](https://console.mapbox.com/account/settings/billing) or an active [enterprise contract](https://www.mapbox.com/contact/sales).
+
+  By default, the Geocoding API will use Temporary geocoding. To use Permanent geocoding, set the optional `permanent` parameter to `true`.
+
+  ### Language coverage
+
+  Translation availability also varies by language and region. We provide the following tiers of language support:
+
+  #### Global coverage
+
+  These languages are almost always present for `country`, `region`, and prominent `place` features.
+
+  | Language    |              |              |
+  | ----------- | ------------ | ------------ |
+  | `de` German | `en` English | `es` Spanish |
+  | `fr` French | `it` Italian | `nl` Dutch   |
+  | `pl` Polish |              |              |
+
+  #### Local coverage
+
+  These languages may lack global coverage but are almost always present for `country`, `region`, and prominent `place` features where they are widely used.
+
+  | Language                     |                               |                            |
+  | ---------------------------- | ----------------------------- | -------------------------- |
+  | `az` Azerbaijani             | `bn` Bengali                  | `ca` Catalan               |
+  | `cs` Czech                   | `da` Danish                   | `el` Modern Greek          |
+  | `et` Estonian                | `fa` Persian                  | `fi` Finnish               |
+  | `ga` Irish                   | `hu` Hungarian                | `id` Indonesian            |
+  | `is` Icelandic               | `ja` Japanese                 | `ka` Georgian              |
+  | `km` Central Khmer           | `ko` Korean                   | `lt` Lithuanian            |
+  | `lv` Latvian                 | `mk` Macedonian               | `mn` Mongolian             |
+  | `ms` Malay macrolanguage     | `nb` Norwegian Bokmål         | `pt` Portuguese            |
+  | `ro` Romanian                | `sk` Slovak                   | `sl` Slovenian             |
+  | `sq` Albanian                | `th` Thai                     | `tl` Tagalog               |
+  | `uk` Ukrainian               | `vi` Vietnamese               | `zh` Chinese               |
+  | `zh_Hans` Simplified Chinese | `zh_Hant` Traditional Chinese | `zh_TW` Taiwanese Mandarin |
+
+  #### Limited coverage
+
+  These languages are sometimes present but coverage tends to be inconsistent or geographically constrained.
+
+  | Language     |              |              |
+  | ------------ | ------------ | ------------ |
+  | `ar` Arabic  | `bs` Bosnian | `he` Hebrew  |
+  | `hi` Hindi   | `kk` Kazakh  | `lo` Lao     |
+  | `my` Burmese | `ru` Russian | `sr` Serbian |
+  | `sv` Swedish | `te` Telugu  | `tk` Turkmen |
+  | `tr` Turkish |              |              |
+x-mapbox-pricing:
+  pricingProductOverviewProps:
+    unit: requests
+    lineItems: Geocoding API request
+    pricingSection: Search
+    pricingSectionLink: '#search'
+  description: |
+    Usage of the Geocoding API is measured in **API requests**. Details about the number of requests included in the free tier and the cost per request beyond what is included in the free tier are available on the [pricing page](https://www.mapbox.com/pricing/#search). You may only use responses from the Geocoding API in conjunction with a Mapbox map.
+
+    ### Autocomplete and pricing
+
+    The Geocoding API's `autocomplete` parameter is enabled by default. If you are using the API with `autocomplete` enabled, you will likely accumulate one API request per keystroke. For example, if you have autocomplete turned on and you set up your application to make a Geocoding API request every time a user types a character into a search bar, then a user typing "Cali" looking for "California" will be making _four Geocoding API requests_, one for each letter.
+
+    To reduce the number of requests made while `autocomplete` is enabled, you can wait to begin making API requests until a specific number of characters are entered. The Geocoding API doesn't have a parameter for limiting requests built in, but you can use the [Mapbox Search JS SDK](https://docs.mapbox.com/mapbox-search-js/guides/) to configure the search configuration, or you can write it into your application directly.
+
+    ### Batch geocoding and pricing
+
+    Batch geocoding allows you to have multiple geocoding queries in a single request. Each individual search in a batch geocoding request counts as one request. For example, a request that contains three searches would count as three requests and be billed as such. These three requests would be reflected on your [statistics graph](https://console.mapbox.com/account/statistics/) and your bill.
+components:
+  examples:
+    ForwardGeocodeResult:
+      summary: Forward geocoding response for an address
+      value:
+        type: FeatureCollection
+        features:
+        - type: Feature
+          id: dXJuOm1ieGFkcjo5ZDQzNzM1Mi0xZGZiLTRkNTItYWMxNC01MzllZjY5ODIwMmI
+          geometry:
+            type: Point
+            coordinates:
+            - -111.86313
+            - 40.725163
+          properties:
+            mapbox_id: dXJuOm1ieGFkcjo5ZDQzNzM1Mi0xZGZiLTRkNTItYWMxNC01MzllZjY5ODIwMmI
+            feature_type: address
+            name: 974 2100 South
+            coordinates:
+              longitude: -111.86313
+              latitude: 40.725163
+              accuracy: rooftop
+            place_formatted: Salt Lake City, Utah 84106, United States
+            match_code:
+              address_number: matched
+              street: matched
+              postcode: unmatched
+              place: unmatched
+              region: unmatched
+              locality: not_applicable
+              country: inferred
+              confidence: low
+            context:
+              address:
+                mapbox_id: dXJuOm1ieGFkcjo5ZDQzNzM1Mi0xZGZiLTRkNTItYWMxNC01MzllZjY5ODIwMmI
+                address_number: '974'
+                street_name: 2100 South
+                name: 974 2100 South
+              region:
+                mapbox_id: dXJuOm1ieHBsYzpCa1Rz
+                name: Utah
+                wikidata_id: Q829
+                region_code: UT
+                region_code_full: US-UT
+              country:
+                mapbox_id: dXJuOm1ieHBsYzpJdXc
+                name: United States
+                wikidata_id: Q30
+                country_code: US
+                country_code_alpha_3: USA
+        attribution: 'NOTICE: © 2024 Mapbox and its suppliers. All rights reserved. Use of this data is
+          subject to the Mapbox Terms of Service (https://www.mapbox.com/about/maps/). This response and
+          the information it contains may not be retained.'
+    ReverseGeocodeResult:
+      summary: Reverse geocoding response near Midtown Manhattan
+      value:
+        type: FeatureCollection
+        features:
+        - type: Feature
+          id: dXJuOm1ieGFkcjplMzVmMzZiOC1kYjRmLTQyOWItOWE4ZC0yZGQ3ZmQ1OTUzMTY
+          geometry:
+            type: Point
+            coordinates:
+            - -73.9861365
+            - 40.7488949
+          properties:
+            mapbox_id: dXJuOm1ieGFkcjplMzVmMzZiOC1kYjRmLTQyOWItOWE4ZC0yZGQ3ZmQ1OTUzMTY
+            feature_type: address
+            name: 20 West 34th Street
+            coordinates:
+              longitude: -73.9861365
+              latitude: 40.7488949
+              accuracy: rooftop
+            place_formatted: New York, New York 10118, United States
+            context:
+              address:
+                mapbox_id: dXJuOm1ieGFkcjplMzVmMzZiOC1kYjRmLTQyOWItOWE4ZC0yZGQ3ZmQ1OTUzMTY
+                address_number: '20'
+                street_name: West 34th Street
+                name: 20 West 34th Street
+              place:
+                mapbox_id: dXJuOm1ieHBsYzpEZTVJN0E
+                name: New York
+                wikidata_id: Q60
+              region:
+                mapbox_id: dXJuOm1ieHBsYzpBYVRz
+                name: New York
+                wikidata_id: Q1384
+                region_code: NY
+                region_code_full: US-NY
+              country:
+                mapbox_id: dXJuOm1ieHBsYzpJdXc
+                name: United States
+                wikidata_id: Q30
+                country_code: US
+                country_code_alpha_3: USA
+        attribution: 'NOTICE: © 2024 Mapbox and its suppliers. All rights reserved. Use of this data is
+          subject to the Mapbox Terms of Service (https://www.mapbox.com/about/maps/). This response and
+          the information it contains may not be retained.'
+  securitySchemes:
+    AccessTokenAuth:
+      type: apiKey
+      in: query
+      name: access_token
+      description: A valid Mapbox access token
+  parameters:
+    access_token:
+      name: access_token
+      in: query
+      required: true
+      description: A valid Mapbox [access token](https://docs.mapbox.com/api/overview/#access-tokens-and-token-scopes).
+      schema:
+        type: string
+    permanent:
+      name: permanent
+      in: query
+      required: false
+      description: Specify whether you intend to store the results of the query (`true`) or not (`false`,
+        default). Permanent geocoding allows caching and storing results indefinitely. Requires a valid
+        credit card on file or an active enterprise contract.
+      schema:
+        type: boolean
+        default: false
+    bbox:
+      name: bbox
+      in: query
+      required: false
+      description: |
+        Limit results to only those contained within the supplied bounding box. Bounding boxes should be supplied as four numbers separated by commas, in `minLon,minLat,maxLon,maxLat` order. The bounding box cannot cross the 180th meridian. You can use the [Location Helper](https://labs.mapbox.com/location-helper/) to find a bounding box.
+      schema:
+        type: string
+        example: -77.083056,38.908611,-76.997778,38.959167
+    language:
+      name: language
+      in: query
+      required: false
+      description: |
+        Set the language of the text supplied in responses. Also affects result scoring, with results matching the user's query in the requested language being preferred over results that match in another language. For example, an autocomplete query for things that start with `Frank` might return `Frankfurt` as the first result with an English (`en`) language parameter, but `Frankreich` ("France") with a German (`de`) language parameter.
+
+        Options are [IETF language tags](https://en.wikipedia.org/wiki/IETF_language_tag) comprised of a mandatory [ISO 639-1 language code](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) and, optionally, one or more IETF subtags for country or script. More than one value can also be specified, separated by commas. The first language in the list will be the primary language. For other languages, translations will be provided in the `context` object's `translations` property. Maximum 20 languages; values must be unique.
+
+        When providing more than one language, the `country`, `region`, `district`, `place`, and `neighborhood` context sub-objects will include a `translations` property. This is an object where the key is the language code and the value is an object with `language` and `name` properties.
+
+        Example of the context object when passing the parameter `language=en,es`:
+
+        ```json
+        {
+          "context": {
+            "place": {
+              "mapbox_id": "dXJuOm1ieHBsYzpGSmlvN0E",
+              "name": "Washington",
+              "wikidata_id": "Q61",
+              "translations": {
+                "en": { "language": "en", "name": "Washington" },
+                "es": { "language": "es", "name": "Washington" }
+              }
+            },
+            "country": {
+              "mapbox_id": "dXJuOm1ieHBsYzpJdXc",
+              "name": "United States",
+              "wikidata_id": "Q30",
+              "country_code": "US",
+              "country_code_alpha_3": "USA",
+              "translations": {
+                "en": { "language": "en", "name": "United States" },
+                "es": { "language": "es", "name": "Estados Unidos" }
+              }
+            }
+          }
+        }
+        ```
+      schema:
+        type: string
+        example: en
+    proximity:
+      name: proximity
+      in: query
+      required: false
+      description: Bias the response to favor results that are closer to this location. Provided as two
+        comma-separated coordinates in `longitude,latitude` order, or the string `ip` to bias based on
+        reverse IP lookup.
+      schema:
+        type: string
+        example: -74.70850,40.78375
+    types_v6:
+      name: types
+      in: query
+      required: false
+      description: |
+        Filter results to include only a subset (one or more) of the available feature types. Options are `country`, `region`, `postcode`, `district`, `place`, `locality`, `neighborhood`, `street`, and `address`. Multiple options can be comma-separated.
+
+        Various types of geographic features are available the Mapbox geocoding. Any type might appear as a top-level response, as context in a top-level response, or as a filtering option using the `types` parameter. Not all features are available or relevant in all parts of the world. New types are occasionally added as necessary to correctly capture global administrative hierarchies.
+
+          The geographic feature types listed from the largest to the most granular, are:
+
+          | Feature Type        | Description                                                                                                                                                                                                                                                                       |
+          | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+          | `country`           | Generally recognized countries or, in some cases like Hong Kong, an area of quasi-national administrative status that has a designated country code under [ISO 3166-1](https://www.iso.org/iso-3166-country-codes.html).                                                          |
+          | `region`            | Top-level sub-national administrative features, such as states in the United States or provinces in Canada or China.                                                                                                                                                              |
+          | `postcode`          | Postal codes used in country-specific national addressing systems.                                                                                                                                                                                                                |
+          | `district`          | Features that are smaller than top-level administrative features but typically larger than cities, in countries that use such an additional layer in postal addressing (for example, prefectures in China).                                                                       |
+          | `place`             | Typically these are cities, villages, municipalities, etc. They're usually features used in postal addressing, and are suitable for display in ambient end-user applications where current-location context is needed (for example, in weather displays).                         |
+          | `locality`          | Official sub-city features present in countries where such an additional administrative layer is used in postal addressing, or where such features are commonly referred to in local parlance. Examples include city districts in Brazil and Chile and arrondissements in France. |
+          | `neighborhood`      | Colloquial sub-city features often referred to in local parlance. Unlike `locality` features, these typically lack official status and may lack universally agreed-upon boundaries.                                                                                               |
+          | `street`            | Street features which host one or more addresses.                                                                                                                                                                                                                                 |
+          | `block`             | Special feature type reserved for Japanese addresses.                                                                                                                                                                                                                             |
+          | `address`           | Individual residential or business addresses.                                                                                                                                                                                                                                     |
+          | `secondary_address` | Sub-unit, suite, or lot within a single parent address. Currently available in the US only.                                                                                                                                                                                       |
+      schema:
+        type: string
+        enum:
+        - country
+        - region
+        - postcode
+        - district
+        - place
+        - locality
+        - neighborhood
+        - street
+        - block
+        - address
+        - secondary_address
+        example: country,region
+    worldview:
+      name: worldview
+      in: query
+      required: false
+      description: |
+        Returns features that are defined differently by audiences that belong to various regional, cultural, or political groups. If `worldview` is not set, the `us` worldview boundaries are returned by default.
+
+        Each query supports a maximum of one worldview. Attempting to query for multiple worldviews in one search will result in an error message.
+
+        Use the optional `worldview` parameter to identify geographic features whose characteristics are defined differently by audiences belonging to various regional, cultural, or political groups. The Geocoding API only supports worldviews for the `country` and `region` data types, but may expand to additional data types in the future.
+
+        The Geocoding API supports the following values for the `worldview` parameter:
+
+        | Value | Description                              |
+        | ----- | ---------------------------------------- |
+        | `ar`  | Features for an Argentinian audience     |
+        | `cn`  | Features for a mainland Chinese audience |
+        | `in`  | Features for an Indian audience          |
+        | `jp`  | Features for a Japanese audience         |
+        | `ma`  | Features for a Moroccan audience         |
+        | `rs`  | Features for a Serbian audience          |
+        | `ru`  | Features for a Russian audience          |
+        | `tr`  | Features for a Turkish audience          |
+        | `us`  | Features for an American audience        |
+
+        _Returned features are not officially approved for use by the above countries' respective governments._
+
+        Each query supports a maximum of one worldview. Attempting to query for multiple worldviews in one search will result in an error message. When no worldview is selected, the Geocoding API returns features for the `us` worldview.
+
+        ### Using the `worldview` parameter
+
+        In Mapbox services, the [worldview](https://docs.mapbox.com/help/glossary/worldview/) data field is used to identify geographic features whose characteristics are defined differently by audiences belonging to various regional, cultural, or political groups. Setting a worldview affects the place values returned for an address that is located in an area of non-unanimous ownership or definition.
+
+        For example, consider an address in the Ilemi Triangle, which borders Eastern Equatoria (South Sudan) and Turkana (Kenya). Depending on the worldview selected, an address in this location will be returned in different country contexts:
+          - If `worldview=cn`, Kaaleng, Eastern Equatoria, or South Sudan will be returned.
+          - If `worldview=us`, Kaaleng, Turkana, or Kenya will be returned.
+
+        This means that if you use `worldview=cn` with the Kenya (`ke`) country filter, a search for an address in this area will not be successful. Instead, you would need to use `worldview=cn` in combination with the South Sudan (`ss`) country filter.
+
+        Be cautious when combining `worldview` with the `country` parameter, since these indices are only loosely coupled.
+
+        For a visual example of how changing the `worldview` value impacts the boundaries on a map, see the [companion Maps boundary service](https://docs.mapbox.com/mapbox-gl-js/example/toggle-worldviews/).
+      schema:
+        type: string
+        enum:
+        - ar
+        - cn
+        - in
+        - jp
+        - ma
+        - rs
+        - ru
+        - tr
+        - us
+    entrances:
+      name: entrances
+      in: query
+      required: false
+      description: Specify whether to return building entrance data (`true`) or not (`false`, default).
+        When set to `true`, building entrances associated with address features will be included in the
+        response. This includes both permanent and temporary geocoding. **This parameter is in Public
+        Preview.**
+      schema:
+        type: boolean
+        default: false
+  schemas:
+    GeocodingResponse:
+      type: object
+      description: |
+        A GeoJSON FeatureCollection containing geocoding results.
+        The response to a Geocoding API request is an object that contains the following properties:
+
+        | Property      | Type     | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+        | ------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+        | `type`        | `string` | `"FeatureCollection"`, a GeoJSON type from the [GeoJSON specification](https://tools.ietf.org/html/rfc7946).                                                                                                                                                                                                                                                                                                                                                                                                    |
+        | `features`    | `array`  | An array of feature objects. **Forward geocodes:** Returned features are ordered by relevance. **Reverse geocodes:** Returned features are ordered by index hierarchy, from most specific features to least specific features that overlap the queried coordinates.                                                                                                                                                                                                                                              |
+        | `attribution` | `string` | Attributes the results of the Mapbox Geocoding API to Mapbox.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+
+        The data powering the Mapbox Geocoding API is constantly being updated and improved. This means that the values of properties in the response object are not guaranteed and may change within the same version of the API. Properties may be added to, but will not be removed from, the response within the same API version.
+
+        Each feature object in the `features` array may have the properties described below:
+
+        | Property                      | Type     | Description                                                                                                                                                                                                                                                                                                                                                                                                   |
+        | ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+        | `id`                          | `string` | Feature id. This property is named "id" to conform to the GeoJSON specification, but is the same id referred to as `mapbox_id` elsewhere in the response.                                                                                                                                                                                                                                                    |
+        | `type`                        | `string` | `"Feature"`, a GeoJSON type from the [GeoJSON specification](https://tools.ietf.org/html/rfc7946).                                                                                                                                                                                                                                                                                                            |
+        | `geometry`                    | `object` | An object describing the spatial geometry of the returned feature.                                                                                                                                                                                                                                                                                                                                            |
+        | `geometry.type`               | `string` | `"Point"`, a GeoJSON type from the [GeoJSON specification](https://tools.ietf.org/html/rfc7946).                                                                                                                                                                                                                                                                                                              |
+        | `geometry.coordinates`        | `array`  | An array in the format `[longitude,latitude]` at the center of the specified `bbox`.                                                                                                                                                                                                                                                                                                                          |
+        | `properties`                  | `object` | An object containing the resulting feature's details.                                                                                                                                                                                                                                                                                                                                                         |
+        | `properties.mapbox_id`        | `string` | Feature id. The `mapbox_id` uniquely identifies a place in the Mapbox search database. Mapbox IDs are accepted in requests to the Geocoding API as a forward search, and will return the feature corresponding to that id.                                                                                                                                                                                    |
+        | `properties.feature_type`     | `string` | A string describing the type of the feature. Options are `country`, `region`, `postcode`, `district`, `place`, `locality`, `neighborhood`, `street`, `address`. _Formerly `place_type` in v5._                                                                                                                                                                                                               |
+        | `properties.name`             | `string` | Formatted string of address_number and street.                                                                                                                                                                                                                                                                                                                                                                |
+        | `properties.name_preferred`   | `string` | The canonical or otherwise more common alias for the feature name. For example, searching for "America" will return "America" as the name, and "United States" as `name_preferred`.                                                                                                                                                                                                                           |
+        | `properties.place_formatted`  | `string` | Formatted string of result context: place region country postcode. The part of the result which comes after `name`.                                                                                                                                                                                                                                                                                           |
+        | `properties.full_address`     | `string` | Full formatted string of the feature, combining name_preferred and place_formatted.                                                                                                                                                                                                                                                                                                                           |
+        | `properties.context`          | `object` | A context object representing the hierarchy of encompassing parent features. This may include a sub-object for any of: `country`, `region`, `postcode`, `district`, `place`, `locality`, `neighborhood`, `street`. Which sub-objects are included is dependent upon the data coverage available and applicable to a given country or area.                                                                     |
+        | `properties.coordinates`      | `object` | An object representing the geographical position and accuracy of the feature and any routable points.                                                                                                                                                                                                                                                                                                         |
+        | `properties.coordinates.longitude` | `number` | Longitude of result.                                                                                                                                                                                                                                                                                                                                                                              |
+        | `properties.coordinates.latitude`  | `number` | Latitude of result.                                                                                                                                                                                                                                                                                                                                                                               |
+        | `properties.coordinates.accuracy`  | `string` | Accuracy metric for a returned `address`-type result. See Point accuracy for address features below.                                                                                                                                                                                                                                                                                              |
+        | `properties.coordinates.routable_points` | `array` | An array of routable point objects for an address feature, each including `name`, `longitude`, and `latitude` properties.                                                                                                                                                                                                                                                                   |
+        | `properties.bbox`             | `array`  | The bounding box of the feature as an array of `[minLon,minLat,maxLon,maxLat]`. This property is only provided with features of type `country`, `region`, `postcode`, `district`, `place`, `locality`, or `neighborhood`.                                                                                                                                                                                     |
+        | `properties.match_code`       | `object` | Additional metadata indicating how the result components match to the input query. See Smart Address Match below.                                                                                                                                                                                                                                                                                             |
+
+        ### The Context Object
+
+        The `context` object within `properties` is a powerful piece of data which breaks out the complete geographical hierarchy for a given address or place. It is both a reliable way to access the named values of each component part of an address, plus contains feature-specific data such as the Wikidata id and 3-letter alpha country code.
+
+        Each sub-object in the context always has a `mapbox_id` and `name` associated with it. The id can be queried directly via a forward geocoding search to traverse into a different geographical layer. Address features will also include an `address` sub-object, which additionally contains `street_name` and `address_number` properties.
+
+        A `secondary_address` feature will also have a matching sub-object in the context:
+
+        ```json
+        {
+          "secondary_address": {
+            "mapbox_id": "dXJuOm1ieGFkci11bml0OjdkZTE3MmUxLTJiMjktNDU1Mi1iNGQzLTkwN2JjMGZmOGQ1NDoyMDE",
+            "name": "UNIT 201",
+            "designator": "UNIT",
+            "identifier": "201",
+            "extrapolated": true
+          }
+        }
+        ```
+
+        The following is an example of the context object returned for the address `2595 Lucky John Drive, Park City, Utah 84060, United States`:
+
+        ```json
+        "context": {
+            "address": {
+                "mapbox_id": "dXJuOm1ieGFkcjozOGY3OTg1OC1jNzY0LTQ4ZGUtYTFmMC04NjJjOTM1ZWViMjc",
+                "address_number": "2595",
+                "street_name": "Lucky John Drive",
+                "name": "2595 Lucky John Drive"
+            },
+            "street": {
+                "mapbox_id": "dXJuOm1ieGFkcjozOGY3OTg1OC1jNzY0LTQ4ZGUtYTFmMC04NjJjOTM1ZWViMjc",
+                "name": "Lucky John Drive"
+            },
+            "neighborhood": {
+                "mapbox_id": "dXJuOm1ieHBsYzpITktzN0E",
+                "name": "Park Meadows"
+            },
+            "postcode": {
+                "mapbox_id": "dXJuOm1ieHBsYzpFUjNPN0E",
+                "name": "84060"
+            },
+            "place": {
+                "mapbox_id": "dXJuOm1ieHBsYzpEdjlvN0E",
+                "name": "Park City",
+                "wikidata_id": "Q482993"
+            },
+            "district": {
+                "mapbox_id": "dXJuOm1ieHBsYzpBVlRHN0E",
+                "name": "Summit County",
+                "wikidata_id": "Q484563"
+            },
+            "region": {
+                "mapbox_id": "dXJuOm1ieHBsYzpCa1Rz",
+                "name": "Utah",
+                "wikidata_id": "Q829",
+                "region_code": "UT",
+                "region_code_full": "US-UT"
+            },
+            "country": {
+                "mapbox_id": "dXJuOm1ieHBsYzpJdXc",
+                "name": "United States",
+                "wikidata_id": "Q30",
+                "country_code": "US",
+                "country_code_alpha_3": "USA"
+            }
+        }
+        ```
+        ### Smart Address Match
+
+        The `match_code` object in the Geocoding API helps you understand how the resulting address feature aligns with the query submitted. Available only for address-type features, the `match_code` provides a breakdown of how each element of the result matches with the query, plus a confidence score, based on how well it matches. This can help you make decisions about what results to keep or throw out based on your application's tolerance for fuzzy matching on the query.
+
+        Smart Address Match is available for all forward geocoding requests that return an `address` type feature. It works best when using Structured Input forward queries, as the request components must be typed explicitly.
+
+        | Confidence Score | Description                                                                                                                                                                                            |
+        | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+        | `exact`          | No components are unmatched (up to 2 may be inferred) and there are no extraneous query tokens.                                                                                                        |
+        | `high`           | One component (excluding `house_number` or `region`) may have been corrected. Additionally, if only `house_number`, `street`, and `postcode` are provided and match, high confidence is returned.      |
+        | `medium`         | Two components (excluding `house_number` or `region`) may have changed. Allows for minor misspellings. If `house_number`, `street`, `place`, and `postcode` are matched the `region` may be corrected. |
+        | `low`            | `house_number`, `region`, or more than 2 other components have been corrected.                                                                                                                         |
+
+        | Match Code       | Description                                                                                                                                                                                                                                                                                                                                                                                                  |
+        | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+        | `matched`        | The component value matches the user's input.                                                                                                                                                                                                                                                                                                                                                                |
+        | `unmatched`      | The component value doesn't match the user's input, or the user didn't submit this component type as part of the query.                                                                                                                                                                                                                                                                                      |
+        | `not_applicable` | The component is not used in the postal address string for example `locality`.                                                                                                                                                                                                                                                                                                                               |
+        | `inferred`       | The component type wasn't submitted as part of the query, but we were able to confidently fill in the value. Only returned for the `country` component.                                                                                                                                                                                                                                                      |
+        | `plausible`      | Only relevant for the `address_number` and `secondary_address` components. In the case of `address_number`, this means the address accuracy is interpolated. In the case of `secondary_address`, this means the secondary address was extrapolated, i.e. the primary address is known to have secondary addresses, but the geocoding service did not find a specific matching secondary address in our data. |
+
+        #### Example match_code
+
+        This forward geocoding request with structured input includes a valid street address in Park City Utah, USA.
+
+        `https://api.mapbox.com/search/geocode/v6/forward?address_number=2595&street=lucky john dr&place=park city&region=CO`
+
+        Note that the `region` parameter value is `CO`, and will yield an `unmatched` status in the `match_code` in the resulting feature's properties as the matched address is not in the US state of Colorado.
+
+        ```json
+        {
+          "name": "2595 Lucky John Drive",
+          "place_formatted": "Park City, Utah 84060, United States",
+          "match_code": {
+            "address_number": "matched",
+            "street": "matched",
+            "postcode": "unmatched",
+            "place": "matched",
+            "region": "unmatched",
+            "locality": "not_applicable",
+            "country": "inferred",
+            "confidence": "medium"
+          }
+        }
+        ```
+      required:
+      - type
+      - features
+      - attribution
+      properties:
+        type:
+          type: string
+          enum:
+          - FeatureCollection
+          description: '`"FeatureCollection"`, a GeoJSON type from the GeoJSON specification.'
+        features:
+          type: array
+          description: An array of feature objects ordered by relevance (forward) or index hierarchy (reverse).
+          items:
+            $ref: '#/components/schemas/GeocodingFeature'
+        attribution:
+          type: string
+          description: Attributes the results of the Mapbox Geocoding API to Mapbox.
+    BatchGeocodingResponse:
+      type: object
+      description: The response to a batch geocoding request.
+      required:
+      - batch
+      properties:
+        batch:
+          type: array
+          description: An array of GeoJSON FeatureCollection objects, one per query, in the same order
+            as the request. If a query returns no results, its `features` array is empty.
+          items:
+            $ref: '#/components/schemas/GeocodingResponse'
+    GeocodingFeature:
+      type: object
+      description: A GeoJSON Feature representing a geocoding result.
+      required:
+      - id
+      - type
+      - geometry
+      - properties
+      properties:
+        id:
+          type: string
+          description: Feature id. This property is named "id" to conform to the GeoJSON specification,
+            but is the same id referred to as `mapbox_id` elsewhere in the response.
+        type:
+          type: string
+          enum:
+          - Feature
+        geometry:
+          type: object
+          required:
+          - type
+          - coordinates
+          properties:
+            type:
+              type: string
+              enum:
+              - Point
+            coordinates:
+              type: array
+              description: '[longitude, latitude]'
+              items:
+                type: number
+              minItems: 2
+              maxItems: 2
+        properties:
+          $ref: '#/components/schemas/GeocodingFeatureProperties'
+    GeocodingFeatureProperties:
+      type: object
+      description: An object containing the resulting feature's details.
+      required:
+      - mapbox_id
+      - feature_type
+      - name
+      - coordinates
+      properties:
+        mapbox_id:
+          type: string
+          description: Feature id. The `mapbox_id` uniquely identifies a place in the Mapbox search database.
+            Mapbox IDs are accepted in requests to the Geocoding API as a forward search.
+        feature_type:
+          type: string
+          enum:
+          - country
+          - region
+          - postcode
+          - district
+          - place
+          - locality
+          - neighborhood
+          - street
+          - block
+          - address
+          - secondary_address
+          description: A string describing the type of the feature. Formerly `place_type` in v5.
+        name:
+          type: string
+          description: Formatted string of the feature name (e.g., for an address, formatted string of
+            address_number and street).
+        name_preferred:
+          type: string
+          description: The canonical or otherwise more common alias for the feature name.
+        place_formatted:
+          type: string
+          description: Formatted string of result context — the part of the result which comes after `name`
+            (place, region, country, postcode).
+        full_address:
+          type: string
+          description: Full formatted string of the feature, combining `name_preferred` and `place_formatted`.
+        coordinates:
+          type: object
+          required:
+          - longitude
+          - latitude
+          properties:
+            longitude:
+              type: number
+            latitude:
+              type: number
+            accuracy:
+              type: string
+              enum:
+              - rooftop
+              - parcel
+              - point
+              - interpolated
+              - approximate
+              - intersection
+              description: |
+                Accuracy metric for a returned `address`-type result.
+
+                The `coordinates.accuracy` property in a Geocoding response object is a point accuracy metric for the returned `address` feature. This list is subject to change.
+
+                | Accuracy       | Description                                                                         |
+                | -------------- | ----------------------------------------------------------------------------------- |
+                | `rooftop`      | Result intersects a known building/entrance.                                        |
+                | `parcel`       | Result is associated with one or more address within a specified polygonal boundary |
+                | `point`        | Result is a known address point but does not intersect a known rooftop/parcel.      |
+                | `interpolated` | Result position and existence are estimated based on nearby known addresses.        |
+                | `approximate`  | Result position is approximated by a 9-digit zipcode centroid.                      |
+                | `intersection` | For street type features only. The result is an intersection of 2 streets.          |
+            routable_points:
+              type: array
+              description: |
+                An array of routable point objects for an address feature.
+                `routable_points` is an array that contains auxiliary geographic points associated with an address, each optimized for a specific access or navigation use case.
+
+                The array contains the following:
+
+                - `default` is the standard, always-included routable point. This is the best navigable vehicle stopping location for accessing the address. This is algorithmically generated and has coverage across all address results.
+                - `entrance` is the physical entrance location of the address, when available. This is distinct from the vehicle stop point and is intended for locating the door/entrance to access the building at that address. (In public preview.)
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  longitude:
+                    type: number
+                  latitude:
+                    type: number
+        bbox:
+          type: array
+          description: The bounding box as `[minLon, minLat, maxLon, maxLat]`. Only provided for country,
+            region, postcode, district, place, locality, or neighborhood features.
+          items:
+            type: number
+          minItems: 4
+          maxItems: 4
+        context:
+          $ref: '#/components/schemas/ContextObject'
+        match_code:
+          $ref: '#/components/schemas/MatchCode'
+    ContextObject:
+      type: object
+      description: |
+        A context object representing the hierarchy of encompassing parent features. May include sub-objects for: `address`, `street`, `neighborhood`, `postcode`, `locality`, `place`, `district`, `region`, `country`, `secondary_address`.
+
+        Each sub-object always has a `mapbox_id` and `name`. Address features also include `street_name` and `address_number`.
+      properties:
+        address:
+          type: object
+          properties:
+            mapbox_id:
+              type: string
+            address_number:
+              type: string
+            street_name:
+              type: string
+            name:
+              type: string
+        street:
+          type: object
+          properties:
+            mapbox_id:
+              type: string
+            name:
+              type: string
+        neighborhood:
+          type: object
+          properties:
+            mapbox_id:
+              type: string
+            name:
+              type: string
+            wikidata_id:
+              type: string
+            alternate:
+              type: object
+              properties:
+                mapbox_id:
+                  type: string
+                name:
+                  type: string
+            translations:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  language:
+                    type: string
+                  name:
+                    type: string
+        postcode:
+          type: object
+          properties:
+            mapbox_id:
+              type: string
+            name:
+              type: string
+        locality:
+          type: object
+          properties:
+            mapbox_id:
+              type: string
+            name:
+              type: string
+            wikidata_id:
+              type: string
+        place:
+          type: object
+          properties:
+            mapbox_id:
+              type: string
+            name:
+              type: string
+            wikidata_id:
+              type: string
+            alternate:
+              type: object
+              properties:
+                mapbox_id:
+                  type: string
+                name:
+                  type: string
+            translations:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  language:
+                    type: string
+                  name:
+                    type: string
+        district:
+          type: object
+          properties:
+            mapbox_id:
+              type: string
+            name:
+              type: string
+            wikidata_id:
+              type: string
+        region:
+          type: object
+          properties:
+            mapbox_id:
+              type: string
+            name:
+              type: string
+            wikidata_id:
+              type: string
+            region_code:
+              type: string
+              description: ISO 3166-2 region code (e.g., "CA" for California).
+            region_code_full:
+              type: string
+              description: Full ISO 3166-2 region code (e.g., "US-CA").
+            translations:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  language:
+                    type: string
+                  name:
+                    type: string
+        country:
+          type: object
+          properties:
+            mapbox_id:
+              type: string
+            name:
+              type: string
+            wikidata_id:
+              type: string
+            country_code:
+              type: string
+              description: ISO 3166-1 alpha-2 country code (e.g., "US").
+            country_code_alpha_3:
+              type: string
+              description: ISO 3166-1 alpha-3 country code (e.g., "USA").
+            translations:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  language:
+                    type: string
+                  name:
+                    type: string
+        secondary_address:
+          type: object
+          description: Sub-unit, suite, or lot within a single parent address. US only.
+          properties:
+            mapbox_id:
+              type: string
+            name:
+              type: string
+            designator:
+              type: string
+              description: The secondary address designator (e.g., "UNIT", "APT", "SUITE").
+            identifier:
+              type: string
+              description: The secondary address identifier (e.g., "201", "A", "12B").
+            extrapolated:
+              type: boolean
+              description: If true, the unit number is not known in the data but the parent address has
+                secondary addresses.
+    MatchCode:
+      type: object
+      description: |
+        Additional metadata indicating how the result components match to the input query. Available only for address-type features.
+
+        **Confidence scores:** `exact` — all components matched (up to 2 inferred); `high` — one component corrected; `medium` — two components corrected; `low` — three+ components corrected.
+
+        **Match code values:** `matched` — component matches input; `unmatched` — doesn't match or not provided; `not_applicable` — component unused in postal addressing; `inferred` — confidently filled in (country only); `plausible` — address_number is interpolated or secondary_address is extrapolated.
+      properties:
+        address_number:
+          type: string
+          enum:
+          - matched
+          - unmatched
+          - inferred
+          - plausible
+        street:
+          type: string
+          enum:
+          - matched
+          - unmatched
+          - inferred
+        postcode:
+          type: string
+          enum:
+          - matched
+          - unmatched
+          - not_applicable
+          - inferred
+        place:
+          type: string
+          enum:
+          - matched
+          - unmatched
+          - not_applicable
+          - inferred
+        region:
+          type: string
+          enum:
+          - matched
+          - unmatched
+          - not_applicable
+          - inferred
+        locality:
+          type: string
+          enum:
+          - matched
+          - unmatched
+          - not_applicable
+          - inferred
+        country:
+          type: string
+          enum:
+          - matched
+          - unmatched
+          - inferred
+        secondary_address:
+          type: string
+          enum:
+          - matched
+          - unmatched
+          - plausible
+        confidence:
+          type: string
+          enum:
+          - exact
+          - high
+          - medium
+          - low
+    BatchQueryItem:
+      type: object
+      description: A single query object in a batch geocoding request. Can be a forward query (with `q`
+        or structured input fields) or a reverse query (with `longitude` and `latitude`).
+      properties:
+        q:
+          type: string
+          maxLength: 256
+          description: Search text for forward geocoding (mutually exclusive with structured input fields).
+        longitude:
+          type: number
+          minimum: -180
+          maximum: 180
+          description: Longitude for reverse geocoding.
+        latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+          description: Latitude for reverse geocoding.
+        address_line1:
+          type: string
+        address_number:
+          type: string
+        street:
+          type: string
+        block:
+          type: string
+        place:
+          type: string
+        region:
+          type: string
+        postcode:
+          type: string
+        locality:
+          type: string
+        neighborhood:
+          type: string
+        country:
+          type: string
+        autocomplete:
+          type: boolean
+          default: true
+        bbox:
+          type: string
+          description: Bounding box as minLon,minLat,maxLon,maxLat or as a JSON array.
+        format:
+          type: string
+          enum:
+          - geojson
+          - v5
+        language:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 10
+        proximity:
+          type: string
+        types:
+          oneOf:
+          - type: string
+          - type: array
+            items:
+              type: string
+        worldview:
+          type: string
+          enum:
+          - ar
+          - cn
+          - in
+          - jp
+          - ma
+          - rs
+          - ru
+          - tr
+          - us
+    Error:
+      type: object
+      required:
+      - message
+      properties:
+        message:
+          type: string
+  responses:
+    Unauthorized:
+      description: |
+        Authentication failed.
+
+        | Message | Description |
+        | --- | --- |
+        | `Not Authorized - No Token` | No token was used in the query. |
+        | `Not Authorized - Invalid Token` | Check the access token you used in the query. |
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            noToken:
+              summary: No token provided
+              value:
+                message: Not Authorized - No Token
+            invalidToken:
+              summary: Token is present but invalid
+              value:
+                message: Not Authorized - Invalid Token
+    Forbidden:
+      description: |
+        There may be an issue with your account. Check your [Account page](https://console.mapbox.com/) for more details. In some cases, using an access token with URL restrictions can also result in a `403` error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            forbidden:
+              value:
+                message: Forbidden
+    NotFound:
+      description: |
+        Not found. Check the endpoint you used in the query, or ensure that search text or structured input parameters were provided.
+
+        | Message | Description |
+        | --- | --- |
+        | `Not Found` | Check the endpoint you used in the query. |
+        | `Not Found` | No search text or structured input parameters were provided in the query. |
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            notFound:
+              summary: Endpoint not found or no input provided
+              value:
+                message: Not Found
+    UnprocessableEntity:
+      description: |
+        Validation error. The request was understood but could not be processed due to an invalid parameter value.
+
+        | Message | Description |
+        | --- | --- |
+        | `BBox is not valid. Must be an array of format [minX, minY, maxX, maxY]` | Check the format for `bbox`, where the first coordinate pair is the southwestern corner and the second is the northeastern corner. |
+        | `BBox {minX/maxX} value must be a number between -180 and 180` | Check the format of `minX` and `maxX` for `bbox`. |
+        | `BBox {minY/maxY} value must be a number between -90 and 90` | Check the format of `minY` and `maxY` for `bbox`. |
+        | `BBox {minX/minY} value cannot be greater than {maxX/maxY} value` | Check the values of the coordinate pairs used in `bbox`. |
+        | `Type "{input}" is not a known type. Must be one of: country, region, place, district, postcode, locality, neighborhood, and address` | Check the `types` parameter value you used in the query. |
+        | `Stack "{input}" is not a known stack. Must be one of: …` | The `country` parameter must be a valid [ISO 3166 alpha 2](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2) country code. |
+        | `Batch queries must include 50 queries or less` | Your batch geocode request cannot contain more than 50 queries. |
+        | `Query too long {query length}/256 characters` | Your query cannot contain more than 256 characters. |
+        | `Query too long - {query tokens length}/20 tokens` | Your query cannot contain more than 20 word boundary-delimited strings (tokens). |
+        | `Proximity must be an array in the form [lon, lat]` | The `proximity` parameter must contain two comma-separated values. |
+        | `Proximity lon value must be a number between -180 and 180` | Check the `proximity` parameter's longitude value. |
+        | `Proximity lat value must be a number between -90 and 90` | Check the `proximity` parameter's latitude value. |
+        | `"{input}" is not a valid language code` | The `language` parameter must be a valid [IETF language tag](https://en.wikipedia.org/wiki/IETF_language_tag) comprised of a mandatory [ISO 639-1 language code](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) and, optionally, one or more IETF subtags for country or script. |
+        | `options.language should be a list of no more than 20 languages` | Your query's `language` parameter cannot contain more than 20 language codes. |
+        | `options.language should be a list of unique language codes` | The comma-separated values in `language` must be unique. |
+        | `limit must be combined with a single type parameter when reverse geocoding` | If you make a reverse geocoding request with the `limit` parameter, you must also use the `types` parameter. |
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalidBbox:
+              summary: Invalid bbox format
+              value:
+                message: BBox is not valid. Must be an array of format [minX, minY, maxX, maxY]
+            invalidBboxLon:
+              summary: bbox longitude value out of range
+              value:
+                message: BBox minX value must be a number between -180 and 180
+            invalidBboxLat:
+              summary: bbox latitude value out of range
+              value:
+                message: BBox minY value must be a number between -90 and 90
+            invalidBboxOrder:
+              summary: bbox min value greater than max value
+              value:
+                message: BBox minX value cannot be greater than maxX value
+            invalidType:
+              summary: Unknown feature type
+              value:
+                message: 'Type "poi" is not a known type. Must be one of: country, region, place, district,
+                  postcode, locality, neighborhood, and address'
+            invalidCountry:
+              summary: Invalid country code
+              value:
+                message: 'Stack "XX" is not a known stack. Must be one of: …'
+            batchTooLarge:
+              summary: Batch request exceeds 50 queries
+              value:
+                message: Batch queries must include 50 queries or less
+            queryTooLongChars:
+              summary: Query exceeds 256 characters
+              value:
+                message: Query too long 300/256 characters
+            queryTooLongTokens:
+              summary: Query exceeds 20 tokens
+              value:
+                message: Query too long - 25/20 tokens
+            invalidProximityFormat:
+              summary: Proximity not in lon,lat format
+              value:
+                message: Proximity must be an array in the form [lon, lat]
+            invalidProximityLon:
+              summary: Proximity longitude out of range
+              value:
+                message: Proximity lon value must be a number between -180 and 180
+            invalidProximityLat:
+              summary: Proximity latitude out of range
+              value:
+                message: Proximity lat value must be a number between -90 and 90
+            invalidLanguage:
+              summary: Invalid language code
+              value:
+                message: '"xx-ZZ" is not a valid language code'
+            tooManyLanguages:
+              summary: More than 20 language codes specified
+              value:
+                message: options.language should be a list of no more than 20 languages
+            duplicateLanguages:
+              summary: Duplicate language codes in language parameter
+              value:
+                message: options.language should be a list of unique language codes
+            limitWithoutType:
+              summary: limit used without types in reverse geocoding
+              value:
+                message: limit must be combined with a single type parameter when reverse geocoding
+    TooManyRequests:
+      description: |
+        Rate limit exceeded. You have exceeded your set rate limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            rateLimitExceeded:
+              value:
+                message: Rate limit exceeded

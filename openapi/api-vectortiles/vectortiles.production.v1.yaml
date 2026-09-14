@@ -1,0 +1,311 @@
+openapi: 3.1.0
+info:
+  title: Vector Tiles API
+  description: The **Mapbox Vector Tiles API** serves [vector tiles](https://docs.mapbox.com/help/glossary/vector-tiles/)
+    from Mapbox-hosted tilesets. Vector tiles are compact binary-encoded data that can be styled client-side,
+    enabling fast and flexible map rendering.
+  version: 1.0.0
+  x-mapbox-docs-path: maps/vector-tiles
+  x-mapbox-docs-products:
+  - Vector Tiles API
+  x-mapbox-docs-description: The Mapbox Vector Tiles API serves vector tiles from Mapbox-hosted tilesets.
+    Vector tiles are compact binary-encoded data that can be styled client-side, enabling fast and flexible
+    map rendering.
+  contact:
+    name: Mapbox
+    url: https://docs.mapbox.com/api/maps/vector-tiles/
+  license:
+    name: Proprietary
+    url: https://www.mapbox.com/legal/tos
+servers:
+- url: https://api.mapbox.com
+  description: Production server
+tags:
+- name: tiles
+  description: Vector tile delivery endpoints (v4)
+security:
+- ApiKeyAuth: []
+paths:
+  /v4/{tileset_id}/{zoom}/{x}/{y}.{format}:
+    get:
+      tags:
+      - tiles
+      summary: Get a vector tile
+      description: |
+        Retrieve a single vector tile from one or more Mapbox-hosted tilesets.
+
+        This endpoint is compatible with tiling schemes used by mapping software that expects a URL with placeholders for zoom level (`{zoom}`), tile column (`{x}`), and tile row (`{y}`).
+
+        Supports up to 15 comma-separated tileset IDs for compositing. When multiple tilesets are specified, their layers are merged into a single tile response.
+
+        **Style-optimized tiles**: Include the optional `style` query parameter to request a style-optimized tile. Style-optimized tiles remove data that would be invisible given the style's zoom-level filters and layer visibility, resulting in smaller tile payloads.
+      operationId: getVectorTile
+      parameters:
+      - $ref: '#/components/parameters/tileset_id'
+      - $ref: '#/components/parameters/zoom'
+      - $ref: '#/components/parameters/x'
+      - $ref: '#/components/parameters/y'
+      - $ref: '#/components/parameters/format'
+      - $ref: '#/components/parameters/accessToken'
+      - $ref: '#/components/parameters/style'
+      responses:
+        '200':
+          description: Successful vector tile response
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Last-Modified:
+              schema:
+                type: string
+                example: Tue, 04 Dec 2018 22:28:44 GMT
+          content:
+            application/vnd.mapbox-vector-tile:
+              schema:
+                $ref: '#/components/schemas/VectorTile'
+              examples:
+                streetsVectorTile:
+                  summary: Vector tile from mapbox.mapbox-streets-v8 at (z1, x0, y0)
+                  externalValue: https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/1/0/0.mvt?access_token=MAPBOX_ACCESS_TOKEN
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TileNotFound'
+        '422':
+          $ref: '#/components/responses/InvalidParameters'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+      x-mapbox-docs-examples:
+      - example-id: streetsVectorTile
+        title: Get a vector tile from mapbox.mapbox-streets-v8 at (z1, x0, y0)
+        request:
+          tileset_id: mapbox.mapbox-streets-v8
+          zoom: 1
+          x: 0
+          y: 0
+          format: mvt
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      x-mapbox-cli-command:
+      - tilesets
+      - get-vectortile
+components:
+  parameters:
+    tileset_id:
+      name: tileset_id
+      in: path
+      required: true
+      description: |
+        Tileset ID(s) in the format `username.id` (e.g., `mapbox.mapbox-streets-v8`).
+        Multiple tilesets can be comma-separated for compositing (maximum 15 tilesets).
+        Layers from all specified tilesets are merged into a single tile response.
+      schema:
+        type: string
+        pattern: ^[\w-]+\.[\w-]+(,[\w-]+\.[\w-]+)*$
+        example: mapbox.mapbox-streets-v8
+    zoom:
+      name: zoom
+      in: path
+      required: true
+      description: |
+        Zoom level per the [Slippy Map Tilenames](https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames) specification.
+        Valid range is 0–30, though tile availability depends on the tileset's configured zoom range.
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 30
+        example: 1
+    x:
+      name: x
+      in: path
+      required: true
+      description: Tile column (x coordinate) per the Slippy Map Tilenames specification.
+      schema:
+        type: integer
+        minimum: 0
+        example: 0
+    y:
+      name: y
+      in: path
+      required: true
+      description: Tile row (y coordinate) per the Slippy Map Tilenames specification.
+      schema:
+        type: integer
+        minimum: 0
+        example: 0
+    format:
+      name: format
+      in: path
+      required: true
+      description: |
+        Vector tile format. Both formats contain identical data encoded as a [Mapbox Vector Tile](https://docs.mapbox.com/data/tilesets/guides/vector-tiles-standards/).
+
+        - `mvt` — Mapbox Vector Tile format (recommended)
+        - `vector.pbf` — Protocol Buffer format (legacy alias)
+      schema:
+        type: string
+        enum:
+        - mvt
+        - vector.pbf
+        example: mvt
+    accessToken:
+      name: access_token
+      in: query
+      required: true
+      description: A valid Mapbox [access token](https://docs.mapbox.com/help/glossary/access-token/).
+      schema:
+        type: string
+        example: pk.xxxxx
+    style:
+      name: style
+      in: query
+      required: false
+      description: |
+        Style ID and timestamp used to request a style-optimized tile, in the format `<style_id>@<timestamp>` (e.g., `mapbox://styles/mapbox/streets-v12@00`).
+
+        Style-optimized tiles filter out features that are invisible at the requested zoom level given the style's layer definitions, producing smaller tile payloads. The timestamp component ensures the tile cache is invalidated when the style is updated.
+      schema:
+        type: string
+        example: mapbox://styles/mapbox/streets-v12@00
+  headers:
+    CacheControl:
+      description: Cache directives for the shared-cache CDN and browser.
+      schema:
+        type: string
+        example: max-age=43200,s-maxage=300
+    ETag:
+      schema:
+        type: string
+  responses:
+    NotModified:
+      description: Not Modified — the cached tile is still valid.
+    Unauthorized:
+      description: Unauthorized — the access token is missing or invalid.
+    Forbidden:
+      description: Forbidden — the account has issues, or the token has URL restrictions that prevent
+        this request.
+    TileNotFound:
+      description: Not Found — the tileset does not exist or the tile coordinates are outside the valid
+        range for the tileset.
+    InvalidParameters:
+      description: |
+        Unprocessable Entity — invalid request parameters. Common causes include a zoom level outside the valid range (0–30), or requesting a raster tileset through this endpoint.
+    RateLimitExceeded:
+      description: Too Many Requests — the rate limit has been exceeded.
+  schemas:
+    VectorTile:
+      description: |
+        A decoded [Mapbox Vector Tile](https://docs.mapbox.com/data/tilesets/guides/vector-tiles-standards/).
+        The wire format is a binary protocol buffer (`.mvt` / `.vector.pbf`). When decoded, the tile
+        contains one or more named layers, each holding geographic features with typed geometries and properties.
+      type: object
+      properties:
+        layers:
+          type: array
+          description: Ordered list of layers contained in the tile.
+          items:
+            $ref: '#/components/schemas/VectorTileLayer'
+    VectorTileLayer:
+      description: A named layer within a vector tile, containing a set of geographic features.
+      type: object
+      required:
+      - name
+      - version
+      - extent
+      - features
+      properties:
+        name:
+          type: string
+          description: Layer name (e.g. `"road"`, `"water"`, `"building"`).
+          example: road
+        version:
+          type: integer
+          description: Vector tile spec version. Always `2` for current tiles.
+          example: 2
+        extent:
+          type: integer
+          description: Size of the tile coordinate space. Typically `4096`.
+          example: 4096
+        features:
+          type: array
+          description: Geographic features contained in this layer.
+          items:
+            $ref: '#/components/schemas/VectorTileFeature'
+    VectorTileFeature:
+      description: A single geographic feature within a vector tile layer.
+      type: object
+      required:
+      - type
+      - geometry
+      - properties
+      properties:
+        id:
+          type: integer
+          description: Optional stable feature identifier.
+          example: 1001
+        type:
+          type: integer
+          description: |
+            Geometry type:
+            - `1` — Point
+            - `2` — LineString
+            - `3` — Polygon
+          enum:
+          - 1
+          - 2
+          - 3
+          example: 2
+        properties:
+          type: object
+          description: Key-value attributes for the feature. Property types vary by tileset and layer.
+          additionalProperties:
+            oneOf:
+            - type: string
+            - type: number
+            - type: boolean
+          example:
+            class: motorway
+            oneway: 1
+            structure: none
+        geometry:
+          type: array
+          description: |
+            Decoded tile coordinates for the feature geometry. Each entry is a `[x, y]` point
+            in tile units (0–extent). For polygons and linestrings, the array represents an
+            ordered sequence of points.
+          items:
+            type: array
+            items:
+              type: integer
+            minItems: 2
+            maxItems: 2
+          example:
+          - - 0
+            - 1200
+          - - 512
+            - 1200
+          - - 1024
+            - 1400
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: query
+      name: access_token
+      description: Mapbox access token
+x-mapbox-restrictions-and-limits: |
+  - The default rate limit for the Mapbox Vector Tiles API is CONSTANTS::MAPS_RATE_LIMIT requests per minute. <RateLimitRequest />
+  - If you exceed the rate limit, you will receive an `HTTP 429 Too Many Requests` response. For information on rate limit headers, see the [Rate limit headers](/guides/#rate-limit-headers) section.
+  - Responses from the Vector Tiles API set default Cache-Control headers to `max-age=43200,s-maxage=300`, or a device cache TTL of 12 hours and a CDN cache TTL of 5 minutes.
+  - When compositing multiple tileset IDs, the API request will have the cache time of the tileset with the highest `s-maxage` value.
+  - A maximum of 15 comma-separated tileset IDs may be specified in a single request.
+  - For general information on caching, see the [Maps APIs caching troubleshooting guide](https://docs.mapbox.com/help/troubleshooting/api-caching/).
+x-mapbox-pricing:
+  pricingProductOverviewProps:
+    unit: requests
+    lineItems: tile requests
+    pricingSection: Maps
+    pricingSectionLink: '#tile'

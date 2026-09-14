@@ -1,0 +1,305 @@
+openapi: 3.1.0
+info:
+  title: Fonts API
+  version: 1.0.0
+  description: |
+    Mapbox Font Service
+  license:
+    name: Proprietary
+    url: https://www.mapbox.com/tos/
+  x-mapbox-docs-path: maps/fonts
+  x-mapbox-docs-products:
+  - Fonts API
+  x-mapbox-docs-description: |
+    The Mapbox Fonts API allows you to manage custom fonts and retrieve glyphs for use in Mapbox GL JS and other Mapbox products. You can upload your own fonts, set their visibility, and query for glyph coverage and PBF data.
+servers:
+- url: https://api.mapbox.com
+  description: Production
+security:
+- AccessTokenQuery: []
+tags:
+- name: health
+  description: API health check
+- name: fonts
+  description: Manage and retrieve custom fonts
+- name: fontstacks
+  description: Retrieve Mapbox fontstack glyphs
+- name: models
+  description: Retrieve 3D model assets
+components:
+  securitySchemes:
+    AccessTokenQuery:
+      type: apiKey
+      in: query
+      name: access_token
+  parameters:
+    fresh:
+      name: fresh
+      in: query
+      required: false
+      schema:
+        type: boolean
+      description: If true, sets Cache-Control to no-cache.
+  schemas:
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+        status:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+        code:
+          type: string
+      required:
+      - message
+      additionalProperties: true
+    FontMetadata:
+      type: object
+      properties:
+        family_name:
+          type: string
+        style_name:
+          type: string
+        hash:
+          type: string
+        owner:
+          type: string
+        visibility:
+          type: string
+          enum:
+          - public
+          - private
+      required:
+      - family_name
+      - style_name
+      - hash
+      - owner
+      - visibility
+    FontUploadAccepted:
+      type: object
+      properties:
+        hash:
+          type: string
+        familyName:
+          type: string
+        styleName:
+          type: string
+      required:
+      - hash
+      - familyName
+      - styleName
+    FontListResponse:
+      type: array
+      items:
+        type: string
+    CoverageResponse:
+      type: array
+      items:
+        type: array
+        items:
+          type: integer
+paths:
+  /fonts/v1/{owner}:
+    get:
+      tags:
+      - fonts
+      operationId: listFonts
+      summary: List fonts for an owner
+      description: Requires `fonts:list` scope.
+      security:
+      - AccessTokenQuery: []
+      parameters:
+      - $ref: '#/components/parameters/fresh'
+      - name: owner
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of font faces
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FontListResponse'
+              examples:
+                listFonts:
+                  summary: List of font faces for an owner
+                  value:
+                  - Open Sans Regular
+                  - Open Sans Bold
+                  - Open Sans Italic
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mapbox-docs-examples:
+      - example-id: listFonts
+        title: List fonts for an owner
+        request:
+          owner: YOUR_MAPBOX_USERNAME
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      x-mapbox-cli-command:
+      - fonts
+      - list
+    post:
+      tags:
+      - fonts
+      operationId: uploadFont
+      summary: Upload a font
+      description: Requires `fonts:write` scope. Accepts raw font file (max ~30MB).
+      security:
+      - AccessTokenQuery: []
+      parameters:
+      - name: owner
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Font metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FontMetadata'
+        '202':
+          description: Processing accepted; returns hash and names
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FontUploadAccepted'
+              examples:
+                uploadFont:
+                  summary: Font upload accepted for processing
+                  value:
+                    hash: a1b2c3d4e5f6
+                    familyName: Open Sans
+                    styleName: Regular
+        '401':
+          description: Invalid token / plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden or missing scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Payload too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Invalid font
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mapbox-docs-examples:
+      - example-id: uploadFont
+        title: Upload a font file
+        request:
+          owner: YOUR_MAPBOX_USERNAME
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      x-mapbox-cli-command:
+      - fonts
+      - upload
+  /fonts/v1/{owner}/{face}:
+    delete:
+      tags:
+      - fonts
+      operationId: deleteFont
+      summary: Delete a font
+      description: Requires `fonts:write` scope. Returns 204 even if the font does not exist.
+      security:
+      - AccessTokenQuery: []
+      parameters:
+      - name: owner
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: face
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          description: Empty font face not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Invalid token / plan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden or missing scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Font not found (can occur in some cases)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Failed to delete font
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-mapbox-docs-examples:
+      - example-id: deleteFont
+        title: Delete a font face
+        request:
+          owner: YOUR_MAPBOX_USERNAME
+          face: Open Sans Regular
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      x-mapbox-cli-command:
+      - fonts
+      - delete

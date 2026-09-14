@@ -1,0 +1,587 @@
+openapi: 3.1.0
+info:
+  title: Static Images API
+  description: |
+    The Static Images API returns static map images generated from a
+    Mapbox style. Images can include overlays such as markers, lines, and
+    polygons. You can specify the map center, zoom level, bearing, pitch, and
+    output dimensions, or let the API automatically fit the view to an overlay
+    or bounding box.
+  version: 1.0.0
+  x-mapbox-docs-path: maps/static-images
+  x-mapbox-docs-products:
+  - Static Images API
+  x-mapbox-docs-description: Generate static map images from Mapbox styles with optional overlays including
+    markers, lines, and polygons.
+  contact:
+    name: Mapbox
+    url: https://docs.mapbox.com/api/maps/static-images/
+  license:
+    name: Mapbox Terms of Service
+    url: https://www.mapbox.com/legal/tos
+servers:
+- url: https://api.mapbox.com
+  description: Production
+security:
+- ApiKeyAuth: []
+tags:
+- name: Static Images
+  description: Generate static map images from Mapbox styles
+paths:
+  /styles/v1/{username}/{style_id}/static/{overlay}/{lon},{lat},{zoom},{bearing},{pitch}/{width}x{height}{highRes}{format}:
+    get:
+      operationId: getStaticImage
+      summary: Retrieve a static map image
+      description: |
+        Render a static map image from a Mapbox style at a specified center
+        point, zoom level, bearing, and pitch, with one or more overlays such
+        as markers, encoded polyline paths, or GeoJSON features.
+
+        The `bearing` and `pitch` path segments are optional and default to `0`,
+        so `{lon},{lat},{zoom}`, `{lon},{lat},{zoom},{bearing}` and
+        `{lon},{lat},{zoom},{bearing},{pitch}` are all valid.
+
+        The response image format depends on the style: vector-only styles
+        return PNG, raster-only styles return JPEG. You can override this by
+        appending a format extension to the URL (e.g., `.png`, `.jpeg`, `.webp`).
+      tags:
+      - Static Images
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      - $ref: '#/components/parameters/overlay'
+      - $ref: '#/components/parameters/lon'
+      - $ref: '#/components/parameters/lat'
+      - $ref: '#/components/parameters/zoom'
+      - $ref: '#/components/parameters/bearing'
+      - $ref: '#/components/parameters/pitch'
+      - $ref: '#/components/parameters/width'
+      - $ref: '#/components/parameters/height'
+      - $ref: '#/components/parameters/highRes'
+      - $ref: '#/components/parameters/format'
+      - $ref: '#/components/parameters/attribution'
+      - $ref: '#/components/parameters/logo'
+      - $ref: '#/components/parameters/before_layer'
+      - $ref: '#/components/parameters/addlayer'
+      - $ref: '#/components/parameters/setfilter'
+      - $ref: '#/components/parameters/layer_id'
+      - $ref: '#/components/parameters/accessToken'
+      responses:
+        '200':
+          $ref: '#/components/responses/ImageSuccess'
+          content:
+            image/png:
+              examples:
+                staticImageCenter:
+                  summary: Static image of downtown Los Angeles with a marker
+                  externalValue: https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/pin-s+ff0000(-118.2437,34.0522)/-118.2437,34.0522,12,0,0/600x400@2x?access_token=MAPBOX_ACCESS_TOKEN
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/InvalidParameters'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+      x-mapbox-docs-examples:
+      - example-id: staticImageCenter
+        title: Get a static map image centered on downtown Los Angeles with a marker
+        request:
+          username: mapbox
+          style_id: streets-v12
+          overlay: pin-s+ff0000(-118.2437,34.0522)
+          lon: -118.2437
+          lat: 34.0522
+          zoom: 12
+          bearing: 0
+          pitch: 0
+          width: 600
+          height: 400
+          highRes: '@2x'
+          format: ''
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      x-mapbox-cli-command:
+      - static-images
+      - get-static-image
+  /styles/v1/{username}/{style_id}/static/{overlay}/auto/{width}x{height}{highRes}{format}:
+    get:
+      operationId: getStaticImageAuto
+      summary: Retrieve a static map image with auto-fit bounds
+      description: |
+        Render a static map image that automatically fits the viewport to the
+        bounding box of the provided overlay. The `auto` keyword replaces the
+        center, zoom, bearing and pitch segment, and the API calculates the
+        center and zoom needed to fit all overlay features within the image
+        dimensions.
+
+        Use the `padding` query parameter to inset the fitted view from the
+        image edges.
+
+        `bearing` and `pitch` cannot be combined with `auto`; supplying
+        coordinates alongside `auto` returns `422`. Combining `auto` with
+        `addlayer` or `setfilter` when there is no overlay also returns `422`,
+        as does a GeoJSON overlay that contains no features.
+      tags:
+      - Static Images
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      - $ref: '#/components/parameters/overlay'
+      - $ref: '#/components/parameters/width'
+      - $ref: '#/components/parameters/height'
+      - $ref: '#/components/parameters/highRes'
+      - $ref: '#/components/parameters/format'
+      - $ref: '#/components/parameters/attribution'
+      - $ref: '#/components/parameters/logo'
+      - $ref: '#/components/parameters/before_layer'
+      - $ref: '#/components/parameters/padding'
+      - $ref: '#/components/parameters/addlayer'
+      - $ref: '#/components/parameters/setfilter'
+      - $ref: '#/components/parameters/layer_id'
+      - $ref: '#/components/parameters/accessToken'
+      responses:
+        '200':
+          $ref: '#/components/responses/ImageSuccess'
+          content:
+            image/png:
+              examples:
+                staticImageAuto:
+                  summary: Static image auto-fit to a marker overlay
+                  externalValue: https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/pin-s+ff0000(-118.2437,34.0522)/auto/600x400@2x?access_token=MAPBOX_ACCESS_TOKEN
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/InvalidParameters'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+      x-mapbox-docs-examples:
+      - example-id: staticImageAuto
+        title: Get a static map image auto-fit to a marker
+        request:
+          username: mapbox
+          style_id: streets-v12
+          overlay: pin-s+ff0000(-118.2437,34.0522)
+          width: 600
+          height: 400
+          highRes: '@2x'
+          format: ''
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      x-mapbox-cli-command:
+      - static-images
+      - get-static-image-auto
+  /styles/v1/{username}/{style_id}/static/{overlay}/{bbox}/{width}x{height}{highRes}{format}:
+    get:
+      operationId: getStaticImageBbox
+      summary: Retrieve a static map image for a bounding box
+      description: |
+        Render a static map image that fits a specified bounding box, given as
+        `[minlon,minlat,maxlon,maxlat]` in the path. The API calculates the
+        center and zoom needed to fit the bounding box within the image
+        dimensions.
+
+        Use the `padding` query parameter to inset the fitted view from the
+        image edges.
+
+        `bearing` and `pitch` cannot be combined with a bounding box; supplying
+        extra coordinates after the bounding box returns `422`.
+      tags:
+      - Static Images
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      - $ref: '#/components/parameters/overlay'
+      - $ref: '#/components/parameters/bbox'
+      - $ref: '#/components/parameters/width'
+      - $ref: '#/components/parameters/height'
+      - $ref: '#/components/parameters/highRes'
+      - $ref: '#/components/parameters/format'
+      - $ref: '#/components/parameters/attribution'
+      - $ref: '#/components/parameters/logo'
+      - $ref: '#/components/parameters/before_layer'
+      - $ref: '#/components/parameters/padding'
+      - $ref: '#/components/parameters/addlayer'
+      - $ref: '#/components/parameters/setfilter'
+      - $ref: '#/components/parameters/layer_id'
+      - $ref: '#/components/parameters/accessToken'
+      responses:
+        '200':
+          $ref: '#/components/responses/ImageSuccess'
+          content:
+            image/png:
+              examples:
+                staticImageBbox:
+                  summary: Static image fitted to a Washington DC bounding box
+                  externalValue: https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/pin-s+ff0000(-77.0353,38.8895)/[-77.043686,38.892035,-76.933086,38.942035]/600x400@2x?access_token=MAPBOX_ACCESS_TOKEN
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/InvalidParameters'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+      x-mapbox-docs-examples:
+      - example-id: staticImageBbox
+        title: Get a static map image for a bounding box in Washington DC
+        request:
+          username: mapbox
+          style_id: streets-v12
+          overlay: pin-s+ff0000(-77.0353,38.8895)
+          bbox: '[-77.043686,38.892035,-76.933086,38.942035]'
+          width: 600
+          height: 400
+          highRes: '@2x'
+          format: ''
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      x-mapbox-cli-command:
+      - static-images
+      - get-static-image-bbox
+components:
+  parameters:
+    username:
+      name: username
+      in: path
+      required: true
+      description: The username of the account that owns the style.
+      schema:
+        type: string
+        example: mapbox
+    style_id:
+      name: style_id
+      in: path
+      required: true
+      description: The ID of the map style to render.
+      schema:
+        type: string
+        example: streets-v12
+    overlay:
+      name: overlay
+      in: path
+      required: false
+      description: |
+        One or more overlay features to render on the map, separated by commas.
+        The last item renders on top. The value must begin with `geojson`,
+        `pin-`, `path`, or `url-`; otherwise the request returns `400`.
+        Supported overlay types:
+
+        **Markers:**
+        - `pin-s({lon},{lat})` - small pin with no label
+        - `pin-l-{label}+{color}({lon},{lat})` - large pin with label and color
+        - Labels: `a`-`z`, `0`-`99`, or a valid [Maki icon](https://labs.mapbox.com/maki-icons/) name
+        - Colors: 3 or 6-digit hex without `#` (e.g., `f00` or `ff0000`)
+
+        **Custom marker from URL:**
+        - `url-{percent_encoded_url}({lon},{lat})` - custom image, PNG or JPG
+          only, max 1024x1024 px. The URL must return `200` with an `image/*`
+          content-type or the request returns `404`; an image larger than
+          1024 px on either side returns `422`
+
+        **Paths (encoded polyline):**
+        - `path-{strokeWidth}+{strokeColor}-{strokeOpacity}+{fillColor}-{fillOpacity}({encoded_polyline})`
+        - All style parameters are optional
+
+        **GeoJSON:**
+        - `geojson({uri_encoded_geojson})` - supports [simplestyle-spec](https://github.com/mapbox/simplestyle-spec) properties
+      schema:
+        type: string
+        example: pin-s+ff0000(-118.2437,34.0522),pin-s+0000ff(-118.2537,34.0422)
+    bbox:
+      name: bbox
+      in: path
+      required: true
+      description: |
+        Bounding box as `[minlon,minlat,maxlon,maxlat]`. Coordinates are
+        WGS84 longitude/latitude. `minlon` must be less than `maxlon` and
+        `minlat` less than `maxlat`, otherwise the request returns `422`.
+
+        The square brackets may be sent literally or percent-encoded as `%5B`
+        and `%5D`; both are accepted. Note that `curl` treats `[` and `]` as
+        glob characters, so a literal bounding box on the command line needs
+        either the percent-encoded form or the `--globoff` flag.
+      schema:
+        type: string
+        example: '[-77.043686,38.892035,-76.933086,38.942035]'
+    lon:
+      name: lon
+      in: path
+      required: true
+      description: Longitude of the map center.
+      schema:
+        type: number
+        format: double
+        minimum: -180
+        maximum: 180
+        example: -118.2437
+    lat:
+      name: lat
+      in: path
+      required: true
+      description: Latitude of the map center.
+      schema:
+        type: number
+        format: double
+        minimum: -85.0511
+        maximum: 85.0511
+        example: 34.0522
+    zoom:
+      name: zoom
+      in: path
+      required: true
+      description: Zoom level. Fractional values are rounded to two decimal places.
+      schema:
+        type: number
+        format: double
+        minimum: 0
+        maximum: 22
+        example: 12
+    bearing:
+      name: bearing
+      in: path
+      required: false
+      description: Bearing (rotation) of the map in degrees clockwise from north. Defaults to `0`.
+      schema:
+        type: number
+        format: double
+        minimum: 0
+        maximum: 360
+        default: 0
+        example: 0
+    pitch:
+      name: pitch
+      in: path
+      required: false
+      description: Pitch (tilt) of the map in degrees. `0` is looking straight down; `60` is the maximum.
+      schema:
+        type: number
+        format: double
+        minimum: 0
+        maximum: 60
+        default: 0
+        example: 0
+    width:
+      name: width
+      in: path
+      required: true
+      description: Width of the output image in pixels.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1280
+        example: 600
+    height:
+      name: height
+      in: path
+      required: true
+      description: Height of the output image in pixels.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1280
+        example: 400
+    highRes:
+      name: highRes
+      in: path
+      required: false
+      description: |
+        Render the image at 2x scale (Retina/HiDPI). Use `@2x` to double the
+        pixel density of the output image while keeping the same logical
+        dimensions, or pass an empty string for standard resolution.
+      schema:
+        type: string
+        enum:
+        - '@2x'
+        - ''
+        example: '@2x'
+    format:
+      name: format
+      in: path
+      required: false
+      description: |
+        File extension that sets the output image format, appended directly
+        after the dimensions and optional `@2x` (for example
+        `600x400@2x.webp`). Omit it to let the style decide: vector-only styles
+        return PNG and raster-only styles return JPEG.
+      schema:
+        type: string
+        enum:
+        - .png
+        - .jpeg
+        - .webp
+        - ''
+        example: .png
+    attribution:
+      name: attribution
+      in: query
+      required: false
+      description: Whether to include map attribution on the image.
+      schema:
+        type: boolean
+        default: true
+        example: true
+    logo:
+      name: logo
+      in: query
+      required: false
+      description: Whether to include the Mapbox logo on the image.
+      schema:
+        type: boolean
+        default: true
+        example: true
+    before_layer:
+      name: before_layer
+      in: query
+      required: false
+      description: |
+        ID of a style layer. When provided, overlays are inserted into the
+        style directly below this layer. Useful for placing overlays beneath
+        labels.
+      schema:
+        type: string
+        example: waterway-label
+    padding:
+      name: padding
+      in: query
+      required: false
+      description: |
+        Padding in pixels around the overlay or bounding box. Accepts 1 to 4
+        comma-separated integers (CSS shorthand order: top, right, bottom,
+        left). Only applies to `auto` and bounding box positioning; using it on
+        any other endpoint returns `422`.
+
+        Left plus right padding must be less than `width`, and top plus bottom
+        padding must be less than `height`, otherwise the request returns
+        `422`.
+
+        Defaults to 5% of the smallest dimension, up to a maximum of 12 pixels.
+      schema:
+        type: string
+        example: 50,20,50,20
+    addlayer:
+      name: addlayer
+      in: query
+      required: false
+      description: |
+        A JSON object representing a Mapbox style layer to add to the map
+        before rendering. Maximum one per request. Cannot be combined with
+        `setfilter`.
+      schema:
+        type: string
+        example: '{"id":"border","type":"line","source":"composite","source-layer":"admin","filter":["==","admin_level",2],"paint":{"line-color":"#f00","line-width":2}}'
+    setfilter:
+      name: setfilter
+      in: query
+      required: false
+      description: |
+        A JSON array representing a Mapbox GL filter expression to apply to an
+        existing layer. Maximum one per request. Requires `layer_id`. Cannot be
+        combined with `addlayer`.
+      schema:
+        type: string
+        example: '["==","admin_level",2]'
+    layer_id:
+      name: layer_id
+      in: query
+      required: false
+      description: The ID of the style layer to which `setfilter` is applied.
+      schema:
+        type: string
+        example: admin-0-boundary
+    accessToken:
+      name: access_token
+      in: query
+      required: true
+      description: A Mapbox access token with the `styles:tiles` scope.
+      schema:
+        type: string
+        example: pk.xxxxx
+  responses:
+    ImageSuccess:
+      description: A raster image of the rendered map.
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary
+        image/jpeg:
+          schema:
+            type: string
+            format: binary
+        image/webp:
+          schema:
+            type: string
+            format: binary
+      headers:
+        Cache-Control:
+          description: |
+            Cache directives. Satellite styles return
+            `max-age=43200, s-maxage=604800`; other styles return
+            `max-age=43200, s-maxage=43200`.
+          schema:
+            type: string
+            example: max-age=43200, s-maxage=43200
+    NotModified:
+      description: |
+        Not Modified - the `If-None-Match` request header matched the current
+        ETag, so no image body is returned.
+    BadRequest:
+      description: |
+        Bad Request - the overlay does not begin with a supported type
+        (`geojson`, `pin-`, `path`, or `url-`).
+    Unauthorized:
+      description: Unauthorized - invalid or missing access token.
+    Forbidden:
+      description: Forbidden - the token does not have the required scope or the account is restricted.
+    NotFound:
+      description: |
+        Not Found - the specified style does not exist, or a custom marker URL
+        did not return a `200` response with an `image/*` content-type.
+    InvalidParameters:
+      description: |
+        Unprocessable Entity - one or more parameters are invalid. Common
+        causes include zoom outside 0-22, pitch outside 0-60, dimensions
+        outside 1-1280, invalid padding format, empty GeoJSON overlay, or
+        conflicting `addlayer`/`setfilter` parameters.
+    RateLimitExceeded:
+      description: Rate limit exceeded (default 1,250 requests per minute).
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: query
+      name: access_token
+      description: Mapbox access token with the `styles:tiles` scope.
+x-mapbox-restrictions-and-limits: |
+  - The default rate limit for the Static Images API is 1,250 requests per minute. <RateLimitRequest />
+  - If you exceed the rate limit, you will receive an `HTTP 429 Too Many Requests` response. For information on rate limit headers, see the [Rate limit headers](/guides/#rate-limit-headers) section.
+  - Maximum image dimensions are 1,280 x 1,280 pixels.
+  - Maximum URL length is 8,192 characters.
+  - Custom marker images must be PNG or JPG and no larger than 1,024 x 1,024 pixels.
+  - Mapbox Standard and Mapbox Standard Satellite styles are not supported (only Web Mercator projection is supported).
+  - Style changes may take up to 12 hours to propagate.
+x-mapbox-pricing:
+  pricingProductOverviewProps:
+    unit: requests
+    lineItems: image requests
+    pricingSection: Maps
+    pricingSectionLink: '#static-images'
+  description: |
+    Each request to the Static Images API counts as one image request.

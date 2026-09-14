@@ -1,0 +1,15 @@
+# LF in the repository, whatever a checkout does with it. install.sh is piped
+# straight into `sh` on machines we do not control, where a CRLF ending is a
+# stray `\r` in every command it runs; install.ps1 is served the same way to
+# `irm | iex`, and CI checks it byte for byte.
+* text=auto eol=lf
+
+*.rs    text eol=lf
+*.sh    text eol=lf
+*.ps1   text eol=lf
+*.toml  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.lock  text eol=lf -diff

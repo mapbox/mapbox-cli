@@ -1,0 +1,32 @@
+# Link the CRT statically on Windows.
+#
+# The default MSVC CRT is the DLL one, which leaves `mapbox.exe` importing
+# VCRUNTIME140.dll. That DLL is not part of Windows: it arrives with the Visual
+# C++ Redistributable, which every machine that builds this already has and a
+# freshly imaged user machine does not. So the failure never appears where we
+# build it — it appears on the user's first launch, as a system dialog naming a
+# DLL, which reads like a corrupt download rather than like a missing
+# dependency of ours. It is the Windows shape of the glibc problem that made
+# the Linux targets musl; docs/distribution.md has both halves.
+#
+# Set per target rather than as a blanket `[build] rustflags`, because
+# `crt-static` is not a harmless no-op elsewhere: it is already the default on
+# the musl targets, and on the Apple ones there is no static libSystem to link,
+# so asking for it there is meaningless at best.
+#
+# `aarch64-pc-windows-msvc` is listed although nothing builds it yet. Adding
+# that row to the matrix in build-and-publish.yml is meant to be the whole
+# change, and docs/distribution.md promises exactly that — if this file did not
+# already name the target, that row would quietly ship the bug again.
+#
+# Careful: a `RUSTFLAGS` environment variable *replaces* what is set here, it
+# does not merge with it, and nothing warns when it does. If a workflow or a
+# local shell ever exports one, these targets go back to the dynamic CRT
+# silently. That is why build-and-publish.yml asserts on the linked binary
+# instead of trusting this file.
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

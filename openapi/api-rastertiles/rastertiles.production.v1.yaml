@@ -1,0 +1,225 @@
+openapi: 3.1.0
+info:
+  title: Raster Tiles API
+  description: The **Mapbox Raster Tiles API** serves [raster tiles](https://docs.mapbox.com/help/glossary/raster/)
+    generated from satellite imagery tilesets and tilesets generated from raster data uploaded to Mapbox.com.
+  version: 1.0.0
+  x-mapbox-docs-path: maps/raster-tiles
+  x-mapbox-docs-products:
+  - Raster Tiles API
+  x-mapbox-docs-description: The Mapbox Raster Tiles API serves raster tiles generated from satellite
+    imagery tilesets and tilesets generated from raster data uploaded to Mapbox.com.
+  contact:
+    name: Mapbox
+    url: https://docs.mapbox.com/api/maps/raster-tiles/
+  license:
+    name: Proprietary
+    url: https://www.mapbox.com/legal/tos
+servers:
+- url: https://api.mapbox.com
+  description: Production server
+tags:
+- name: health
+  description: Service-level health and uptime probes
+- name: tiles
+  description: Raster tile delivery endpoints (v4)
+- name: grid
+  description: UTFGrid JSON endpoints (v4 and legacy)
+- name: legacy
+  description: Deprecated or legacy endpoints (API versions 1–3)
+security:
+- ApiKeyAuth: []
+paths:
+  /v4/{tilesets}/{z}/{x}/{y}.{format}{quality}:
+    get:
+      tags:
+      - tiles
+      summary: Get raster tile with standard resolution
+      description: |
+        Retrieve a raster tile at standard resolution (256x256 pixels)
+
+        This endpoint is compatible with tiling schemes used by mapping software that expects a URL with placeholders for zoom level (`{z}`), tile column (`{x}`), and tile row (`{y}`).
+      operationId: getTile
+      parameters:
+      - $ref: '#/components/parameters/tilesets'
+      - $ref: '#/components/parameters/z'
+      - $ref: '#/components/parameters/x'
+      - $ref: '#/components/parameters/y'
+      - $ref: '#/components/parameters/rasterFormat'
+      - $ref: '#/components/parameters/quality'
+      - $ref: '#/components/parameters/accessToken'
+      responses:
+        '200':
+          $ref: '#/components/responses/TileSuccess'
+          content:
+            image/png:
+              examples:
+                satelliteTile:
+                  summary: PNG Tile of mapbox.satellite at (z14, x4824, y6160)
+                  externalValue: https://api.mapbox.com/v4/mapbox.satellite/14/4824/6160.png?access_token=MAPBOX_ACCESS_TOKEN
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/TileNotFound'
+        '422':
+          $ref: '#/components/responses/InvalidParameters'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+      x-mapbox-docs-examples:
+      - example-id: satelliteTile
+        title: Get PNG Tile of mapbox.satellite tileset at (z14, x4824, y6160)
+        request:
+          tilesets: mapbox.satellite
+          z: 14
+          x: 4824
+          y: 6160
+          format: png
+          quality: ''
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      x-mapbox-cli-command:
+      - tilesets
+      - get-rastertile
+components:
+  parameters:
+    tilesets:
+      name: tilesets
+      in: path
+      required: true
+      description: "Tileset ID(s) in the format `username.id` (e.g., `mapbox.satellite`). \nMultiple tilesets\
+        \ can be comma-separated for compositing (maximum 15 tilesets). \nOrder matters: the first tileset\
+        \ is the bottom layer, and subsequent tilesets \nare layered on top. Supports both raster and\
+        \ vector tilesets for compositing.\n\nFor vector tilesets, api-rastertiles will render an X-Ray\
+        \ raster tile to show \nthe contents of the vector tile in an image format.\n"
+      schema:
+        type: string
+        pattern: ^[\w-]+\.[\w-]+(,[\w-]+\.[\w-]+)*$
+        example: mapbox.satellite-watermask,mapbox.satellite-hires
+    z:
+      name: z
+      in: path
+      required: true
+      description: Zoom level (0-22)
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 22
+        example: 14
+    x:
+      name: x
+      in: path
+      required: true
+      description: Tile column (x coordinate)
+      schema:
+        type: integer
+        minimum: 0
+        example: 5088
+    y:
+      name: y
+      in: path
+      required: true
+      description: Tile row (y coordinate)
+      schema:
+        type: integer
+        minimum: 0
+        example: 5937
+    rasterFormat:
+      name: format
+      in: path
+      required: true
+      description: Image format for the tile
+      schema:
+        type: string
+        enum:
+        - png
+        - pngraw
+        - jpg
+        - jpeg
+        - webp
+        example: png
+    quality:
+      name: quality
+      in: path
+      required: false
+      description: "Compression quality parameter appended to format (e.g., .png80, .jpeg90). \nAvailable\
+        \ options depend on format:\n- PNG: '', '32', '64', '128', '256', 'raw' (e.g., .png, .png80, .pngraw)\n\
+        - JPG/JPEG: '', '70', '80', '90' (e.g., .jpg, .jpg80, .jpeg90)\n- WEBP: '', '70', '80', '90' (e.g.,\
+        \ .webp, .webp80)\n\nNote: All satellite tiles are returned as jpeg80 regardless of requested\
+        \ format.\n"
+      schema:
+        type: string
+        pattern: ^(\d{0,3}|raw)?$
+        example: '80'
+    accessToken:
+      name: access_token
+      in: query
+      required: true
+      description: Mapbox access token for authentication
+      schema:
+        type: string
+        example: pk.xxxxx
+  headers:
+    CacheControl:
+      description: Cache directives for shared-cache CDN and browser.
+      schema:
+        type: string
+        example: max-age=43200,s-maxage=300
+    ETag:
+      schema:
+        type: string
+  responses:
+    TileSuccess:
+      description: Successful tile response
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary
+        image/jpeg:
+          schema:
+            type: string
+            format: binary
+        image/webp:
+          schema:
+            type: string
+            format: binary
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+        ETag:
+          $ref: '#/components/headers/ETag'
+        Last-Modified:
+          schema:
+            type: string
+            example: Tue, 04 Dec 2018 22:28:44 GMT
+    NotModified:
+      description: Not Modified - cached content is still valid
+    Unauthorized:
+      description: Unauthorized - invalid or missing access token
+    TileNotFound:
+      description: Tile not found
+    InvalidParameters:
+      description: Invalid request parameters
+    RateLimitExceeded:
+      description: Rate limit exceeded
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: query
+      name: access_token
+      description: Mapbox access token
+x-mapbox-restrictions-and-limits: |
+  - The default rate limit for the Mapbox Raster Tiles API endpoint is CONSTANTS::MAPS_RATE_LIMIT requests per minute. <RateLimitRequest />
+  - If you exceed the rate limit, you will receive an `HTTP 429 Too Many Requests` response. For information on rate limit headers, see the [Rate limit headers](/guides/#rate-limit-headers) section.
+  - Responses from the Raster Tiles API set default Cache-Control headers to `max-age=43200,s-maxage=300`, or a device cache TTL of 12 hours and a CDN cache TTL of 5 minutes. New tileset data is cached for up to a further 5 minutes on the backend as well.
+  - If you composite multiple tileset IDs, the API request will have the cache time of the tileset with the highest `s-maxage` value.
+  - For general information on caching, see the [Maps APIs caching troubleshooting guide](https://docs.mapbox.com/help/troubleshooting/api-caching/).
+x-mapbox-pricing:
+  pricingProductOverviewProps:
+    unit: requests
+    lineItems: tile requests
+    pricingSection: Maps
+    pricingSectionLink: '#tile'
+  description: |
+    This is placeholder content to make sure the renderer handles pricing section markdown correctly.

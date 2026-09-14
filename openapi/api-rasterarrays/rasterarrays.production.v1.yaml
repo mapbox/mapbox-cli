@@ -1,0 +1,163 @@
+openapi: 3.1.0
+info:
+  version: 1.0.0
+  title: Rasterarray Tiles API
+  description: Serves MRTs
+  x-mapbox-docs-path: maps/raster-arrays
+  x-mapbox-docs-products:
+  - Rasterarray Tiles API
+  x-mapbox-docs-description: |
+    The Rasterarrays API serves multi-band raster tiles in MRT (Mapbox Raster Tile) format.
+tags:
+- name: Health
+  description: Service health and uptime probes
+servers:
+- url: https://api.mapbox.com/rasterarrays/v1
+  description: Production
+security:
+- AccessTokenQuery: []
+paths:
+  /{tilesets-id}/{z}/{x}/{y}.mrt:
+    get:
+      summary: Get MRT tile
+      description: "Retrieves a multi-band raster tile in MRT (Mapbox Raster Tile) format.\n\nThe tileset\
+        \ ID follows the format `username.id`. The jobid parameter can be found \nin the mapdoc via the\
+        \ api-tileset endpoint: \n`https://api.mapbox.com/v4/<tileset_id>.json?secure&access_token=<access_token>`\n"
+      parameters:
+      - name: tilesets-id
+        in: path
+        required: true
+        description: The map id (tileset) to get tiles from - username.id format
+        schema:
+          type: string
+          minLength: 1
+        example: username.tileset_id
+      - name: z
+        in: path
+        required: true
+        description: The z value of the tile request
+        schema:
+          type: integer
+          minimum: 0
+        example: 14
+      - name: x
+        in: path
+        required: true
+        description: The x value of the tile request
+        schema:
+          type: integer
+          minimum: 0
+        example: 2535
+      - name: y
+        in: path
+        required: true
+        description: The y value of the tile request
+        schema:
+          type: integer
+          minimum: 0
+        example: 3142
+      - name: access_token
+        in: query
+        required: true
+        description: Required Mapbox API Access Token
+        schema:
+          type: string
+          minLength: 1
+        example: YOUR_MAPBOX_ACCESS_TOKEN
+      - name: jobid
+        in: query
+        required: true
+        description: Required job identifier used to locate the tile. Can be found in mapdoc via api-tileset
+          endpoint.
+        schema:
+          type: string
+          minLength: 1
+        example: clnf3oau5005g08kzhr460vut
+      responses:
+        '200':
+          description: Successfully retrieved MRT tile data
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+                description: Multi-band raster tile data in MRT format
+              examples:
+                getMrtTile:
+                  summary: MRT tile binary data
+                  externalValue: https://api.mapbox.com/rasterarrays/v1/username.tileset_id/14/2535/3142.mrt?access_token=YOUR_MAPBOX_ACCESS_TOKEN&jobid=clnf3oau5005g08kzhr460vut
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+              example: Bad Request
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+              example: Forbidden
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+              example: Not Found
+      x-mapbox-docs-examples:
+      - example-id: getMrtTile
+        title: Get an MRT tile
+        request:
+          tilesets-id: username.tileset_id
+          z: 14
+          x: 2535
+          y: 3142
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+          jobid: clnf3oau5005g08kzhr460vut
+      operationId: getMrtTile
+      x-mapbox-cli-command:
+      - rasterarrays
+      - get-mrt-tile
+components:
+  securitySchemes:
+    AccessTokenQuery:
+      type: apiKey
+      in: query
+      name: access_token
+      description: Mapbox access token
+  schemas:
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+        status:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+        code:
+          type: string
+      required:
+      - message
+      additionalProperties: true
+  responses:
+    ErrorResponse:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

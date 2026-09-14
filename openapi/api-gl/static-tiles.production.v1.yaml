@@ -1,0 +1,269 @@
+openapi: 3.1.0
+info:
+  title: Static Tiles API
+  description: |
+    The Static Tiles API serves raster tiles rendered from Mapbox
+    styles. These tiles can be used in traditional slippy-map frameworks
+    (Leaflet, OpenLayers, etc.) or any tool that consumes `{z}/{x}/{y}` tile
+    URLs.
+  version: 1.0.0
+  x-mapbox-docs-path: maps/static-tiles
+  x-mapbox-docs-products:
+  - Static Tiles API
+  x-mapbox-docs-description: Serve raster tiles rendered from Mapbox styles for use in slippy-map frameworks
+    and other tile consumers.
+  contact:
+    name: Mapbox
+    url: https://docs.mapbox.com/api/maps/static-tiles/
+  license:
+    name: Mapbox Terms of Service
+    url: https://www.mapbox.com/legal/tos
+servers:
+- url: https://api.mapbox.com
+  description: Production
+security:
+- ApiKeyAuth: []
+tags:
+- name: Static Tiles
+  description: Raster tile rendering from Mapbox styles
+paths:
+  /styles/v1/{username}/{style_id}/tiles/{tilesize}/{z}/{x}/{y}{highRes}{format}:
+    get:
+      operationId: getStaticTile
+      summary: Retrieve a static raster tile
+      description: |
+        Render a single raster tile from a Mapbox style at the specified zoom
+        level and tile coordinates.
+
+        The default tile size is 512 x 512 pixels. Use `256` for the
+        `tilesize` parameter to request 256 x 256 tiles. Note that 512 px
+        tiles at zoom `z` show the same geographic area as 256 px tiles at
+        zoom `z+1`, so 256 px tiles require 4x as many requests for the same
+        coverage.
+
+        Append `@2x` for Retina/HiDPI rendering, which doubles pixel density
+        (e.g., a 512 px tile becomes 1024 x 1024 pixels).
+
+        The response image format depends on the style: vector-only styles
+        return PNG, raster-only styles return JPEG. You can override this by
+        appending a format extension to the URL (e.g., `.png`, `.jpeg`,
+        `.webp`).
+      tags:
+      - Static Tiles
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      - $ref: '#/components/parameters/tilesize'
+      - $ref: '#/components/parameters/z'
+      - $ref: '#/components/parameters/x'
+      - $ref: '#/components/parameters/y'
+      - $ref: '#/components/parameters/highRes'
+      - $ref: '#/components/parameters/format'
+      - $ref: '#/components/parameters/accessToken'
+      responses:
+        '200':
+          $ref: '#/components/responses/TileSuccess'
+          content:
+            image/png:
+              examples:
+                staticTile:
+                  summary: PNG tile of mapbox/streets-v12 at z=14, x=4824, y=6160
+                  externalValue: https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/14/4824/6160@2x?access_token=MAPBOX_ACCESS_TOKEN
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/InvalidParameters'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+      x-mapbox-docs-examples:
+      - example-id: staticTile
+        title: Get a raster tile from the Mapbox Streets style
+        request:
+          username: mapbox
+          style_id: streets-v12
+          tilesize: 512
+          z: 14
+          x: 4824
+          y: 6160
+          highRes: '@2x'
+          format: ''
+          access_token: YOUR_MAPBOX_ACCESS_TOKEN
+      x-mapbox-cli-command:
+      - static-tiles
+      - get-static-tile
+components:
+  parameters:
+    username:
+      name: username
+      in: path
+      required: true
+      description: The username of the account that owns the style.
+      schema:
+        type: string
+        example: mapbox
+    style_id:
+      name: style_id
+      in: path
+      required: true
+      description: The ID of the map style to render.
+      schema:
+        type: string
+        example: streets-v12
+    tilesize:
+      name: tilesize
+      in: path
+      required: false
+      description: |
+        Tile dimensions in pixels. `512` (default) produces 512 x 512 tiles;
+        `256` produces 256 x 256 tiles. 512 px tiles at zoom `z` cover the
+        same area as 256 px tiles at zoom `z+1`.
+      schema:
+        type: integer
+        enum:
+        - 256
+        - 512
+        default: 512
+        example: 512
+    z:
+      name: z
+      in: path
+      required: true
+      description: Zoom level (0-22).
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 22
+        example: 14
+    x:
+      name: x
+      in: path
+      required: true
+      description: Tile column (x coordinate) per the slippy-map tile scheme.
+      schema:
+        type: integer
+        minimum: 0
+        example: 4824
+    y:
+      name: y
+      in: path
+      required: true
+      description: Tile row (y coordinate) per the slippy-map tile scheme.
+      schema:
+        type: integer
+        minimum: 0
+        example: 6160
+    highRes:
+      name: highRes
+      in: path
+      required: false
+      description: |
+        Render the tile at 2x scale (Retina/HiDPI). Use `@2x` to double the
+        pixel density of the output tile while keeping the same logical
+        dimensions, or pass an empty string for standard resolution.
+      schema:
+        type: string
+        enum:
+        - '@2x'
+        - ''
+        example: '@2x'
+    format:
+      name: format
+      in: path
+      required: false
+      description: |
+        File extension that sets the output image format, appended directly
+        after the tile coordinates and optional `@2x` (for example
+        `6160@2x.webp`). Omit it to let the style decide: vector-only styles
+        return PNG and raster-only styles return JPEG.
+      schema:
+        type: string
+        enum:
+        - .png
+        - .jpeg
+        - .webp
+        - ''
+        example: .png
+    accessToken:
+      name: access_token
+      in: query
+      required: true
+      description: A Mapbox access token with the `styles:tiles` scope.
+      schema:
+        type: string
+        example: pk.xxxxx
+  responses:
+    TileSuccess:
+      description: A raster tile image.
+      content:
+        image/png:
+          schema:
+            type: string
+            format: binary
+        image/jpeg:
+          schema:
+            type: string
+            format: binary
+        image/webp:
+          schema:
+            type: string
+            format: binary
+      headers:
+        Cache-Control:
+          description: |
+            Cache directives. Satellite styles return
+            `max-age=43200, s-maxage=604800`; other styles return
+            `max-age=43200, s-maxage=43200`.
+          schema:
+            type: string
+            example: max-age=43200, s-maxage=43200
+        ETag:
+          description: Entity tag for cache validation.
+          schema:
+            type: string
+    NotModified:
+      description: |
+        Not Modified - the `If-None-Match` request header matched the current
+        ETag, so no tile body is returned.
+    BadRequest:
+      description: Bad Request - cannot composite raster sources with vector sources.
+    Unauthorized:
+      description: Unauthorized - invalid or missing access token.
+    Forbidden:
+      description: Forbidden - the token does not have the required scope or the account is restricted.
+    NotFound:
+      description: Not Found - the specified style does not exist.
+    InvalidParameters:
+      description: |
+        Unprocessable Entity - one or more parameters are invalid. Common
+        causes include an invalid source or zoom level outside 0-22.
+    RateLimitExceeded:
+      description: Rate limit exceeded (default 6,000 requests per minute).
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: query
+      name: access_token
+      description: Mapbox access token with the `styles:tiles` scope.
+x-mapbox-restrictions-and-limits: |
+  - The default rate limit for the Static Tiles API is 6,000 requests per minute. <RateLimitRequest />
+  - If you exceed the rate limit, you will receive an `HTTP 429 Too Many Requests` response. For information on rate limit headers, see the [Rate limit headers](/guides/#rate-limit-headers) section.
+  - 512 px tiles at zoom `z` show the same geographic area as 256 px tiles at zoom `z+1`. Using 256 px tiles requires 4x as many requests for equivalent coverage.
+  - Mapbox Standard and Mapbox Standard Satellite styles are not supported (only Web Mercator projection is supported).
+  - Style changes may take up to 12 hours to propagate.
+  - Responses set default Cache-Control headers to `max-age=43200, s-maxage=604800` for satellite styles and `max-age=43200, s-maxage=43200` for other styles.
+x-mapbox-pricing:
+  pricingProductOverviewProps:
+    unit: requests
+    lineItems: tile requests
+    pricingSection: Maps
+    pricingSectionLink: '#tile'
+  description: |
+    Each request to the Static Tiles API counts as one tile request.

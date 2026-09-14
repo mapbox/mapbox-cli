@@ -1,0 +1,382 @@
+openapi: 3.1.0
+info:
+  title: Mapbox Tilequery API
+  version: 1.0.0
+  description: |
+    API for querying vector or rasterarray tilesets by lon/lat and returning GeoJSON features.
+  x-mapbox-docs-path: maps/tilequery
+  x-mapbox-docs-products:
+  - Tilequery API
+  x-mapbox-docs-description: The Mapbox Tilequery API retrieves features from vector or rasterarray tilesets
+    near a given longitude/latitude, returning them as GeoJSON.
+  license:
+    name: Proprietary
+    url: https://www.mapbox.com/legal/tos
+servers:
+- url: https://api.mapbox.com
+  description: Production
+security:
+- AccessTokenQuery: []
+paths:
+  /v4/{tilesets}/tilequery/{lon},{lat}.json:
+    get:
+      summary: Tilequery
+      operationId: getV4TilesetsTilequeryLonLatJson
+      description: Query one or more tilesets at a coordinate to return nearby features.
+      x-mapbox-docs-examples:
+      - example-id: vector
+      - example-id: rasterarray
+      parameters:
+      - name: tilesets
+        in: path
+        required: true
+        description: Comma-separated tileset ids in the form `{owner}.{tileset}`.
+        schema:
+          type: string
+          example: mapbox.mapbox-streets-v8,mapbox.mapbox-terrain-v2
+      - name: lon
+        in: path
+        required: true
+        description: Longitude in degrees (range -180 to 180).
+        schema:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+          example: -122.459
+      - name: lat
+        in: path
+        required: true
+        description: Latitude in degrees (range -85.0511 to 85.0511).
+        schema:
+          type: number
+          format: double
+          minimum: -85.0511
+          maximum: 85.0511
+          example: 37.7754
+      - name: access_token
+        in: query
+        required: true
+        description: Mapbox access token.
+        schema:
+          type: string
+      - name: radius
+        in: query
+        required: false
+        description: Search radius in meters. Must be a positive number.
+        schema:
+          type: number
+          format: double
+          default: 0
+          minimum: 0
+      - name: limit
+        in: query
+        required: false
+        description: Max number of vector features to return (1-50). Ignored for rasterarray tilesets.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 5
+      - name: geometry
+        in: query
+        required: false
+        description: Limit results to features of this geometry type.
+        schema:
+          type: string
+          enum:
+          - polygon
+          - linestring
+          - point
+      - name: layers
+        in: query
+        required: false
+        description: Comma-separated list of layer names to include. Required for rasterarray queries
+          to return data; if omitted, rasterarray responses are empty.
+        schema:
+          type: string
+          example: road,building
+      - name: bands
+        in: query
+        required: false
+        description: Comma-separated list of rasterarray band names to include.
+        schema:
+          type: string
+          example: frame-0,frame-1
+      - name: dedupe
+        in: query
+        required: false
+        description: Deduplicate features by layer and geometry (vector only).
+        schema:
+          type: boolean
+          default: true
+      - name: language
+        in: query
+        required: false
+        description: BCP-47 language code (vector only). Comma-separated list is validated.
+        schema:
+          type: string
+          example: en
+      - name: worldview
+        in: query
+        required: false
+        description: ISO 3166-1 alpha-2 worldview (vector only). Comma-separated list accepted.
+        schema:
+          type: string
+          example: US
+      responses:
+        '200':
+          description: GeoJSON FeatureCollection.
+          headers:
+            Content-Type:
+              schema:
+                type: string
+            X-Mapbox-Region:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+            Last-Modified:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+            Expires:
+              schema:
+                type: string
+            Timing-Allow-Origin:
+              schema:
+                type: string
+            X-Mapbox-Language:
+              schema:
+                type: string
+            X-Mapbox-Worldview:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/VectorFeatureCollection'
+                - $ref: '#/components/schemas/RasterFeatureCollection'
+              examples:
+                vector:
+                  summary: Vector tilequery response
+                  value:
+                    type: FeatureCollection
+                    features:
+                    - type: Feature
+                      id: 1
+                      geometry:
+                        type: Point
+                        coordinates:
+                        - -122.459
+                        - 37.7754
+                      properties:
+                        tilequery:
+                          distance: 0
+                          geometry: point
+                          layer: road
+                          value: 1
+                rasterarray:
+                  summary: Rasterarray tilequery response
+                  value:
+                    type: FeatureCollection
+                    features:
+                    - type: Feature
+                      id: null
+                      geometry:
+                        type: Point
+                        coordinates:
+                        - -122.459
+                        - 37.7754
+                      properties:
+                        val:
+                        - 1.23
+                        tilequery:
+                          layer: data
+                          band: frame-0
+                          zoom: 6
+                          units: m
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ErrorResponse'
+      x-mapbox-cli-command:
+      - tilequery
+      - get
+components:
+  securitySchemes:
+    AccessTokenQuery:
+      type: apiKey
+      in: query
+      name: access_token
+  responses:
+    ErrorResponse:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalid-lon:
+              value:
+                message: 'Invalid lon value: -190'
+            not-found:
+              value:
+                message: Tileset not found
+  schemas:
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+        status:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+        code:
+          type: string
+      required:
+      - message
+      additionalProperties: true
+    VectorFeatureCollection:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+          - FeatureCollection
+        features:
+          type: array
+          items:
+            $ref: '#/components/schemas/VectorFeature'
+      required:
+      - type
+      - features
+    VectorFeature:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+          - Feature
+        id:
+          type: integer
+        geometry:
+          $ref: '#/components/schemas/PointGeometry'
+        properties:
+          $ref: '#/components/schemas/VectorFeatureProperties'
+      required:
+      - type
+      - geometry
+      - properties
+    VectorFeatureProperties:
+      type: object
+      properties:
+        tilequery:
+          type: object
+          properties:
+            distance:
+              type: number
+            geometry:
+              type: string
+            layer:
+              type: string
+            value:
+              type: number
+          required:
+          - distance
+          - geometry
+          - layer
+      required:
+      - tilequery
+    RasterFeatureCollection:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+          - FeatureCollection
+        features:
+          type: array
+          items:
+            $ref: '#/components/schemas/RasterFeature'
+      required:
+      - type
+      - features
+    RasterFeature:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+          - Feature
+        id:
+          oneOf:
+          - type: integer
+          - type: string
+          - type: 'null'
+        geometry:
+          $ref: '#/components/schemas/PointGeometry'
+        properties:
+          $ref: '#/components/schemas/RasterFeatureProperties'
+      required:
+      - type
+      - geometry
+      - properties
+    RasterFeatureProperties:
+      type: object
+      properties:
+        val:
+          oneOf:
+          - type: array
+            items:
+              type: number
+          - type: 'null'
+        tilequery:
+          type: object
+          properties:
+            layer:
+              type: string
+            band:
+              type: string
+            zoom:
+              type: integer
+            units:
+              type: string
+          required:
+          - layer
+          - band
+          - zoom
+          - units
+      required:
+      - tilequery
+    PointGeometry:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+          - Point
+        coordinates:
+          type: array
+          items:
+            type: number
+          minItems: 2
+          maxItems: 2
+      required:
+      - type
+      - coordinates

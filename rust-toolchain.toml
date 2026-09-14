@@ -1,0 +1,36 @@
+# The Rust this repo is built with — CI, the five-target release matrix, and a
+# laptop, all the same number.
+#
+# Without this file every one of those follows whatever `stable` resolved to on
+# the day it ran, and nothing announces when that changes. Two concrete
+# failures, neither of which needs a commit to this repo to happen:
+#
+#   * clippy runs with `-D warnings` in ci.yml, so a lint added to a new stable
+#     turns a green branch red for a reason that is nowhere in its diff;
+#   * `build-and-publish.yml` compiles the binaries users download, so a
+#     codegen change ships to them from a toolchain nobody chose.
+#
+# `channel` is an exact version rather than `stable`, which would pin nothing
+# and only add a file that looks like it does. Bumping it is its own PR — see
+# "Conventions" in AGENTS.md for what that PR has to show.
+#
+# This is *not* `rust-version` in Cargo.toml. That one is the oldest Rust the
+# crate still compiles on (1.89, measured); this one is the newest we have
+# actually run the suite on. They move for different reasons and are allowed to
+# be far apart.
+#
+# `components` is what this repo's own instructions already require: `cargo
+# fmt` and `cargo clippy` are a condition of committing here, so a fresh clone
+# should have them without anyone reading a setup list first. `profile` matches
+# what the workflows install, so a lint or format difference cannot come from a
+# local toolchain being assembled differently than CI's.
+#
+# No `targets` key, deliberately. The release matrix builds five triples, and
+# listing them here would make every clone download five copies of std to run
+# `cargo test` on one platform. The workflows ask for the target they are
+# building, per matrix row, which is where that fact already lives.
+
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

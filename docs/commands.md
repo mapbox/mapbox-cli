@@ -462,6 +462,36 @@ and `--file <PATH>` when it is bytes: raw for `application/octet-stream` and
 operations declare both and reject having both passed. Each command's own
 **Parameters** below lists only what is specific to it.
 
+`--data` does not have to carry the body itself. Following curl,
+**`@<path>` reads a file and `@-` reads stdin**:
+
+```sh
+mapbox styles create --data @style.json
+jq '.name = "Renamed"' style.json | mapbox styles update STYLE_ID --data @-
+```
+
+Only the first character decides, so `--data '{"contact":"a@b.example"}'` is
+still the body it looks like. A body whose *first* character is a literal `@`
+cannot be passed this way — curl has the same limitation, and it costs
+nothing here because every operation that takes `--data` sends JSON, and `@`
+is not valid JSON.
+
+Three things worth knowing about the read forms:
+
+- **The body is sent byte for byte.** The trailing newline a text editor
+  leaves is insignificant to a JSON parser and is not stripped, because
+  trimming a body the caller supplied would be the CLI editing what it was
+  asked to send.
+- **The timeout changes with it.** A typed `--data` is capped by the command
+  line at a megabyte or so and gets the 60-second budget; `@<path>` and `@-`
+  are unbounded and get the same 900 seconds `--file` does.
+- **`@-` suppresses the confirmation on a delete.** Of the five operations
+  that take `--data`, only `mapbox sprites delete-batch` is a `DELETE`, and
+  a question needs stdin to be a terminal — which a pipe is not. So piping a
+  body into it sends it unasked, exactly as `< file` always did. Use
+  `@<path>` rather than `@-` to keep the prompt, or pass `--yes` to say the
+  answer deliberately.
+
 A command that changes something takes `--dry-run`, which prints the request
 it would send, on stdout, and sends nothing. Which commands those are is not
 a list anyone keeps: it is every `POST`, `PUT`, `PATCH` and `DELETE` — 12 of
@@ -3513,7 +3543,8 @@ names the flag rather than offering a login that could not outrank it.
 | `request_failed` | Transport failure — proxy, DNS, TLS. Never carries the URL, because the access token rides in its query string. |
 | `request_timed_out` | The request ran out of its time budget. Its own code because it is the one transport failure worth retrying or raising `--timeout` for. |
 | `missing_path_parameters` | A `{username}`/`{owner}`/`{account}` placeholder went unresolved. |
-| `invalid_data` | `--data` was not valid JSON. |
+| `invalid_data` | `--data` was not valid JSON, or a `@<path>`/`@-` body was empty. |
+| `invalid_file` | A file could not be read: one named by `--file`, or one named by `--data @<path>`. Also a `@<path>` that is not valid UTF-8, which a JSON body has to be. |
 | `binary_response` | The response was bytes and stdout is a terminal. Redirect it to a file. |
 | `missing_subcommand` | A command group was named with no operation. |
 | `cancelled` | A delete was declined at the confirmation prompt. Nothing was sent. |

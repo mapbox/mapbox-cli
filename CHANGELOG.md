@@ -33,6 +33,16 @@ the Mapbox APIs' own response bodies are not.
   it. `mapbox agent-skills` is exempt — it fetches from GitHub, whose request
   id Mapbox support cannot look up.
 
+- `--data` can now read the request body instead of carrying it: `@<path>`
+  reads a file and `@-` reads stdin, the spelling curl uses. Before this the
+  only way to send a style from a file was `--data "$(cat style.json)"`,
+  which has no `cmd.exe` equivalent on a platform this CLI ships installers
+  for, put the body in the process table where `ps` shows it, and broke at a
+  size that failed in the shell before `mapbox` ran — so no error message
+  could explain it. Five operations take `--data`. A body read this way also
+  gets the 900-second transfer budget rather than the 60-second one, since
+  nothing bounds a file the way a command line bounds what can be typed.
+
 ## 0.1.8 - 2026-09-14
 
 Initial beta release. The next release is `0.2.0`.

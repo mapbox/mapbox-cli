@@ -78,7 +78,10 @@ pub enum Payload {
     /// No body, or one typed into `--data` — argv bounds it — and a response
     /// no larger than a tile, a glyph range or a style.
     Bounded,
-    /// A file named by `--file`. Nothing bounds it.
+    /// A file: named by `--file`, or read by `--data @<path>` / `--data @-`.
+    /// Nothing bounds it. `executor::payload_of` decides which of the two
+    /// `--data` cases a request is, since the body looks the same either way
+    /// by the time it is built.
     File,
 }
 

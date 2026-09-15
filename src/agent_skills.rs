@@ -1,6 +1,6 @@
 //! `mapbox agent-skills` — install the published Mapbox Agent Skills.
 //!
-//! Not to be confused with its neighbour. [`crate::generate_skills`] writes a
+//! Not to be confused with its neighbor. [`crate::generate_skills`] writes a
 //! skill describing *this CLI's own commands*, rendered from the specs
 //! compiled into the binary. This command installs the *hand-written Mapbox
 //! domain skills* — cartography, token security, iOS and Android patterns,
@@ -1210,7 +1210,7 @@ mod tests {
         encoder.finish().expect("finish gzip")
     }
 
-    const SKILL_MD: &[u8] = b"---\nname: mapbox-cartography\ndescription: Map design, colour and type. Use when styling.\n---\n\n# Cartography\n";
+    const SKILL_MD: &[u8] = b"---\nname: mapbox-cartography\ndescription: Map design, color and type. Use when styling.\n---\n\n# Cartography\n";
 
     fn one_skill() -> Vec<u8> {
         archive(&[
@@ -1252,7 +1252,7 @@ mod tests {
         assert_eq!(skill.name, "mapbox-cartography");
         assert_eq!(
             skill.description.as_deref(),
-            Some("Map design, colour and type. Use when styling.")
+            Some("Map design, color and type. Use when styling.")
         );
 
         let paths: Vec<String> = skill

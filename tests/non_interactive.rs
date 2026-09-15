@@ -177,7 +177,7 @@ type YesSpelling<'a> = (&'a str, &'a [&'a str], &'a [(&'a str, &'a str)]);
 /// `--yes` must NOT start a login that cannot finish.
 ///
 /// It used to. The flag's documented purpose is to give a caller "the CI
-/// behaviour on purpose", so a job exports `MAPBOX_YES=1` to stop its deletes
+/// behavior on purpose", so a job exports `MAPBOX_YES=1` to stop its deletes
 /// blocking — and that silently opted `auth login` back into the browser flow:
 /// past `config_dir`, into a real dynamic client registration, then five
 /// minutes of `CALLBACK_TIMEOUT` waiting for a callback nobody would send. One
@@ -201,7 +201,7 @@ fn yes_does_not_buy_a_login_a_terminal() {
             "interactive_required",
             "{extra:?} {env:?} let the login start"
         );
-        // The blocked store is a second line of defence that should never be
+        // The blocked store is a second line of defense that should never be
         // reached: its message means `config_dir` already ran, and `config_dir`
         // creates the directory it checks.
         assert!(
@@ -420,11 +420,11 @@ fn a_delete_at_a_terminal_asks_before_it_sends() {
         "EOF at the prompt must cancel, in the shape the caller asked for: {seen}"
     );
 
-    // And nothing was sent: a cancelled delete writes no result at all. Read
+    // And nothing was sent: a canceled delete writes no result at all. Read
     // from the file rather than `seen`, which has the two streams joined.
     let written = std::fs::read_to_string(&out_path).unwrap_or_default();
     assert!(
         written.trim().is_empty(),
-        "a cancelled delete wrote to stdout: {written:?}"
+        "a canceled delete wrote to stdout: {written:?}"
     );
 }

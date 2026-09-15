@@ -197,7 +197,7 @@ fn every_answer_carries_the_globals() {
 /// parser's twelve spellings as the argument's possible values, and publishing
 /// them told an agent `--yes` accepts `1`, `on` or `false` — none of which it
 /// does. `mapbox --yes=1` is a usage error, which is exactly the gap between
-/// promise and behaviour this file exists to close.
+/// promise and behavior this file exists to close.
 #[test]
 fn a_flag_promises_no_values_because_it_takes_none() {
     let value = schema(&["styles", "delete", "--schema"]);

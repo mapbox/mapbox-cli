@@ -8,7 +8,7 @@
 #
 # ci.yml runs it under both, because that is the split install.ps1 has to cope
 # with: 5.1 is what `powershell` opens on a stock Windows 11 and is where the
-# TLS default, the progress bar and the stderr-is-an-error behaviour bite.
+# TLS default, the progress bar and the stderr-is-an-error behavior bite.
 #
 # It also runs on macOS and Linux under pwsh, which is how it is developed -
 # there is no Windows to hand. The cases that cannot mean anything there (the
@@ -486,7 +486,7 @@ try {
     $tagged = @($logged | Where-Object { $_ -like '*src/onboardingscriptrm-rf' })
     Expect-Equal '2' ([string]$logged.Count) 'made the two requests a run makes: the manifest and the archive'
     Expect-Equal '2' ([string]$marked.Count) 'both name the installer and the triple'
-    Expect-Equal '2' ([string]$tagged.Count) 'both carry the source tag, sanitised for a header'
+    Expect-Equal '2' ([string]$tagged.Count) 'both carry the source tag, sanitized for a header'
     Clear-Env 'MAPBOX_CLI_INSTALL_SOURCE'
 
     Start-Case 'DISABLE_TELEMETRY keeps it down to the product token'
@@ -514,10 +514,10 @@ try {
     Clear-Env 'DISABLE_TELEMETRY'
     Clear-Env 'MAPBOX_CLI_INSTALL_SOURCE'
 
-    Start-Case 'MAPBOX_CLI_NO_TELEMETRY is honoured, and outranks the old name'
+    Start-Case 'MAPBOX_CLI_NO_TELEMETRY is honored, and outranks the old name'
     New-CaseEnv 'telemetry-new-name'
     $env:MAPBOX_CLI_INSTALL_SOURCE = 'dockerfile'
-    # The documented name, which the binary reads and this script honours too.
+    # The documented name, which the binary reads and this script honors too.
     $env:MAPBOX_CLI_NO_TELEMETRY = '1'
     [IO.File]::WriteAllText($RequestLog, '')
     Invoke-Installer

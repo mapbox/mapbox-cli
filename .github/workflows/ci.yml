@@ -32,6 +32,18 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-14, windows-2022]
     runs-on: ${{ matrix.os }}
+    # These legs take one to two minutes. Twenty is not a budget, it is a
+    # tripwire: without one, a job that stops making progress runs to GitHub's
+    # six-hour default before anyone hears about it. That is not hypothetical —
+    # a test that blocked on `accept()` with no deadline wedged the Windows leg
+    # for its full six hours, and the only reason it went unnoticed for a day
+    # is that every run on `main` was cancelled by the next push first.
+    #
+    # On all three rather than Windows alone: nobody here runs Windows as a
+    # daily driver, so CI is the only signal it has — but a Unix leg that
+    # suddenly needs twenty minutes has something wrong with it worth hearing
+    # about too.
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -113,6 +125,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-14]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -148,6 +161,7 @@ jobs:
       matrix:
         shell: [powershell, pwsh]
     runs-on: windows-2022
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -268,6 +282,7 @@ jobs:
   audit:
     name: advisories (blocks on a vulnerability)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:

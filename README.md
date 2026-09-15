@@ -343,16 +343,17 @@ never checks at all.
 Mapbox collects telemetry data from our CLIs to better understand how our
 tools are used and how to improve our products.
 
-- **What Telemetry Data We Collect:** Usage metrics include installs,
-  Mapbox API-related command names (e.g. `auth login`), exit codes, CLI
-  version, OS/architecture, an identifier for the detected AI coding agent
-  (if any) running the command (based on signals such as the presence of
-  the `CLAUDECODE` or `COPILOT_MODEL` environment variable; see
-  [`agent_detect.rs`](./src/agent_detect.rs) for the complete, versioned
-  list), and a boolean flag indicating whether the command was run in a CI
-  environment. IP addresses necessarily accompany any request made to our
-  server, but will not be retained and analyzed together with telemetry
-  data.
+- **What Telemetry Data We Collect:** Usage metrics include installs, the
+  service a Mapbox API command belongs to (e.g. `styles` or `geocoder`,
+  never the operation or its arguments), CLI version, OS/architecture,
+  whether stdin and stdout are attached to a terminal, an identifier for
+  the detected AI coding agent (if any) running the command (based on
+  signals such as the presence of the `CLAUDECODE` or `COPILOT_MODEL`
+  environment variable; see [`agent_detect.rs`](./src/agent_detect.rs) for
+  the complete, versioned list), and a boolean flag indicating whether the
+  command was run in a CI environment. IP addresses necessarily accompany
+  any request made to our server, but will not be retained and analyzed
+  together with telemetry data.
 - **Why We Collect It:** For internal analytics by Mapbox to understand
   adoption, prioritize investments, and improve the reliability,
   performance, and developer experience of our CLIs.

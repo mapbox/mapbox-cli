@@ -62,39 +62,10 @@ const VALIDATION_ENDPOINT: &str = "https://api.mapbox.com/tokens/v2";
 // succeeded, so it ships alongside the other three rather than staying in
 // `spec::WITHHELD_OPERATIONS`. Anyone logged in before this lands needs
 // `mapbox auth login` again, for the same reason `scopes:list` above does.
-const DEFAULT_SCOPES: &str = "styles:tiles styles:read styles:write styles:list fonts:read fonts:list fonts:write datasets:read datasets:write tokens:read scopes:list tilesets:read tilesets:write tilesets:list user-feedback:read";
-
-/// [`DEFAULT_SCOPES`] plus every enabled flag's `oauth_scopes` — what
-/// `mapbox auth login` actually requests.
-///
-/// `statistics:read` (`ACCOUNT_USAGE`'s scope, now on) has **not** been
-/// confirmed against the Accounts API's registration allowlist, unlike
-/// everything in `DEFAULT_SCOPES`. If DCR drops it silently (as it does for
-/// `tokens:write` and others in `spec::UNSUPPORTED_OPERATIONS`), a login
-/// done with the flag on would still leave `mapbox usage` unable to
-/// authenticate. Confirm this against a real `mapbox auth login` before
-/// this reaches a staging or production release.
-fn requested_scopes() -> String {
-    let gated: Vec<&'static [&'static str]> = crate::feature_flags::flags::ALL
-        .iter()
-        .filter(|flag| flag.is_enabled())
-        .map(|flag| flag.oauth_scopes)
-        .collect();
-    scopes_with(&gated)
-}
-
-/// [`requested_scopes`], parameterised for testing — a build's own flags
-/// can't be flipped from a test.
-fn scopes_with(gated: &[&[&str]]) -> String {
-    let mut scopes = DEFAULT_SCOPES.to_string();
-    for scopes_list in gated {
-        for scope in *scopes_list {
-            scopes.push(' ');
-            scopes.push_str(scope);
-        }
-    }
-    scopes
-}
+// `statistics:read` (needed by `mapbox usage`) registers fine — confirmed
+// live against a real `mapbox auth login` — so it rides along unconditionally
+// rather than through the now-removed `ACCOUNT_USAGE` flag.
+const DEFAULT_SCOPES: &str = "styles:tiles styles:read styles:write styles:list fonts:read fonts:list fonts:write datasets:read datasets:write tokens:read scopes:list tilesets:read tilesets:write tilesets:list user-feedback:read statistics:read";
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct ClientRegistration {
@@ -1223,7 +1194,7 @@ pub fn describe_plan(action: &str, profile: Option<&str>, mode: Mode) -> Result<
                     "would_replace_existing": stored.is_some(),
                     "authorization_endpoint": AUTHORIZATION_ENDPOINT,
                     "token_endpoint": TOKEN_ENDPOINT,
-                    "scopes": requested_scopes().split(' ').map(str::to_string).collect::<Vec<String>>(),
+                    "scopes": DEFAULT_SCOPES.split(' ').map(str::to_string).collect::<Vec<String>>(),
                 }),
             )
         }
@@ -1760,10 +1731,10 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     let redirect_uri = format!("http://localhost:{}/callback", port);
 
     // Computed once: register_client's ceiling and the authorize scope must agree.
-    let scopes = requested_scopes();
+    let scopes = DEFAULT_SCOPES;
 
     output::progress("Registering OAuth client with Mapbox...");
-    let registration = register_client(&redirect_uri, debug, &scopes)?;
+    let registration = register_client(&redirect_uri, debug, scopes)?;
 
     let (code_verifier, code_challenge) = generate_pkce();
     // Same generator as the verifier above, and for the same reason: `state`
@@ -1776,7 +1747,7 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
         AUTHORIZATION_ENDPOINT,
         percent_encode(&registration.client_id),
         percent_encode(&redirect_uri),
-        percent_encode(&scopes),
+        percent_encode(scopes),
         state,
         code_challenge,
     );
@@ -1836,35 +1807,7 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        fix_for, remedy_for, scopes_with, time_until, with_auth_fix, TokenSource, DEFAULT_SCOPES,
-    };
-
-    #[test]
-    fn a_flags_scopes_ride_along_only_while_it_is_gated_on() {
-        let without = scopes_with(&[]);
-        let off: Vec<&str> = without.split(' ').collect();
-        assert!(!off.contains(&"statistics:read"), "{off:?}");
-        assert_eq!(off, DEFAULT_SCOPES.split(' ').collect::<Vec<&str>>());
-
-        let scopes = scopes_with(&[&["statistics:read"]]);
-        let on: Vec<&str> = scopes.split(' ').collect();
-        assert!(on.contains(&"statistics:read"), "{on:?}");
-        for scope in DEFAULT_SCOPES.split(' ') {
-            assert!(on.contains(&scope), "lost {scope} when a flag gated on");
-        }
-    }
-
-    /// Goes through `feature_flags::flags::ALL`, unlike `scopes_with`
-    /// above, so a flag whose scopes never reach `ALL` fails here too.
-    #[test]
-    fn requested_scopes_is_never_narrower_than_the_default_set() {
-        let requested = super::requested_scopes();
-        let requested: Vec<&str> = requested.split(' ').collect();
-        for scope in DEFAULT_SCOPES.split(' ') {
-            assert!(requested.contains(&scope), "lost {scope}");
-        }
-    }
+    use super::{fix_for, remedy_for, time_until, with_auth_fix, TokenSource, DEFAULT_SCOPES};
 
     /// Every scope the CLI's live operations need, that Mapbox will actually
     /// grant. The two the specs ask for and the platform still does not have
@@ -1895,6 +1838,7 @@ mod tests {
             "tilesets:read",
             "tilesets:write",
             "tilesets:list",
+            "statistics:read",
         ] {
             assert!(requested.contains(&needed), "{needed} is not requested");
         }

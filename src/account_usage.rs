@@ -1,12 +1,9 @@
 //! `mapbox usage` — account/token usage by product and day.
 //!
 //! Calls the Statistics API (`GET /statistics/v1`); the token needs the
-//! `statistics:read` scope. `mapbox auth login` requests it by default now
-//! that [`crate::feature_flags::flags::ACCOUNT_USAGE`] is on (see
-//! `auth::requested_scopes`); a token from before that flip won't carry it
-//! until logged in again.
-//!
-//! Gated by [`crate::feature_flags::flags::ACCOUNT_USAGE`]; see that module.
+//! `statistics:read` scope. `mapbox auth login` requests it by default; a
+//! token from before that scope was added won't carry it until logged in
+//! again.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -59,7 +56,7 @@ const DAILY_ARG: &str = "daily";
 /// this crate, not a state a shipped binary can drift into; the pinning test
 /// below calls this function, so CI fails first; and nothing else — not
 /// `--help`, not `--schema`, not startup — calls it, so a broken spec can
-/// only ever break `usage` itself, and only behind its feature flag.
+/// only ever break `usage` itself.
 fn operation() -> &'static Operation {
     static PARSED: OnceLock<Operation> = OnceLock::new();
     PARSED.get_or_init(|| {

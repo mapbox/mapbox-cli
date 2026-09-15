@@ -20,7 +20,6 @@ mod completion;
 mod confirm;
 mod deprecation;
 mod executor;
-mod feature_flags;
 mod generate_skills;
 mod http;
 mod link;
@@ -586,17 +585,13 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
     // Between the other two hand-written leaves, so the help lists the three
     // that make no request together and in the order someone meets them.
     // What it prints is built from `app` itself, which is why nothing here
-    // has to know about it: a service added by a spec sync, or a command a
-    // feature flag left out, is completed or not completed by having been
-    // registered above or not.
+    // has to know about it: a service added by a spec sync is completed or
+    // not by having been registered above or not.
     app = app.subcommand(completion::command());
 
     app = app.subcommand(uninstall::command());
 
-    // See `feature_flags`: absent from the tree, not merely hidden, when disabled.
-    if feature_flags::flags::ACCOUNT_USAGE.is_enabled() {
-        app = app.subcommand(account_usage::command());
-    }
+    app = app.subcommand(account_usage::command());
 
     app.subcommand(tilesets_cli::command())
 }

@@ -3164,10 +3164,6 @@ your stored token predates that. Also takes `--token-id <id>` for one
 token's usage instead of the whole account — see `mapbox accounts
 list-tokens` for ids.
 
-Gated behind a feature flag, flipped on: an official release ships this
-command the same as a build from source does. See `feature_flags` for what
-the gate is for.
-
 #### Parameters
 
 | Parameter | Effect |

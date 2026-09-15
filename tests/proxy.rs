@@ -23,7 +23,8 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// A read that returns what arrived rather than blocking for a full buffer.
 fn read_some(stream: &mut TcpStream) -> Vec<u8> {
@@ -51,25 +52,19 @@ fn what_the_proxy_saw(
     let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
     let port = listener.local_addr().expect("the bound address").port();
 
-    let accepted = std::thread::spawn(move || {
-        listener
-            .set_nonblocking(false)
-            .expect("a blocking listener");
-        match listener.incoming().next() {
-            Some(Ok(mut stream)) => handler(&mut stream),
-            _ => String::new(),
-        }
-    });
+    listener
+        .set_nonblocking(true)
+        .expect("a non-blocking listener");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_mapbox"))
-        .args(["styles", "list", "--username", "someone", "-o", "json"])
-        .env_clear()
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .env("MAPBOX_ACCESS_TOKEN", "pk.a-fake-token-for-a-proxy-test")
-        .env("MAPBOX_NO_UPDATE_CHECK", "1")
+    // Spawned rather than run to completion: the connection this is waiting
+    // for only arrives while the child is running.
+    let child = mapbox()
         .env(variable, format!("{scheme}://127.0.0.1:{port}"))
-        .output()
+        .spawn()
         .expect("the binary runs");
+
+    let seen = accept_within(&listener, ACCEPT_TIMEOUT, handler);
+    let output = child.wait_with_output().expect("the binary exits");
 
     // The request cannot succeed — the proxy refuses it — so a success here
     // would mean the proxy was bypassed entirely.
@@ -79,7 +74,76 @@ fn what_the_proxy_saw(
         String::from_utf8_lossy(&output.stderr)
     );
 
-    accepted.join().expect("the fake proxy thread")
+    seen.unwrap_or_else(|| {
+        panic!(
+            "nothing reached the fake proxy within {ACCEPT_TIMEOUT:?}, so {variable} was not \
+             used. The CLI said: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })
+}
+
+/// How long a connection may take to arrive before the variable is judged
+/// ignored.
+///
+/// Generous, because a cold spawn on a loaded runner is not fast — and
+/// **bounded**, which is the point. This blocked on `accept()` with no
+/// deadline once, so "never connected" was indistinguishable from "has not
+/// connected yet": on Windows it wedged the job for its full six-hour limit
+/// instead of failing in seconds.
+const ACCEPT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Waits for one connection, up to `timeout`, and runs `handler` on it.
+/// `None` means nothing arrived — a result, not a reason to keep waiting.
+fn accept_within(
+    listener: &TcpListener,
+    timeout: Duration,
+    handler: fn(&mut TcpStream) -> String,
+) -> Option<String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                stream
+                    .set_nonblocking(false)
+                    .expect("a blocking stream to talk on");
+                return Some(handler(&mut stream));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+/// The binary, with the environment these tests need.
+///
+/// `env_remove` rather than `env_clear`, matching `tests/update_check.rs`.
+/// Clearing takes `SystemRoot` with it on Windows, and without that the
+/// socket and TLS stacks cannot initialise — so the CLI failed before it
+/// could reach any proxy, which is what left the earlier version of this
+/// test waiting for a connection that was never going to come.
+fn mapbox() -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    cmd.args(["styles", "list", "--username", "someone", "-o", "json"])
+        .env_remove("HTTP_PROXY")
+        .env_remove("HTTPS_PROXY")
+        .env_remove("ALL_PROXY")
+        .env_remove("NO_PROXY")
+        .env_remove("http_proxy")
+        .env_remove("https_proxy")
+        .env_remove("all_proxy")
+        .env_remove("no_proxy")
+        .env_remove("MAPBOX_OUTPUT")
+        .env("MAPBOX_ACCESS_TOKEN", "pk.a-fake-token-for-a-proxy-test")
+        .env("MAPBOX_NO_UPDATE_CHECK", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    cmd
 }
 
 /// An HTTP proxy is asked to tunnel an https request with `CONNECT`.
@@ -117,12 +181,7 @@ fn an_https_proxy_in_the_environment_is_used() {
 /// rather than a break: delete the test and document the support.
 #[test]
 fn a_socks_proxy_is_refused_with_a_reason() {
-    let output = Command::new(env!("CARGO_BIN_EXE_mapbox"))
-        .args(["styles", "list", "--username", "someone", "-o", "json"])
-        .env_clear()
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .env("MAPBOX_ACCESS_TOKEN", "pk.a-fake-token-for-a-proxy-test")
-        .env("MAPBOX_NO_UPDATE_CHECK", "1")
+    let output = mapbox()
         // Port 9 (discard) rather than a live one: the scheme is rejected
         // before anything is dialled, so nothing needs to be listening.
         .env("ALL_PROXY", "socks5://127.0.0.1:9")

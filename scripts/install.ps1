@@ -546,6 +546,18 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
             Write-Host "  note     the copy it replaced is still running; $asideNote is deleted next time"
         }
 
+        # Said once, here, rather than on every future command: someone piping
+        # this into `iex` is not going to read the man page before their first
+        # run. Skipped when telemetry is already off, since there's nothing to
+        # opt out of.
+        if ($TelemetryAllowed) {
+            Write-Host ''
+            Write-Host 'Mapbox CLI collects telemetry by default. To disable it, set'
+            Write-Host 'MAPBOX_CLI_NO_TELEMETRY=1 before running CLI commands.'
+            Write-Host ''
+            Write-Host 'Learn more: https://github.com/mapbox/mapbox-cli#privacy'
+        }
+
         # --- PATH ----------------------------------------------------------
 
         # Resolved before this session's PATH is touched below, so what it

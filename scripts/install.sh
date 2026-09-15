@@ -426,6 +426,19 @@ if [ -n "$previous_version" ] && [ "$previous_version" != "$installed_version" ]
     echo "  replaced ${previous_version}"
 fi
 
+# Said once, here, rather than on every future command: someone piping this
+# into `sh` is not going to read the man page before their first run.
+# Skipped when telemetry is already off, since there's nothing to opt out of.
+if telemetry_allowed; then
+    cat <<EOF
+
+Mapbox CLI collects telemetry by default. To disable it, set
+MAPBOX_CLI_NO_TELEMETRY=1 before running CLI commands.
+
+Learn more: https://github.com/mapbox/mapbox-cli#privacy
+EOF
+fi
+
 # Two separate things can be wrong, and both are worth saying: the install dir
 # may not be on PATH at all, and even when it is, a `mapbox` from somewhere
 # else may still come first.

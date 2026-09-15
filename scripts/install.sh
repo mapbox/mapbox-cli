@@ -432,9 +432,10 @@ fi
 if telemetry_allowed; then
     cat <<EOF
 
-mapbox collects telemetry. Turn it off any time:
-export MAPBOX_CLI_NO_TELEMETRY=1
-Details: https://github.com/mapbox/mapbox-cli#privacy
+Mapbox CLI collects telemetry by default. To disable it, set
+MAPBOX_CLI_NO_TELEMETRY=1 before running CLI commands.
+
+Learn more: https://github.com/mapbox/mapbox-cli#privacy
 EOF
 fi
 

@@ -552,9 +552,10 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
         # opt out of.
         if ($TelemetryAllowed) {
             Write-Host ''
-            Write-Host 'mapbox collects telemetry. Turn it off any time:'
-            Write-Host '$env:MAPBOX_CLI_NO_TELEMETRY = "1"'
-            Write-Host 'Details: https://github.com/mapbox/mapbox-cli#privacy'
+            Write-Host 'Mapbox CLI collects telemetry by default. To disable it, set'
+            Write-Host 'MAPBOX_CLI_NO_TELEMETRY=1 before running CLI commands.'
+            Write-Host ''
+            Write-Host 'Learn more: https://github.com/mapbox/mapbox-cli#privacy'
         }
 
         # --- PATH ----------------------------------------------------------

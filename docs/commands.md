@@ -3497,6 +3497,7 @@ faults and are not:
 
 | `request_timed_out` | The request ran out of its time budget. Its own code because it is the one transport failure worth retrying or raising `--timeout` for. |
 | `missing_path_parameters` | A `{username}`/`{owner}`/`{account}` placeholder went unresolved. |
+| `invalid_path_parameter` | A path parameter was `.` or `..`, which would move the request to a different endpoint. Other URL syntax in a path parameter (`/`, `?`, `#`, `\`) is percent-encoded rather than refused, so it names a segment instead of changing the URL's shape. |
 | `invalid_data` | `--data` was not valid JSON, or a `@<path>`/`@-` body was empty. |
 | `invalid_file` | A file could not be read: one named by `--file`, or one named by `--data @<path>`. Also a `@<path>` that is not valid UTF-8, which a JSON body has to be. |
 | `binary_response` | The response was bytes and stdout is a terminal. Redirect it to a file. |

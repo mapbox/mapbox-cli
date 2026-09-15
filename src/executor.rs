@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -124,7 +125,8 @@ fn dispatch(
     // Substitute other path params from positional args
     for param in &op.path_params {
         if let Some(val) = matches.get_one::<String>(&param.arg_name) {
-            path = substitute_path_param(&path, &param.name, val, param.required);
+            let safe = path_segment(&param.name, val)?;
+            path = substitute_path_param(&path, &param.name, &safe, param.required);
         }
     }
 
@@ -1087,6 +1089,68 @@ fn empty_success_line(method: &str, subject: Option<&str>) -> String {
 /// Parameters that are only part of a segment (`{width}x{height}{format}`)
 /// are substituted as they are: an empty value there is the format's default,
 /// which is what the spec means by optional.
+/// The characters that would change the URL's *structure* rather than name a
+/// segment within it.
+///
+/// `\` is here because WHATWG treats it as a path separator for special
+/// schemes, so `..\..\x` traverses exactly as `../../x` does — verified
+/// against `reqwest::Url`, not assumed.
+const PATH_STRUCTURAL: [char; 4] = ['/', '?', '#', '\\'];
+
+/// One path parameter's value, safe to splice into the URL's path.
+///
+/// The path is built by substituting into a template
+/// (`…/{username}/{style_id}/static/{overlay}/…`), so a value carrying URL
+/// syntax used to change which request went out. With the caller's token and
+/// the command's method attached, `styles delete '../../x'` aimed a `DELETE`
+/// at a path nobody asked for, and `'x?fresh=true'` appended a query
+/// parameter — the same shape as mapbox/mcp-server's `directions_tool` fix.
+///
+/// **Only the four structural characters are encoded, deliberately.** Path
+/// parameters here carry punctuation on purpose: a static-images overlay is
+/// `pin-s+f74e4e(-122.46,37.77)`, `{highRes}` is `@2x`, `{format}` is `.png`,
+/// and `{lon},{lat},{zoom}` are three placeholders sharing one comma-
+/// separated segment. Percent-encoding everything outside RFC 3986's
+/// unreserved set would rewrite all of that and risk breaking requests that
+/// work today. Encoding only what alters the URL's shape cannot change any
+/// request that does not already contain those four characters.
+///
+/// Dot segments are refused rather than encoded, because encoding does not
+/// stop them: WHATWG reads `%2e%2e` as a double-dot segment too, so a value
+/// of exactly `..` still climbs a level however it is spelled. Encoding the
+/// separators is what defeats the multi-level `../../x` case — it collapses
+/// to a single segment — and this catches the single-level remainder.
+fn path_segment<'a>(name: &str, value: &'a str) -> Result<Cow<'a, str>> {
+    // `%2e` is a dot as far as the URL parser is concerned, in either case.
+    let as_dots = value.replace("%2e", ".").replace("%2E", ".");
+    if as_dots == "." || as_dots == ".." {
+        return Err(CliError::new(
+            "invalid_path_parameter",
+            format!(
+                "`{value}` cannot be used as {name}: a path segment of `.` or `..` would move \
+                 the request to a different endpoint."
+            ),
+        )
+        .into());
+    }
+
+    if !value.contains(PATH_STRUCTURAL) {
+        return Ok(Cow::Borrowed(value));
+    }
+
+    let mut encoded = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '/' => encoded.push_str("%2F"),
+            '?' => encoded.push_str("%3F"),
+            '#' => encoded.push_str("%23"),
+            '\\' => encoded.push_str("%5C"),
+            other => encoded.push(other),
+        }
+    }
+    Ok(Cow::Owned(encoded))
+}
+
 fn substitute_path_param(path: &str, name: &str, value: &str, required: bool) -> String {
     let placeholder = format!("{{{name}}}");
     let segment = format!("/{placeholder}");
@@ -1272,10 +1336,12 @@ fn write_binary(body: &[u8], content_type: &str) -> Result<()> {
 mod tests {
     use super::{
         describe_body, empty_success_line, file_name_of, is_binary_content_type, part_media_type,
-        payload_of, query_pairs, redacted_url, request_id, resolve_body_source, resolve_data,
-        shell_value, substitute_path_param, with_page_context, BodySource, NextPage,
+        path_segment, payload_of, query_pairs, redacted_url, request_id, resolve_body_source,
+        resolve_data, shell_value, substitute_path_param, with_page_context, BodySource, NextPage,
         ResponseHeaders, ACCESS_TOKEN, REQUEST_ID_HEADERS,
     };
+    use std::borrow::Cow;
+
     use crate::http::Payload;
     use crate::output::CliError;
     use crate::spec::{Parameter, RequestBody};
@@ -2120,5 +2186,98 @@ mod tests {
             None,
         );
         assert_eq!(err.downcast_ref::<CliError>().unwrap().fix, None);
+    }
+
+    /// The shape mapbox/mcp-server fixed in `directions_tool`: a value spliced
+    /// into the path used to append query parameters the caller never asked
+    /// for. Verified against `reqwest::Url` at the time — `x?fresh=true` gave
+    /// `query = fresh=true&access_token=…`.
+    #[test]
+    fn a_path_parameter_cannot_inject_a_query_string() {
+        let safe = path_segment("style_id", "x?fresh=true").expect("encoded, not refused");
+        assert_eq!(safe, "x%3Ffresh=true");
+    }
+
+    /// With the caller's token and the command's method attached, this aimed a
+    /// `DELETE` at whatever path the value resolved to. The host was never
+    /// reachable — `//evil`, `https://evil` and `x@evil` all stay on
+    /// `api.mapbox.com` — but the path was.
+    #[test]
+    fn a_path_parameter_cannot_retarget_the_path() {
+        let safe = path_segment("style_id", "../../tokens/v2/victim").expect("encoded");
+        assert_eq!(safe, "..%2F..%2Ftokens%2Fv2%2Fvictim");
+        assert!(!safe.contains('/'), "one segment, not four: {safe}");
+    }
+
+    /// `\` is a path separator too, for a special scheme — WHATWG says so and
+    /// `reqwest::Url` agrees: `..\..\tokens` resolved just as `../../tokens`
+    /// did. Encoding `/` alone would have left this open.
+    #[test]
+    fn a_backslash_cannot_retarget_the_path_either() {
+        let safe = path_segment("style_id", r"..\..\tokens").expect("encoded");
+        assert_eq!(safe, "..%5C..%5Ctokens");
+    }
+
+    /// A fragment is not sent to the server, so this silently truncated the
+    /// path rather than redirecting it — a request to somewhere the caller
+    /// could not see in what they typed.
+    #[test]
+    fn a_fragment_cannot_truncate_the_path() {
+        assert_eq!(
+            path_segment("style_id", "x#frag").expect("encoded"),
+            "x%23frag"
+        );
+    }
+
+    /// **Refused, not encoded, and that distinction is the point.** Encoding
+    /// does not stop a dot segment: WHATWG reads `%2e%2e` as one too, so a
+    /// value of exactly `..` climbs a level however it is spelled. Encoding
+    /// the separators handles the multi-level case by collapsing it into one
+    /// segment; this handles what is left.
+    #[test]
+    fn a_dot_segment_is_refused_however_it_is_spelled() {
+        for value in ["..", ".", "%2e%2e", "%2E%2E", "%2e", ".%2e", "%2e."] {
+            let err = path_segment("style_id", value).expect_err(value);
+            assert_eq!(refusal(err).code, "invalid_path_parameter", "{value}");
+        }
+    }
+
+    /// **The reason this encodes four characters and not everything outside
+    /// RFC 3986's unreserved set.** These values carry punctuation on purpose,
+    /// and percent-encoding it would rewrite requests that work today —
+    /// `static get-image`'s template alone is
+    /// `…/static/{overlay}/{lon},{lat},{zoom},{bearing},{pitch}/{width}x{height}{highRes}{format}`.
+    #[test]
+    fn punctuation_a_path_parameter_legitimately_carries_is_untouched() {
+        for value in [
+            "pin-s+f74e4e(-122.46,37.77)",
+            "@2x",
+            ".png",
+            "-122.4194,37.7749,12,0,0",
+            "mapbox.mapbox-streets-v8",
+            "Arial Unicode MS Regular",
+            "0-255",
+            "ckstyle00000000000000001a",
+        ] {
+            let safe = path_segment("p", value).expect("not refused");
+            assert_eq!(safe, value, "should pass through byte for byte");
+            assert!(matches!(safe, Cow::Borrowed(_)), "and without allocating");
+        }
+    }
+
+    /// An empty optional parameter still drops its whole segment, which
+    /// several operations rely on — encoding must not have taken that away.
+    #[test]
+    fn an_empty_optional_parameter_still_drops_its_segment() {
+        let safe = path_segment("draft", "").expect("empty is not a dot segment");
+        assert_eq!(safe, "");
+        assert_eq!(
+            substitute_path_param("/styles/v1/{u}/{id}/draft", "draft", &safe, false),
+            "/styles/v1/{u}/{id}/draft"
+        );
+        assert_eq!(
+            substitute_path_param("/styles/v1/{u}/{id}/{draft}", "draft", &safe, false),
+            "/styles/v1/{u}/{id}"
+        );
     }
 }

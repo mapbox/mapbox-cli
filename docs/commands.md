@@ -629,9 +629,7 @@ Two details worth knowing:
   is just as partial there, and the API's own document cannot carry the fact
   without an envelope this CLI has promised not to add — so a `-o json`
   consumer reading stdout alone is unaffected, and one watching stderr is
-  told. There is no `--all` yet; following the pages is the caller's job,
-  and [#117](https://github.com/mapbox/mapbox-cli-private/issues/117) tracks
-  changing that.
+  told. There is no `--all` yet; following the pages is the caller's job.
 - **`--id` searches the page it was given.** On a paginated listing a miss
   means "not on this page", which is not the same as "does not exist", so
   the error says which and how to look further:

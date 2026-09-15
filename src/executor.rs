@@ -400,8 +400,7 @@ pub fn request_id(headers: &reqwest::header::HeaderMap) -> Option<String> {
 /// A struct rather than three reads at the call site because `bytes()`
 /// consumes the response: whatever is not taken before it is unrecoverable.
 /// Taking only `Content-Type` is what left paginated listings truncating
-/// silently and left a 500 with nothing to quote to support
-/// (mapbox/mapbox-cli-private#117).
+/// silently and left a 500 with nothing to quote to support.
 struct ResponseHeaders {
     /// Decides whether the body is read as text or written as bytes.
     content_type: String,
@@ -799,7 +798,7 @@ const STDIN_PATH: &str = "-";
 /// literal `@` cannot be passed this way. It costs nothing here, because every
 /// operation reachable with `--data` today sends JSON, and `@` is not valid
 /// JSON. If a text body that could start with one is ever wired up, `--data-raw`
-/// is the established escape hatch — see mapbox/mapbox-cli-private#118.
+/// is the established escape hatch.
 ///
 /// Read here rather than at send time so that a `--dry-run` validates the file
 /// too. A dry run that skipped this would describe a request that could not

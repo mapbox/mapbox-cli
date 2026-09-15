@@ -19,6 +19,17 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+## 0.2.2 - 2026-09-15
+
+### Changed
+
+- `mapbox usage` is no longer described as a private preview: the Statistics
+  API it calls is generally available, so `mapbox auth login` now requests
+  `statistics:read` unconditionally instead of through a feature flag, and a
+  403 from it is reported as an access problem rather than an unenabled
+  preview. Nothing about who can run the command or what it prints changed —
+  the flag it used to go through was already on for everyone.
+
 ## 0.2.1 - 2026-09-15
 
 ### Fixed

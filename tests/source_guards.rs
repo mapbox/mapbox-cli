@@ -314,3 +314,149 @@ fn every_telemetry_marker_is_disclosed() {
          sentence in README.md's Privacy section, then update this count."
     );
 }
+
+/// British spellings, and the American spelling to use instead.
+///
+/// Not a dictionary. This is the set that actually drifted into this
+/// repository — 91 lines across 27 files before anyone noticed — so it is the
+/// set most likely to come back. A word missing from here is not permission
+/// for it; it is a word nobody has written yet.
+///
+/// Each entry is a prefix, so one row covers a word's whole family: its
+/// past tense, its plural and its adverb need no rows of their own.
+///
+/// `cancelled` is deliberately absent. It is the machine-readable `code` in
+/// the JSON error contract, documented in `docs/commands.md` and asserted in
+/// `tests/non_interactive.rs`, which makes it a compatibility promise rather
+/// than a spelling. Renaming it is a breaking change for anyone matching on
+/// it, and that is somebody's decision rather than this test's.
+const BRITISH: &[(&str, &str)] = &[
+    ("acknowledgement", "acknowledgment"),
+    ("amongst", "among"),
+    ("analyse", "analyze"),
+    ("apologis", "apologiz"),
+    ("artefact", "artifact"),
+    ("behaviour", "behavior"),
+    ("catalogue", "catalog"),
+    ("centre", "center"),
+    ("colour", "color"),
+    ("criticis", "criticiz"),
+    ("defence", "defense"),
+    ("favour", "favor"),
+    ("honour", "honor"),
+    ("initialis", "initializ"),
+    ("judgement", "judgment"),
+    ("labelled", "labeled"),
+    ("labelling", "labeling"),
+    ("licence", "license"),
+    ("modelled", "modeled"),
+    ("modelling", "modeling"),
+    ("neighbour", "neighbor"),
+    ("normalis", "normaliz"),
+    ("organis", "organiz"),
+    ("prioritis", "prioritiz"),
+    ("programme", "program"),
+    ("recognis", "recogniz"),
+    ("sanitis", "sanitiz"),
+    ("serialis", "serializ"),
+    ("summaris", "summariz"),
+    ("utilis", "utiliz"),
+    ("whilst", "while"),
+];
+
+/// Every file whose prose is ours to write, as (path, contents).
+///
+/// `openapi/` and `custom-openapi/` are left out. Their descriptions do reach
+/// the user as help text, but the words are the API teams', mirrored from
+/// upstream specs, and an edit here would not survive the next regenerate.
+/// Both happen to be clean today; neither is ours to hold to this rule.
+fn prose_files() -> Vec<(String, String)> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut out = vec![];
+
+    for name in [
+        "README.md",
+        "CONTRIBUTING.md",
+        "CHANGELOG.md",
+        "SECURITY.md",
+    ] {
+        out.push((
+            name.to_owned(),
+            std::fs::read_to_string(root.join(name)).expect("read a root document"),
+        ));
+    }
+
+    for dir in ["src", "tests", "docs", "scripts"] {
+        for entry in std::fs::read_dir(root.join(dir)).expect("read a source directory") {
+            let path = entry.expect("a directory entry").path();
+            let ours = path
+                .extension()
+                .is_some_and(|ext| ["rs", "md", "sh", "ps1"].iter().any(|k| ext == *k));
+            if ours {
+                let name = format!(
+                    "{dir}/{}",
+                    path.file_name().expect("a file name").to_string_lossy()
+                );
+                out.push((name, std::fs::read_to_string(&path).expect("read a file")));
+            }
+        }
+    }
+
+    out.sort();
+    // The trap this guard could fall into is reading nothing and passing for
+    // it, so the count is asserted rather than assumed.
+    assert!(out.len() > 30, "prose_files found only {}", out.len());
+    out
+}
+
+/// A row of a two-column table of string literals, like `BRITISH`'s own.
+///
+/// Without this the guard fails on itself: the table of spellings to avoid is
+/// a list of spellings to avoid. Narrow on purpose — a line has to be nothing
+/// but two quoted strings and a comma — so it excuses a data row and not a
+/// sentence.
+fn is_a_table_row(line: &str) -> bool {
+    let line = line.trim();
+    line.starts_with("(\"") && line.ends_with("\"),")
+}
+
+/// One spelling, everywhere, and American because Mapbox is.
+///
+/// Fenced code blocks in Markdown are skipped: sample output and captured API
+/// responses are quoted from somewhere else, and `docs/commands.md` is full of
+/// both. A British place name in a captured geocoding result is not a
+/// spelling mistake, and rewriting it would make the document misquote the
+/// API.
+#[test]
+fn prose_is_american_english() {
+    let mut found = vec![];
+    for (name, text) in prose_files() {
+        let markdown = name.ends_with(".md");
+        let mut fenced = false;
+        for (index, line) in text.lines().enumerate() {
+            if markdown && line.trim_start().starts_with("```") {
+                fenced = !fenced;
+                continue;
+            }
+            if fenced || is_a_table_row(line) {
+                continue;
+            }
+            let lower = line.to_lowercase();
+            for (british, american) in BRITISH {
+                if lower.contains(british) {
+                    found.push(format!("{name}:{}: {british} -> {american}", index + 1));
+                }
+            }
+        }
+    }
+
+    assert!(
+        found.is_empty(),
+        "British spellings:\n  {}\n\n\
+         This repository writes American English, in comments and documentation \
+         as well as in anything the CLI prints. If one of these is a proper noun \
+         rather than a spelling — a place name in a fixture, say — move it inside \
+         a fenced block or drop the word from BRITISH with the reason.",
+        found.join("\n  ")
+    );
+}

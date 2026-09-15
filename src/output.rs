@@ -1491,11 +1491,11 @@ pub fn emit_error(mode: Mode, err: &anyhow::Error) {
             // wrapped error keeps the context that explains it.
             None => json!({ "code": GENERIC_CODE, "message": format!("{err:#}") }),
         };
-        // Serialising a `json!` object cannot fail; fall back rather than
+        // Serializing a `json!` object cannot fail; fall back rather than
         // panic while already on the error path.
         let pretty = matches!(mode, Mode::Json { pretty: true });
         let line = encode(&payload, pretty)
-            .unwrap_or_else(|_| r#"{"code":"error","message":"unserialisable error"}"#.to_string());
+            .unwrap_or_else(|_| r#"{"code":"error","message":"unserializable error"}"#.to_string());
         eprintln!("{line}");
         return;
     }
@@ -1524,8 +1524,8 @@ pub fn emit_error(mode: Mode, err: &anyhow::Error) {
             if let Some(request_id) = e.support_request_id() {
                 eprintln!("Request ID: {request_id} (quote this to Mapbox support)");
             }
-            eprint_labelled("Next", &e.next_actions);
-            eprint_labelled("Docs", &e.docs);
+            eprint_labeled("Next", &e.next_actions);
+            eprint_labeled("Docs", &e.docs);
         }
         None => eprintln!("Error: {err:#}"),
     }
@@ -1554,8 +1554,8 @@ fn print_tips(tips: &[String]) {
 
 /// A labeled group of lines on stderr. Nothing for an empty list, so the
 /// caller needs no guard.
-fn eprint_labelled(label: &str, values: &[String]) {
-    for line in labelled_lines(label, values) {
+fn eprint_labeled(label: &str, values: &[String]) {
+    for line in labeled_lines(label, values) {
         eprintln!("{line}");
     }
 }
@@ -1565,7 +1565,7 @@ fn eprint_labelled(label: &str, values: &[String]) {
 /// `Next: mapbox styles list` reads as one thing; a second `Next:` on
 /// the line below reads as two unrelated ones. Continuation lines are
 /// indented to the label's width instead.
-fn labelled_lines(label: &str, values: &[String]) -> Vec<String> {
+fn labeled_lines(label: &str, values: &[String]) -> Vec<String> {
     values
         .iter()
         .enumerate()
@@ -1605,8 +1605,8 @@ mod tests {
     /// Two commands under one `Next:` have to read as two commands, not as
     /// one wrapped line and not as two unrelated labels.
     #[test]
-    fn a_second_labelled_line_is_aligned_under_the_first() {
-        let lines = labelled_lines(
+    fn a_second_labeled_line_is_aligned_under_the_first() {
+        let lines = labeled_lines(
             "Next",
             &[
                 "mapbox styles list-styles".to_string(),
@@ -1621,7 +1621,7 @@ mod tests {
                 "      mapbox auth whoami"
             ]
         );
-        assert!(labelled_lines("Next", &[]).is_empty());
+        assert!(labeled_lines("Next", &[]).is_empty());
     }
 
     #[test]
@@ -1868,7 +1868,7 @@ mod tests {
     /// `tilequery_feature_rows` guard this; search was still checking only
     /// for `Null`.
     #[test]
-    fn a_search_feature_with_nothing_recognisable_falls_back_to_json() {
+    fn a_search_feature_with_nothing_recognizable_falls_back_to_json() {
         for properties in ["{}", r#"{"mapbox_id":"opaque-id-nobody-reads"}"#] {
             let fc = rows(&format!(
                 r#"{{"type":"FeatureCollection","features":[{{"properties":{properties}}}]}}"#
@@ -2264,7 +2264,7 @@ mod tests {
     /// `(unnamed)` with no lines under it reads as a result that is genuinely
     /// blank rather than as a shape this renderer does not understand.
     #[test]
-    fn a_feature_with_no_recognised_properties_falls_back_to_json() {
+    fn a_feature_with_no_recognized_properties_falls_back_to_json() {
         for properties in ["{}", r#"{"mapbox_id":"opaque-id-nobody-reads"}"#] {
             let fc = rows(&format!(
                 r#"{{"type":"FeatureCollection","features":[{{"properties":{properties}}}]}}"#
@@ -2852,7 +2852,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unrecognised_value_falls_back_to_auto() {
+    fn an_unrecognized_value_falls_back_to_auto() {
         assert_eq!(Mode::resolve("", true), Mode::Text);
         assert_eq!(Mode::resolve("yaml", false), Mode::Json { pretty: false });
     }
@@ -2862,7 +2862,7 @@ mod tests {
     }
 
     #[test]
-    fn every_spelling_clap_accepts_is_recognised_on_argv() {
+    fn every_spelling_clap_accepts_is_recognized_on_argv() {
         for line in [
             &["mapbox", "--output", "json", "styles", "list"][..],
             &["mapbox", "--output=json", "styles", "list"][..],

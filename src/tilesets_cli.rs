@@ -121,7 +121,7 @@ where
 /// Warns that `--output` stops at this process.
 ///
 /// The proxy hands argv to a third-party binary that implements none of this
-/// CLI's output contract. Honouring the flag would mean either mirroring the
+/// CLI's output contract. Honoring the flag would mean either mirroring the
 /// child's command surface to translate it per subcommand — the coupling this
 /// proxy exists to avoid — or capturing its stdio, which turns the child's
 /// stderr into a pipe and silently costs `upload-source` the progress bar

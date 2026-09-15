@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use std::io::{IsTerminal, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use crate::output::{self, CliError, Mode};
@@ -65,7 +66,32 @@ const VALIDATION_ENDPOINT: &str = "https://api.mapbox.com/tokens/v2";
 // `statistics:read` (needed by `mapbox usage`) registers fine — confirmed
 // live against a real `mapbox auth login` — so it rides along unconditionally
 // rather than through the now-removed `ACCOUNT_USAGE` flag.
-const DEFAULT_SCOPES: &str = "styles:tiles styles:read styles:write styles:list fonts:read fonts:list fonts:write datasets:read datasets:write tokens:read scopes:list tilesets:read tilesets:write tilesets:list user-feedback:read statistics:read";
+const DEFAULT_SCOPES_LIST: &[&str] = &[
+    "styles:tiles",
+    "styles:read",
+    "styles:write",
+    "styles:list",
+    "fonts:read",
+    "fonts:list",
+    "fonts:write",
+    "datasets:read",
+    "datasets:write",
+    "tokens:read",
+    "scopes:list",
+    "tilesets:read",
+    "tilesets:write",
+    "tilesets:list",
+    "user-feedback:read",
+    "statistics:read",
+];
+
+/// [`DEFAULT_SCOPES_LIST`], space-joined the way the OAuth `scope` parameter
+/// takes it. Computed once and cached — every caller wants the joined form,
+/// and none of it changes at runtime.
+fn default_scopes() -> &'static str {
+    static JOINED: OnceLock<String> = OnceLock::new();
+    JOINED.get_or_init(|| DEFAULT_SCOPES_LIST.join(" "))
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct ClientRegistration {
@@ -1194,7 +1220,7 @@ pub fn describe_plan(action: &str, profile: Option<&str>, mode: Mode) -> Result<
                     "would_replace_existing": stored.is_some(),
                     "authorization_endpoint": AUTHORIZATION_ENDPOINT,
                     "token_endpoint": TOKEN_ENDPOINT,
-                    "scopes": DEFAULT_SCOPES.split(' ').map(str::to_string).collect::<Vec<String>>(),
+                    "scopes": DEFAULT_SCOPES_LIST,
                 }),
             )
         }
@@ -1731,7 +1757,7 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     let redirect_uri = format!("http://localhost:{}/callback", port);
 
     // Computed once: register_client's ceiling and the authorize scope must agree.
-    let scopes = DEFAULT_SCOPES;
+    let scopes = default_scopes();
 
     output::progress("Registering OAuth client with Mapbox...");
     let registration = register_client(&redirect_uri, debug, scopes)?;
@@ -1807,7 +1833,10 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{fix_for, remedy_for, time_until, with_auth_fix, TokenSource, DEFAULT_SCOPES};
+    use super::{
+        default_scopes, fix_for, remedy_for, time_until, with_auth_fix, TokenSource,
+        DEFAULT_SCOPES_LIST,
+    };
 
     /// Every scope the CLI's live operations need, that Mapbox will actually
     /// grant. The two the specs ask for and the platform still does not have
@@ -1818,7 +1847,7 @@ mod tests {
     /// became registrable (2026-09-08).
     #[test]
     fn the_requested_scopes_cover_what_the_commands_need() {
-        let requested: Vec<&str> = DEFAULT_SCOPES.split(' ').collect();
+        let requested = DEFAULT_SCOPES_LIST;
 
         for needed in [
             "styles:read",
@@ -1866,7 +1895,7 @@ mod tests {
     /// client holding whatever prefix got through.
     #[test]
     fn the_scope_query_is_encoded_by_hand_so_it_has_to_be_exact() {
-        let encoded = percent_encode(DEFAULT_SCOPES);
+        let encoded = percent_encode(default_scopes());
 
         assert!(
             !encoded.contains(' '),
@@ -1874,7 +1903,7 @@ mod tests {
         );
         assert_eq!(
             encoded.matches("%20").count(),
-            DEFAULT_SCOPES.split(' ').count() - 1,
+            DEFAULT_SCOPES_LIST.len() - 1,
             "every separator has to survive as one: {encoded}"
         );
         assert!(encoded.contains("styles%3Atiles"), "{encoded}");

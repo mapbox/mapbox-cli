@@ -62,9 +62,12 @@ paths:
         "200":
           description: Usage per product, per day, over the period.
         "401":
-          description: Unauthorized — the token does not carry the `statistics:read` scope.
+          description: Unauthorized — the token is missing or invalid.
         "403":
-          description: Forbidden — the account doesn't have access to the Statistics API.
+          description: >-
+            Forbidden — the token doesn't carry the `statistics:read` scope, or (less
+            commonly) it does and the account itself doesn't have access to the Statistics
+            API.
         "422":
           description: Unprocessable — the period is malformed, backwards, or longer than 31 days.
         "429":

@@ -648,12 +648,13 @@ fn redacted_url(url: &str, query: &[(String, String)]) -> String {
 fn remedy_for(status: u16) -> Remedy {
     match status {
         401 => Remedy::default().with_fix(
-            "Check the token has the `statistics:read` scope — run `mapbox auth login` again \
-             if it predates that scope, or pass one from account.mapbox.com with --token.",
+            "The token is missing or invalid — run `mapbox auth login` again, or pass one \
+             from account.mapbox.com with --token.",
         ),
         403 => Remedy::default().with_fix(
-            "This account doesn't have access to the Statistics API; contact Mapbox support \
-             if that's unexpected.",
+            "Check the token has the `statistics:read` scope — run `mapbox auth login` again \
+             if it predates that scope. If it already has the scope, this account doesn't \
+             have access to the Statistics API; contact Mapbox support.",
         ),
         422 => Remedy::default().with_fix(
             "--period-start/--period-end take YYYY-MM-DD, the end can't be before the start, \
@@ -1278,11 +1279,16 @@ mod tests {
         }
     }
 
+    /// The API answers 403, not 401, when the token itself is fine but is
+    /// missing `statistics:read` — confirmed live against a real account. A
+    /// re-login fixes that case, so the fix has to lead with it rather than
+    /// jump straight to Mapbox support, which is only the answer once the
+    /// scope is already there.
     #[test]
-    fn a_403_points_at_mapbox_support() {
+    fn a_403_checks_the_scope_before_pointing_at_mapbox_support() {
         let (server, base_url) = serve_once(
             "403 Forbidden",
-            r#"{"message":"Statistics API feature is not enabled for this account"}"#,
+            r#"{"message":"This API requires a token with statistics:read scope."}"#,
         );
 
         let matches = command().get_matches_from(["usage"]);
@@ -1294,22 +1300,21 @@ mod tests {
             .downcast::<CliError>()
             .expect("an HTTP failure is a CliError");
         assert_eq!(cli.status, Some(403));
-        assert_eq!(
-            cli.message,
-            "Statistics API feature is not enabled for this account"
-        );
+        let fix = cli.fix.as_deref().unwrap_or_default();
+        assert!(fix.contains("statistics:read"), "{fix:?}");
+        assert!(fix.contains("Mapbox support"), "{fix:?}");
         assert!(
-            cli.fix
-                .as_deref()
-                .unwrap_or_default()
-                .contains("Mapbox support"),
-            "{:?}",
-            cli.fix
+            fix.find("statistics:read").unwrap() < fix.find("Mapbox support").unwrap(),
+            "the self-serviceable fix should come before the support fallback: {fix:?}"
         );
     }
 
+    /// A 401 here means the token itself is missing or invalid — not a scope
+    /// problem, which this endpoint answers with 403 instead. Naming the
+    /// scope on a 401 would send the reader chasing something a bad token
+    /// can't have anyway.
     #[test]
-    fn a_401_points_at_the_scope_rather_than_just_login() {
+    fn a_401_says_the_token_is_invalid_rather_than_naming_a_scope() {
         let (server, base_url) = serve_once(
             "401 Unauthorized",
             r#"{"message":"Not Authorized - Invalid Token"}"#,
@@ -1323,13 +1328,8 @@ mod tests {
         let cli = err
             .downcast::<CliError>()
             .expect("an HTTP failure is a CliError");
-        assert!(
-            cli.fix
-                .as_deref()
-                .unwrap_or_default()
-                .contains("statistics:read"),
-            "{:?}",
-            cli.fix
-        );
+        let fix = cli.fix.as_deref().unwrap_or_default();
+        assert!(fix.contains("auth login"), "{fix:?}");
+        assert!(!fix.contains("statistics:read"), "{fix:?}");
     }
 }

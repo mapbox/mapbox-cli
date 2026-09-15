@@ -3253,9 +3253,12 @@ without it, a sparkline's solid glyphs sitting flush against the next
 row's read as cramped rather than dense, on an account with more than a
 couple of products. Exact per-day numbers and the per-browser/country/host
 breakdown are left to `-o json`; `--product` narrows the whole response,
-both columns, to one product's row. A 403 answers `Statistics API feature
-is not enabled for this account`; a 401 means the token's missing
-`statistics:read` — a login from before the scope was added, most likely.
+both columns, to one product's row. A 403 covers two different causes the
+API doesn't otherwise distinguish: the token missing `statistics:read` — a
+login from before the scope was added, most likely, and fixed by logging in
+again — or, less commonly, an account with no access to the Statistics API
+at all, which needs Mapbox support. A 401 means the token itself is missing
+or invalid.
 
 `--daily` swaps every product's sparkline row for its own day-by-day
 listing — same total, same period, newest day first, no `DAILY TREND`

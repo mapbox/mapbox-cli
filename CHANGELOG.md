@@ -19,6 +19,23 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+## 0.2.2 - 2026-09-15
+
+### Changed
+
+- `mapbox usage` is no longer described as a private preview: the Statistics
+  API it calls is generally available, so `mapbox auth login` now requests
+  `statistics:read` unconditionally instead of through a feature flag.
+  Nothing about who can run the command or what it prints changed — the flag
+  it used to go through was already on for everyone.
+
+- The 403 a missing `statistics:read` scope gets back now leads with "run
+  `mapbox auth login` again", the fix that actually applies, before falling
+  back to "contact Mapbox support" for the rarer case of an account with no
+  access at all. It used to jump straight to support, which was written for
+  the old private-preview gate and never distinguished the two — the API
+  answers both with 403, not the 401/403 split the docs previously assumed.
+
 ## 0.2.1 - 2026-09-15
 
 ### Fixed

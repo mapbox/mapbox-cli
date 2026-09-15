@@ -35,8 +35,9 @@
 //!   `MAPBOX_CLI_AUTH`, and this never sends a credential on a request the
 //!   user did not type. So only a production build checks — a dev build, a
 //!   staging build and `cargo build` make no request at all. The channel is
-//!   compiled in from `MAPBOX_CLI_BUILD_ENV`, the same variable
-//!   [`crate::feature_flags`] reads.
+//!   compiled in from `MAPBOX_CLI_BUILD_ENV`, read at compile time via
+//!   `option_env!`, the same way an official release pipeline distinguishes
+//!   staging from production.
 //! - **Someone watching.** stderr must be a terminal. A notice nobody reads
 //!   is noise in a CI log, and the request behind it is the one a scripted
 //!   environment has the least reason to make. This is what keeps the check

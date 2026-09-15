@@ -1,15 +1,9 @@
 //! `mapbox usage` — account/token usage by product and day.
 //!
-//! Calls the Statistics API (`GET /statistics/v1`), a private preview:
-//! the account needs Mapbox support to enable it (403 otherwise), and the
-//! token needs the `statistics:read` scope. `mapbox auth login` requests it
-//! by default now that [`crate::feature_flags::flags::ACCOUNT_USAGE`] is on
-//! (see `auth::requested_scopes`); a token from before that flip won't
-//! carry it until logged in again.
-//!
-//! Gated by [`crate::feature_flags::flags::ACCOUNT_USAGE`]; see that module.
-//! The gate stays while the API itself is a preview: the switch is what lets
-//! an official binary stop shipping the command if the preview is withdrawn.
+//! Calls the Statistics API (`GET /statistics/v1`); the token needs the
+//! `statistics:read` scope. `mapbox auth login` requests it by default; a
+//! token from before that scope was added won't carry it until logged in
+//! again.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -62,7 +56,7 @@ const DAILY_ARG: &str = "daily";
 /// this crate, not a state a shipped binary can drift into; the pinning test
 /// below calls this function, so CI fails first; and nothing else — not
 /// `--help`, not `--schema`, not startup — calls it, so a broken spec can
-/// only ever break `usage` itself, and only behind its feature flag.
+/// only ever break `usage` itself.
 fn operation() -> &'static Operation {
     static PARSED: OnceLock<Operation> = OnceLock::new();
     PARSED.get_or_init(|| {
@@ -79,13 +73,12 @@ fn operation() -> &'static Operation {
 
 pub fn command() -> Command {
     Command::new(COMMAND)
-        .about("Show account/token usage by product and day (Statistics API, private preview)")
+        .about("Show account/token usage by product and day (Statistics API)")
         .long_about(format!(
             "Show usage per Mapbox product, by day, for the account or one token.\n\n\
-             Calls the Statistics API, a private preview gated two ways: the account has to \
-             be enabled for it by Mapbox support first — a 403 here means it isn't — and the \
-             token needs the `statistics:read` scope. `mapbox auth login` requests it by \
-             default; log in again if your stored token predates that.\n\n\
+             Calls the Statistics API; the token needs the `statistics:read` scope. \
+             `mapbox auth login` requests it by default; log in again if your stored \
+             token predates that.\n\n\
              See {REPO_URL}/issues."
         ))
         .arg(
@@ -655,12 +648,13 @@ fn redacted_url(url: &str, query: &[(String, String)]) -> String {
 fn remedy_for(status: u16) -> Remedy {
     match status {
         401 => Remedy::default().with_fix(
-            "Check the token has the `statistics:read` scope — run `mapbox auth login` again \
-             if it predates that scope, or pass one from account.mapbox.com with --token.",
+            "The token is missing or invalid — run `mapbox auth login` again, or pass one \
+             from account.mapbox.com with --token.",
         ),
         403 => Remedy::default().with_fix(
-            "The Statistics API is a private preview: ask Mapbox support to enable it for \
-             this account before this can return anything.",
+            "Check the token has the `statistics:read` scope — run `mapbox auth login` again \
+             if it predates that scope. If it already has the scope, this account doesn't \
+             have access to the Statistics API; contact Mapbox support.",
         ),
         422 => Remedy::default().with_fix(
             "--period-start/--period-end take YYYY-MM-DD, the end can't be before the start, \
@@ -1285,11 +1279,16 @@ mod tests {
         }
     }
 
+    /// The API answers 403, not 401, when the token itself is fine but is
+    /// missing `statistics:read` — confirmed live against a real account. A
+    /// re-login fixes that case, so the fix has to lead with it rather than
+    /// jump straight to Mapbox support, which is only the answer once the
+    /// scope is already there.
     #[test]
-    fn a_403_carries_the_private_preview_explanation() {
+    fn a_403_checks_the_scope_before_pointing_at_mapbox_support() {
         let (server, base_url) = serve_once(
             "403 Forbidden",
-            r#"{"message":"Statistics API feature is not enabled for this account"}"#,
+            r#"{"message":"This API requires a token with statistics:read scope."}"#,
         );
 
         let matches = command().get_matches_from(["usage"]);
@@ -1301,22 +1300,21 @@ mod tests {
             .downcast::<CliError>()
             .expect("an HTTP failure is a CliError");
         assert_eq!(cli.status, Some(403));
-        assert_eq!(
-            cli.message,
-            "Statistics API feature is not enabled for this account"
-        );
+        let fix = cli.fix.as_deref().unwrap_or_default();
+        assert!(fix.contains("statistics:read"), "{fix:?}");
+        assert!(fix.contains("Mapbox support"), "{fix:?}");
         assert!(
-            cli.fix
-                .as_deref()
-                .unwrap_or_default()
-                .contains("Mapbox support"),
-            "{:?}",
-            cli.fix
+            fix.find("statistics:read").unwrap() < fix.find("Mapbox support").unwrap(),
+            "the self-serviceable fix should come before the support fallback: {fix:?}"
         );
     }
 
+    /// A 401 here means the token itself is missing or invalid — not a scope
+    /// problem, which this endpoint answers with 403 instead. Naming the
+    /// scope on a 401 would send the reader chasing something a bad token
+    /// can't have anyway.
     #[test]
-    fn a_401_points_at_the_scope_rather_than_just_login() {
+    fn a_401_says_the_token_is_invalid_rather_than_naming_a_scope() {
         let (server, base_url) = serve_once(
             "401 Unauthorized",
             r#"{"message":"Not Authorized - Invalid Token"}"#,
@@ -1330,13 +1328,8 @@ mod tests {
         let cli = err
             .downcast::<CliError>()
             .expect("an HTTP failure is a CliError");
-        assert!(
-            cli.fix
-                .as_deref()
-                .unwrap_or_default()
-                .contains("statistics:read"),
-            "{:?}",
-            cli.fix
-        );
+        let fix = cli.fix.as_deref().unwrap_or_default();
+        assert!(fix.contains("auth login"), "{fix:?}");
+        assert!(!fix.contains("statistics:read"), "{fix:?}");
     }
 }

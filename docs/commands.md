@@ -3158,17 +3158,11 @@ Removed /home/user/.local/bin/mapbox.
 ### `mapbox usage`
 
 Usage per Mapbox product, by day, for the account or one token. Calls the
-Statistics API (`GET /statistics/v1`), a private preview gated two ways
-this CLI cannot get around: the account has to be enabled for it by Mapbox
-support (a 403 here means it isn't), and the token needs the
-`statistics:read` scope. `mapbox auth login` requests it by default now;
-log in again if your stored token predates that. Also takes
-`--token-id <id>` for one token's usage instead of the whole account —
-see `mapbox accounts list-tokens` for ids.
-
-Gated behind a feature flag, flipped on: an official release ships this
-command the same as a build from source does. See `feature_flags` for what
-the gate is for.
+Statistics API (`GET /statistics/v1`), which needs the `statistics:read`
+scope. `mapbox auth login` requests it by default now; log in again if
+your stored token predates that. Also takes `--token-id <id>` for one
+token's usage instead of the whole account — see `mapbox accounts
+list-tokens` for ids.
 
 #### Parameters
 
@@ -3193,8 +3187,7 @@ mapbox usage --product "Vector Tiles API" --daily
 
 #### Outputs
 
-Run live 2026-09-08 against an account enabled for the private preview.
-Numbers below are made up — the real response carries actual traffic
+Run live. Numbers below are made up — the real response carries actual traffic
 figures, which do not belong in a page committed to the repo — but the
 shape, including the sort order (busiest product first), the sparkline, and
 every line `-o text` prints around the table, is exactly what came back.
@@ -3260,9 +3253,12 @@ without it, a sparkline's solid glyphs sitting flush against the next
 row's read as cramped rather than dense, on an account with more than a
 couple of products. Exact per-day numbers and the per-browser/country/host
 breakdown are left to `-o json`; `--product` narrows the whole response,
-both columns, to one product's row. A 403 answers `Statistics API feature
-is not enabled for this account`; a 401 means the token's missing
-`statistics:read` — a login from before the scope was added, most likely.
+both columns, to one product's row. A 403 covers two different causes the
+API doesn't otherwise distinguish: the token missing `statistics:read` — a
+login from before the scope was added, most likely, and fixed by logging in
+again — or, less commonly, an account with no access to the Statistics API
+at all, which needs Mapbox support. A 401 means the token itself is missing
+or invalid.
 
 `--daily` swaps every product's sparkline row for its own day-by-day
 listing — same total, same period, newest day first, no `DAILY TREND`

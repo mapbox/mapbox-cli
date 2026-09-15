@@ -4,14 +4,13 @@
 # generically.
 openapi: "3.0.0"
 info:
-  title: "Mapbox Statistics API (private preview)"
+  title: "Mapbox Statistics API"
   description: >-
     The one endpoint `mapbox usage` calls: usage per Mapbox product, by day,
-    for the whole account or for a single token. A private preview gated two
-    ways — the account has to be enabled for it by Mapbox support, and the
-    token needs the `statistics:read` scope. Written by hand rather than trimmed
-    from an upstream spec because openapi-specs publishes none for this API;
-    the parameter names are the ones the API answers to, as documented in
+    for the whole account or for a single token. Gated by the token's
+    `statistics:read` scope. Written by hand rather than trimmed from an
+    upstream spec because openapi-specs publishes none for this API; the
+    parameter names are the ones the API answers to, as documented in
     `src/account_usage.rs`.
   version: "0.0.0"
 servers:
@@ -63,9 +62,12 @@ paths:
         "200":
           description: Usage per product, per day, over the period.
         "401":
-          description: Unauthorized — the token does not carry the `statistics:read` scope.
+          description: Unauthorized — the token is missing or invalid.
         "403":
-          description: Forbidden — the account is not enabled for the private preview.
+          description: >-
+            Forbidden — the token doesn't carry the `statistics:read` scope, or (less
+            commonly) it does and the account itself doesn't have access to the Statistics
+            API.
         "422":
           description: Unprocessable — the period is malformed, backwards, or longer than 31 days.
         "429":

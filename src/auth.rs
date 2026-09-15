@@ -1654,31 +1654,13 @@ fn extract_username_from_token(token: &str) -> Option<String> {
     json["u"].as_str().map(String::from)
 }
 
-/// Whether anyone could be watching this run.
-///
-/// Either stream is enough, and for different reasons. stderr is where the
-/// authorization URL and the "if the browser does not open automatically"
-/// fallback are printed, so a terminal there means the URL is readable. stdin
-/// says nothing about reading, but a terminal on it means this process was
-/// started from a session that still has one — `mapbox auth login > log 2>&1`
-/// on a desktop, where `open::that` puts the page in front of the user and
-/// nothing has to be read at all.
-///
-/// Neither one is the case that matters: CI, a container without a tty, an
-/// agent holding both pipes. There, a browser opens for nobody and the process
-/// waits out [`CALLBACK_TIMEOUT`] before failing.
-fn someone_could_be_watching() -> bool {
-    std::io::stdin().is_terminal() || std::io::stderr().is_terminal()
-}
-
 /// Whether the login can still be completed, once the browser has been tried.
 ///
 /// A terminal on stderr means the URL was printed somewhere it can be read and
 /// pasted, so whether a browser opened does not matter. With stderr redirected
-/// the browser is the only route left — [`someone_could_be_watching`] admitted
-/// this run on stdin alone for exactly that reason — so a browser that did not
-/// open means nobody can finish, and waiting out [`CALLBACK_TIMEOUT`] only
-/// delays saying so.
+/// the browser is the only route left, so a browser that did not open means
+/// nobody can finish, and waiting out [`CALLBACK_TIMEOUT`] only delays saying
+/// so.
 ///
 /// The honest limit: the URL has to exist before it can be opened, and it
 /// carries the `client_id`, so by the time this is known one client
@@ -1690,10 +1672,8 @@ fn login_can_be_completed(stderr_is_terminal: bool, browser_opened: bool) -> boo
 
 /// The browser did not open and the URL went somewhere nobody is reading.
 ///
-/// Same code as [`login_needs_a_terminal`] on purpose: a caller branching on
-/// it is asking "can this environment log in at all", and the answer is the
-/// same no. `ssh` to a headless box and `mapbox auth login > log 2>&1` is the
-/// shape that lands here.
+/// `ssh` to a headless box and `mapbox auth login > log 2>&1` is the shape
+/// that lands here.
 fn login_has_no_way_to_show_the_url() -> anyhow::Error {
     CliError::new(
         "interactive_required",
@@ -1715,41 +1695,8 @@ fn login_has_no_way_to_show_the_url() -> anyhow::Error {
     .into()
 }
 
-/// Why `login` will not start without a terminal.
-///
-/// Deliberately **not** overridable by `--yes`. It was, and that reintroduced
-/// the failure this check exists to prevent: `MAPBOX_YES=1` is exactly what a
-/// CI job exports so its deletes do not block, and it was silently opting
-/// `auth login` back into the browser flow — one dynamic client registration
-/// left behind and five minutes of wall clock burned per run, for a login that
-/// could never complete. A flag about confirmations has no business asserting
-/// that a human is present.
-///
-/// So the answer for a headless caller is a token, and the fix says so. A
-/// login on a machine with no terminal at all wants the device authorization
-/// grant, which is a feature, not an escape hatch on this one.
-fn login_needs_a_terminal() -> anyhow::Error {
-    CliError::new(
-        "interactive_required",
-        "`mapbox auth login` needs a browser and someone to use it, and this run \
-         has no terminal on stdin or stderr.",
-    )
-    .with_remedy(
-        Remedy::default()
-            .with_fix("Set MAPBOX_ACCESS_TOKEN for a script or a CI job.")
-            .with_doc(Some(remedy::TOKENS_DOC)),
-    )
-    .into()
-}
-
 pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     validate_profile(profile)?;
-    // Ahead of everything else, `config_dir` included: this is the one failure
-    // that costs nothing to find, and refusing after `register_client` would
-    // leave a registered OAuth client behind on every CI run that tried.
-    if !someone_could_be_watching() {
-        return Err(login_needs_a_terminal());
-    }
     // Resolve the store up front so an unusable path fails here rather than in
     // `save_credentials` at the very end. Nothing else in this function touches
     // it, so without this the user spends a browser round-trip and a token

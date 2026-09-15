@@ -37,7 +37,7 @@ jobs:
     # six-hour default before anyone hears about it. That is not hypothetical —
     # a test that blocked on `accept()` with no deadline wedged the Windows leg
     # for its full six hours, and the only reason it went unnoticed for a day
-    # is that every run on `main` was cancelled by the next push first.
+    # is that every run on `main` was canceled by the next push first.
     #
     # On all three rather than Windows alone: nobody here runs Windows as a
     # daily driver, so CI is the only signal it has — but a Unix leg that
@@ -307,7 +307,7 @@ jobs:
             "https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv${AUDIT_VERSION}/${name}.tgz"
           echo "${AUDIT_SHA256}  /tmp/cargo-audit.tgz" | sha256sum -c -
           # The archive has a versioned top-level directory and carries a
-          # README and two licences beside the binary; name the one file that
+          # README and two licenses beside the binary; name the one file that
           # belongs on PATH.
           tar xzf /tmp/cargo-audit.tgz -C "$HOME/.cargo/bin" \
             --strip-components=1 "${name}/cargo-audit"

@@ -231,7 +231,7 @@ fn should_refresh(cache: Option<&Cache>, now: u64) -> bool {
 /// meant to be acted on, which is what makes forging it worth more than noise
 /// on stderr.
 ///
-/// So the shape is restricted rather than the content sanitised: ASCII
+/// So the shape is restricted rather than the content sanitized: ASCII
 /// alphanumerics, `.`, `-` and `+`, bounded. That admits `0.2.0` and
 /// `0.1.3-dev.abc1234`, which is everything the channel publishes, and admits
 /// no character that could begin a line or move a cursor.
@@ -349,7 +349,7 @@ pub fn is_refresh_child() -> bool {
 /// could fail would only be a way for this feature to produce a broken pipe
 /// or a stray line on somebody's terminal.
 ///
-/// The opt-outs are honoured here too, not only in [`notify`] which spawned
+/// The opt-outs are honored here too, not only in [`notify`] which spawned
 /// it. Belt and braces: this is the process that makes the request, and the
 /// switch that says "make no request" should be read by it.
 pub fn run_refresh_child() -> ExitCode {
@@ -681,12 +681,12 @@ mod tests {
     /// next, so its field names are a contract with a file already on disk.
     #[test]
     fn the_cache_round_trips_and_tolerates_a_partial_one() {
-        let written = serde_json::to_string(&cache(1, 2, "0.2.0")).expect("serialise");
+        let written = serde_json::to_string(&cache(1, 2, "0.2.0")).expect("serialize");
         assert_eq!(
             written,
             r#"{"checked_at":1,"notified_at":2,"latest":"0.2.0"}"#
         );
-        let read: Cache = serde_json::from_str(&written).expect("deserialise");
+        let read: Cache = serde_json::from_str(&written).expect("deserialize");
         assert_eq!(read, cache(1, 2, "0.2.0"));
 
         // A file written before a field existed, and one written after a

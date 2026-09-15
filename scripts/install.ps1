@@ -5,7 +5,7 @@
 #     irm https://cli.mapbox.com/install.ps1 | iex
 #
 # This is the Windows half of scripts/install.sh, which is POSIX sh and stops
-# with instructions when it recognises Git Bash, MSYS2 or Cygwin. The two are
+# with instructions when it recognizes Git Bash, MSYS2 or Cygwin. The two are
 # the same script in two languages: same environment variables, same order of
 # operations, and the same things said about a checksum that does not match, an
 # install directory that cannot be written, and a `mapbox` that came from
@@ -86,7 +86,7 @@
     # because this value comes from the environment and ends up in a header.
     $InstallSource = $env:MAPBOX_CLI_INSTALL_SOURCE
 
-    # The switch src/telemetry.rs honours for the CLI's own User-Agent, read
+    # The switch src/telemetry.rs honors for the CLI's own User-Agent, read
     # here the same way, because someone who put it in a Dockerfile and then
     # runs `irm ... | iex` in the same file has already said which way they
     # want it. The product token above survives it - the equivalent of
@@ -95,7 +95,7 @@
     #
     # Two names, and only the binary dropped the old one.
     # MAPBOX_CLI_NO_TELEMETRY is the documented switch; DISABLE_TELEMETRY is
-    # what it was called before, and this script still honours it. The rename
+    # what it was called before, and this script still honors it. The rename
     # was announced as breaking for the binary; nothing announced it for the
     # installers, which are fetched and run in one line with no release notes
     # in front of the reader - and breaking an opt-out is the one change that

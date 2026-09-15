@@ -5,11 +5,11 @@ edition = "2021"
 description = "A command-line interface for Mapbox APIs, with commands generated at build time from OpenAPI specs."
 repository = "https://github.com/mapbox/cli"
 # The file rather than an SPDX expression: LICENSE is Mapbox's own terms and
-# not an OSI licence, so there is no identifier that says what it grants.
+# not an OSI license, so there is no identifier that says what it grants.
 license-file = "LICENSE"
 # A rail against an accidental `cargo publish`, not a decision that it never
 # could be reconsidered: crates.io is for crates anyone may use under an open
-# licence, and a publish cannot be taken back.
+# license, and a publish cannot be taken back.
 publish = false
 # The oldest Rust this crate compiles on, measured rather than aspirational:
 # `CredentialLock` in src/auth.rs calls `File::lock`/`unlock`, stabilised in
@@ -46,7 +46,7 @@ unsafe_code = "deny"
 [lints.clippy]
 # The output contract, made mechanical. This repo's rule is: don't reintroduce a
 # `println!` for a result — stdout belongs to `output::emit`, which is the
-# single place `--output` is honoured and the single place a result is
+# single place `--output` is honored and the single place a result is
 # written. There are no violations today; this keeps it that way.
 # `print_stderr` is deliberately *not* denied: warnings and progress go to
 # stderr from a dozen places on purpose, several of them outside the output

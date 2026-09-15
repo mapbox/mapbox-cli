@@ -121,7 +121,7 @@ where
 /// Warns that `--output` stops at this process.
 ///
 /// The proxy hands argv to a third-party binary that implements none of this
-/// CLI's output contract. Honouring the flag would mean either mirroring the
+/// CLI's output contract. Honoring the flag would mean either mirroring the
 /// child's command surface to translate it per subcommand — the coupling this
 /// proxy exists to avoid — or capturing its stdio, which turns the child's
 /// stderr into a pipe and silently costs `upload-source` the progress bar
@@ -130,14 +130,14 @@ where
 ///
 /// Only a value typed on this command line is worth a warning. Under `auto`
 /// nothing was asked for, and the child does its own terminal detection
-/// anyway — which is exactly the behaviour we would want. `MAPBOX_OUTPUT` is
+/// anyway — which is exactly the behavior we would want. `MAPBOX_OUTPUT` is
 /// excluded for the same reason: it is exported once and applies to
 /// everything, so warning on it would nag on every tileset upload forever.
 pub fn warn_output_ignored(matches: &ArgMatches) {
     let explicit = matches.value_source(crate::output::ARG) == Some(ValueSource::CommandLine);
     if explicit {
         eprintln!(
-            "Warning: `--{}` is not honoured by `{COMMAND}` — its output comes from \
+            "Warning: `--{}` is not honored by `{COMMAND}` — its output comes from \
              `{DEFAULT_BINARY}`, which has no equivalent option.",
             crate::output::ARG
         );
@@ -170,7 +170,7 @@ pub fn warn_yes_ignored(matches: &ArgMatches) {
         return;
     }
     eprintln!(
-        "Warning: `--{}` is not honoured by `{COMMAND}` — `{DEFAULT_BINARY}` asks its \
+        "Warning: `--{}` is not honored by `{COMMAND}` — `{DEFAULT_BINARY}` asks its \
          own questions and has its own `-f`/`--force` on the commands that do.",
         crate::confirm::ARG
     );
@@ -597,7 +597,7 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    /// Serialises the tests that have to mutate the process environment.
+    /// Serializes the tests that have to mutate the process environment.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Names the proxy treats as carrying a token.
@@ -609,7 +609,7 @@ mod tests {
     /// Token resolution reads the environment, so without this these tests
     /// would pass or fail depending on whether the developer happens to export
     /// a token — the exact ambient dependency the tests exist to pin down.
-    /// Serialised because the environment is process-global. Assertions belong
+    /// Serialized because the environment is process-global. Assertions belong
     /// *outside* the closure so a failure still restores it.
     fn with_token_env<T>(vars: &[(&str, &str)], body: impl FnOnce() -> T) -> T {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -860,7 +860,7 @@ mod tests {
         assert!(!consulted);
     }
 
-    /// Nothing stored to honour. `main` turns this into an error rather than
+    /// Nothing stored to honor. `main` turns this into an error rather than
     /// quietly handing over the environment token the flag asked to ignore.
     #[test]
     fn use_login_with_nothing_stored_resolves_to_nothing() {

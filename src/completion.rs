@@ -114,7 +114,7 @@ pub fn warn_output_ignored(matches: &ArgMatches) {
         return;
     }
     eprintln!(
-        "Warning: `--{}` is not honoured by `{COMMAND}` — a completion script is a shell \
+        "Warning: `--{}` is not honored by `{COMMAND}` — a completion script is a shell \
          script, and wrapping it in an envelope would leave it unsourceable.",
         crate::output::ARG
     );
@@ -155,7 +155,7 @@ pub fn run(app: &Command, matches: &ArgMatches) -> Result<()> {
     // the result, and there is no rendering of it that is not itself.
     let mut out = io::stdout().lock();
     match out.write_all(&script).and_then(|()| out.flush()) {
-        // A reader that stopped reading is `head`'s ordinary behaviour, not a
+        // A reader that stopped reading is `head`'s ordinary behavior, not a
         // failure to report: the error envelope would be the only thing left
         // on a terminal after a command that did exactly what was asked.
         Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),

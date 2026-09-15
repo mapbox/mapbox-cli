@@ -296,7 +296,7 @@ const COMMAND_ALIASES: &[(&str, &str, &str, bool)] = &[];
 ///     group, as `mapbox styles draft get`.
 ///
 /// Absent from everything in `custom-openapi/`, which the decision record
-/// does not cover. Those keep the pre-extension behaviour: their file's own
+/// does not cover. Those keep the pre-extension behavior: their file's own
 /// service name, and one flat generated command name.
 const CLI_COMMAND_EXTENSION: &str = "x-mapbox-cli-command";
 
@@ -550,7 +550,7 @@ pub enum Numeric {
 /// `name` is no longer necessarily a service anyone can type.
 /// [`CLI_COMMAND_EXTENSION`] decides that per operation, so this is the
 /// file's own name: the fallback service for an operation that declares no
-/// target, the key `WITHHELD_OPERATIONS` and its neighbours match on, and
+/// target, the key `WITHHELD_OPERATIONS` and its neighbors match on, and
 /// what a maintainer-only drift check compares the two tables by. `maps` is the
 /// clearest case — the entry is still called that, and the service it used
 /// to produce is gone.
@@ -1601,7 +1601,7 @@ paths:
     }
 
     /// The declared type is what the executor puts on the wire, so it has to
-    /// survive parsing exactly — not be normalised into a guess.
+    /// survive parsing exactly — not be normalized into a guess.
     #[test]
     fn a_raw_body_keeps_the_media_type_the_spec_wrote() {
         let svc = service(BODIES);

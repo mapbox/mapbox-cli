@@ -141,7 +141,7 @@ fn a_file_where_the_credential_directory_goes_fails_before_the_browser() {
 /// the missing path parameter is caught after credentials resolve.
 ///
 /// Unix only, and it is the redirection that does not port rather than the
-/// behaviour: this case has to leave `MAPBOX_CONFIG_DIR` unset so the default
+/// behavior: this case has to leave `MAPBOX_CONFIG_DIR` unset so the default
 /// `~/.mapbox` is what gets probed, and on Windows that default comes from
 /// `FOLDERID_Profile` — `HOME` is not read, so there is no way to point the
 /// default at a directory where a test may plant a file. Unlike the case
@@ -338,7 +338,7 @@ fn text_mode_still_prints_claps_own_tip() {
     );
 }
 
-/// `-o` written on a line clap rejects still has to be honoured — that is
+/// `-o` written on a line clap rejects still has to be honored — that is
 /// the case `requested_in_argv` exists for.
 #[test]
 fn an_explicit_mode_survives_a_line_clap_could_not_parse() {
@@ -719,7 +719,7 @@ fn a_failure_carries_a_fix_a_command_and_a_page() {
         ["https://docs.mapbox.com/api/accounts/tokens/"]
     );
 
-    // The same three, labelled, for the person at a terminal.
+    // The same three, labeled, for the person at a terminal.
     let text = command()
         .args(UNUSED_PROFILE)
         .args(["-o", "text", "auth", "whoami"])

@@ -666,8 +666,7 @@ shim curl-recording curl
 CURL_LOG="${CASE_DIR}/curl-args"
 export MAPBOX_TEST_CURL_LOG="$CURL_LOG"
 
-# The documented name, which the binary reads and this script did not until
-# mapbox/mapbox-cli-private#140.
+# The documented name, which the binary reads and this script honours too.
 : >"$CURL_LOG"
 export MAPBOX_CLI_NO_TELEMETRY=1
 run_piped && status=0 || status=$?

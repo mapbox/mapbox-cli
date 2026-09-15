@@ -517,8 +517,7 @@ try {
     Start-Case 'MAPBOX_CLI_NO_TELEMETRY is honoured, and outranks the old name'
     New-CaseEnv 'telemetry-new-name'
     $env:MAPBOX_CLI_INSTALL_SOURCE = 'dockerfile'
-    # The documented name, which the binary reads and this script did not until
-    # mapbox/mapbox-cli-private#140.
+    # The documented name, which the binary reads and this script honours too.
     $env:MAPBOX_CLI_NO_TELEMETRY = '1'
     [IO.File]::WriteAllText($RequestLog, '')
     Invoke-Installer

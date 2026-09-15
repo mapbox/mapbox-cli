@@ -19,6 +19,20 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+### Fixed
+
+- A path parameter can no longer change the shape of the request URL. Values
+  are substituted into a path template, so one carrying URL syntax altered
+  where the request went rather than naming a segment in it: `?` appended
+  query parameters the caller never asked for, `..` (and its backslash
+  spelling) moved the path, and `#` truncated it — each with the caller's
+  token and the command's method attached. The host was never reachable, so
+  nothing could be directed at another server. `/`, `?`, `#` and `\` are now
+  percent-encoded, and a value of `.` or `..` is refused as
+  `invalid_path_parameter`. Punctuation these values legitimately carry — a
+  static-images overlay, `@2x`, `.png`, a comma-separated coordinate — is
+  untouched. See [#15](https://github.com/mapbox/mapbox-cli/pull/15).
+
 ## 0.2.0 - 2026-09-14
 
 ### Added

@@ -2242,6 +2242,39 @@ mod tests {
         }
     }
 
+    /// Encoded dots *and* encoded slashes together, which is the shape that
+    /// looks like traversal and is not.
+    ///
+    /// `%2f` is never decoded into a separator by the URL parser, so this
+    /// stays one segment on the wire — unlike encoded dots with *raw* slashes
+    /// (`%2e%2e/%2e%2e/x`), which the parser does resolve and which the
+    /// encoding above is what stops. It is left alone on purpose: percent-
+    /// encoded values are a documented Mapbox feature, not an attack
+    /// signature. A custom marker overlay is
+    /// `url-https%3A%2F%2Fexample.com%2Fmarker.png(…)`, `geojson(…)` takes
+    /// URI-encoded GeoJSON, and the spec says a bbox's brackets "may be sent
+    /// literally or percent-encoded as `%5B`". Refusing these would break all
+    /// three.
+    #[test]
+    fn a_percent_encoded_separator_stays_one_segment() {
+        let value = "%2e%2e%2fvictim";
+        let safe = path_segment("style_id", value).expect("not refused");
+        assert_eq!(safe, value, "passed through, because it names one segment");
+
+        let url = reqwest::Url::parse(&format!("https://api.mapbox.com/styles/v1/u/{safe}"))
+            .expect("parses");
+        let segments: Vec<&str> = url
+            .path_segments()
+            .map(Iterator::collect)
+            .unwrap_or_default();
+        assert_eq!(
+            segments,
+            ["styles", "v1", "u", "%2e%2e%2fvictim"],
+            "one segment under /u/, not a traversal: {}",
+            url.path()
+        );
+    }
+
     /// **The reason this encodes four characters and not everything outside
     /// RFC 3986's unreserved set.** These values carry punctuation on purpose,
     /// and percent-encoding it would rewrite requests that work today —

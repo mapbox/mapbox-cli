@@ -258,7 +258,7 @@ whole shell.
 
 ### Proxies
 
-`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` are all honoured, so
+`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` are all honored, so
 a CLI behind a corporate proxy needs no configuration of its own.
 
 Two things are easy to lose an afternoon to:

@@ -1,7 +1,8 @@
 # Changelog
 
 What changed, and what it means for scripts that already use this tool.
-Newest first.
+Newest first, written by hand — the commit subject rarely explains why a
+change matters.
 
 Versions follow [semantic versioning](https://semver.org/). Pre-1.0 rule:
 while the version starts with `0.`, a breaking change raises the minor
@@ -10,7 +11,31 @@ breaking is [written down in CONTRIBUTING.md](CONTRIBUTING.md#compatibility) —
 command names, flags, the two output modes and the exit codes are promises;
 the Mapbox APIs' own response bodies are not.
 
+Cutting a release adds a `## <version> - <date>` heading below
+`## Unreleased`, which stays in place so the next change has somewhere to go.
+
+Dev-channel builds (`v0.1.3-dev.<sha>`) are published straight from a branch
+that may never merge. They are not releases and are not listed here.
+
 ## Unreleased
+
+## 0.2.1 - 2026-09-15
+
+### Fixed
+
+- A path parameter can no longer change the shape of the request URL. Values
+  are substituted into a path template, so one carrying URL syntax altered
+  where the request went rather than naming a segment in it: `?` appended
+  query parameters the caller never asked for, `..` (and its backslash
+  spelling) moved the path, and `#` truncated it — each with the caller's
+  token and the command's method attached. The host was never reachable, so
+  nothing could be directed at another server. `/`, `?`, `#` and `\` are now
+  percent-encoded, and a value of `.` or `..` is refused as
+  `invalid_path_parameter`. Punctuation these values legitimately carry — a
+  static-images overlay, `@2x`, `.png`, a comma-separated coordinate — is
+  untouched. See [#15](https://github.com/mapbox/mapbox-cli/pull/15).
+
+## 0.2.0 - 2026-09-14
 
 ### Added
 
@@ -45,6 +70,37 @@ the Mapbox APIs' own response bodies are not.
 
 ### Changed
 
+- **Breaking**: nine more commands renamed, continuing #116's cleanup, and
+  two dropped outright:
+
+  | Was | Is now |
+  | --- | --- |
+  | `mapbox geocoder forward-geocode` | `mapbox geocoder forward` |
+  | `mapbox geocoder reverse-geocode` | `mapbox geocoder reverse` |
+  | `mapbox geocoder batch-geocode` | `mapbox geocoder batch` |
+  | `mapbox tilesets get-rastertile` | `mapbox tilesets get-tile` |
+  | `mapbox tilesets get-vectortile` | `mapbox tilesets get-mvt` |
+  | `mapbox rasterarrays get-mrt-tile` | `mapbox tilesets get-mrt` |
+  | `mapbox tilequery get` | `mapbox tilesets query` |
+  | `mapbox static-images get-static-image` | `mapbox static get-image` |
+  | `mapbox static-tiles get-static-tile` | `mapbox static get-tile` |
+
+  `mapbox rasterarrays`, `mapbox tilequery`, `mapbox static-images` and
+  `mapbox static-tiles` no longer exist: each held exactly one operation,
+  and that operation now answers under `tilesets` or `static` instead —
+  the same reasoning 0.1.8 gave for `sprites` and `tilesets` appearing
+  there. `mapbox static` is new for it.
+
+  `static-images get-static-image-auto` and `get-static-image-bbox` are
+  gone, not renamed — the decision record's reason for withholding both is
+  that they will merge into `get-image`'s own parameters, but that merge
+  hasn't happened yet, so today there is simply no way to ask for an
+  auto-fit or bounding-box static image from this CLI.
+
+  Nothing answers to any of the old spellings, the same as 0.1.8's rename:
+  no hidden alias, and the two dropped commands are not offered under any
+  spelling.
+
 - The advice under a transport failure now names `ALL_PROXY` alongside
   `HTTPS_PROXY` and `NO_PROXY`, and says that a SOCKS proxy is not supported.
   `ALL_PROXY=socks5://…` fails the request rather than being ignored, and
@@ -67,6 +123,25 @@ the Mapbox APIs' own response bodies are not.
   binary's break was announced, and a script fetched and run in one line has
   no release notes in front of the reader, so breaking an opt-out there would
   have happened silently. When both are set the new name wins.
+
+- A usage error under `-o json` now carries clap's own suggestion as `fix`:
+  `mapbox styles lst` answers `"fix": "A similar subcommand exists: 'list'"`.
+  Clap renders that tip in a paragraph of its own, and `message` is built from
+  the first one, so `json` consumers — scripts and agents — were the only ones
+  not told what was probably meant. It matters most for the renames above: a
+  script pinned to a command that no longer exists now gets a pointer to the
+  one that replaced it. `-o text` is unchanged, where clap already printed it.
+  Misspelled flags are covered too.
+
+### Security
+
+- `rustls` moved to 0.23.45, fixing
+  [RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285) —
+  "TLS 1.3 handshake messages incorrectly accepted across encryption level
+  boundaries", medium severity, published 2026-09-14. `rustls` is reached
+  through `reqwest`, so every HTTPS request this CLI makes used the affected
+  version; nothing in the crate itself had to change. Fixed in
+  [mapbox/mapbox-cli#2](https://github.com/mapbox/mapbox-cli/pull/2).
 
 ## 0.1.8 - 2026-09-14
 

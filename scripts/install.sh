@@ -78,7 +78,7 @@ INSTALL_SOURCE="${MAPBOX_CLI_INSTALL_SOURCE:-}"
 # release notes in front of them — and breaking an opt-out is the one change
 # that must not happen quietly. So both work here, the new name wins when both
 # are set, and the old one keeps working for the Dockerfile the comment above
-# describes. See mapbox/mapbox-cli-private#140.
+# describes.
 #
 # Unset, empty, or whitespace: a cleared variable. `0`, `f`, `false`, `n`, `no`
 # and `off` are clap's false spellings, so a `0` is someone declining the

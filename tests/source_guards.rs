@@ -240,3 +240,77 @@ fn every_mapbox_failure_path_carries_the_request_id() {
         }
     }
 }
+
+/// Every marker the `User-Agent` can carry, and the words in README.md that
+/// disclose it.
+///
+/// The left side is what `telemetry::telemetry_markers` emits; the right side
+/// is a phrase that has to appear in the Privacy section. Adding a marker
+/// without a row here fails `every_telemetry_marker_is_disclosed`, and so does
+/// rewording the disclosure out from under one.
+const DISCLOSED: &[(&str, &str)] = &[
+    ("os/", "OS/architecture"),
+    ("arch/", "OS/architecture"),
+    ("env/ci", "run in a CI"),
+    ("agent/", "AI coding agent"),
+    ("stdin_tty/", "stdin and stdout are attached to a terminal"),
+    ("stdout_tty/", "stdin and stdout are attached to a terminal"),
+    ("command/", "service a Mapbox API command belongs to"),
+];
+
+/// A marker nobody wrote down is a thing we collect and do not admit to.
+///
+/// This exists because it happened. The Privacy section claimed we collect
+/// exit codes, which we never have; described `command/` as the command name
+/// when it is the service; and did not mention the terminal markers at all,
+/// which we send on every request. Prose and code drifted because nothing
+/// compared them.
+///
+/// Deliberately blunt, in the spirit of the other guards here. It does not
+/// prove the disclosure is *well* written — only that no marker is missing
+/// from it, and that the sentence disclosing one cannot quietly be edited
+/// away.
+#[test]
+fn every_telemetry_marker_is_disclosed() {
+    let telemetry =
+        std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/telemetry.rs"))
+            .expect("read src/telemetry.rs");
+    let readme =
+        std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("README.md"))
+            .expect("read README.md");
+
+    // The Privacy section alone: a marker named anywhere else in the README
+    // is not a disclosure.
+    let privacy = readme
+        .split_once("### Privacy")
+        .expect("README.md has a Privacy section")
+        .1;
+    let privacy = privacy.split("\n## ").next().unwrap_or(privacy);
+
+    for (marker, disclosure) in DISCLOSED {
+        assert!(
+            privacy.contains(disclosure),
+            "README.md's Privacy section no longer says {disclosure:?}, which is what \
+             discloses the `{marker}` marker. Either put it back or update DISCLOSED."
+        );
+    }
+
+    // The other direction: a marker emitted but never written down. Matching
+    // the emission sites rather than the runtime output, because two of them
+    // are conditional on the environment the test happens to run in.
+    for prefix in ["os/", "arch/", "env/ci", "agent/", "stdin_tty/", "command/"] {
+        assert!(
+            telemetry.contains(prefix),
+            "`{prefix}` is in DISCLOSED but src/telemetry.rs no longer emits it — \
+             drop the row, and the sentence in README.md with it"
+        );
+    }
+
+    let emitted =
+        telemetry.matches("markers.push").count() + telemetry.matches("markers.extend").count();
+    assert_eq!(
+        emitted, 4,
+        "telemetry_markers gained or lost a marker. Add a DISCLOSED row and a \
+         sentence in README.md's Privacy section, then update this count."
+    );
+}

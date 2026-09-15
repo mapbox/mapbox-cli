@@ -338,18 +338,44 @@ never checks at all.
 
 ### Privacy
 
-Mapbox collects telemetry from this CLI, on by default, to understand
-adoption and improve reliability, performance and developer experience:
+**YOUR PRIVACY - COLLECTION OF TELEMETRY**
 
-| | |
-| --- | --- |
-| What | Added to the `User-Agent` every request already carries: `os/<os>`, `arch/<arch>`, `env/ci` when running in CI, `agent/<id>` when a known coding-agent environment is detected, whether stdin/stdout are attached to a terminal, and — for a generated API command — `command/<group>` (e.g. `styles`, `geocoder`), never the operation or its arguments. Every request also carries the IP address it's sent from, which is not retained alongside telemetry. |
-| What it never includes | AI prompts, code completion output, source code, project or directory names, command arguments, non-Mapbox API keys or credentials. |
-| Who sees it | Mapbox only — never disclosed to third parties, aside from the cloud storage and hosting providers that keep the infrastructure running. |
-| Off | `MAPBOX_CLI_NO_TELEMETRY=1` — also silences [update notices](#update-notices) above, since that check rides the same opt-out. |
+Mapbox collects telemetry data from our CLIs to better understand how our
+tools are used and how to improve our products.
 
-See the [Mapbox Privacy Policy](https://www.mapbox.com/legal/privacy) for
-how this fits into data processing generally, and your rights over it.
+- **What Telemetry Data We Collect:** Usage metrics include installs,
+  Mapbox API-related command names (e.g. `auth login`), exit codes, CLI
+  version, OS/architecture, an identifier for the detected AI coding agent
+  (if any) running the command (based on signals such as the presence of
+  the `CLAUDECODE` or `COPILOT_MODEL` environment variable; see
+  [`agent_detect.rs`](./src/agent_detect.rs) for the complete, versioned
+  list), and a boolean flag indicating whether the command was run in a CI
+  environment. IP addresses necessarily accompany any request made to our
+  server, but will not be retained and analyzed together with telemetry
+  data.
+- **Why We Collect It:** For internal analytics by Mapbox to understand
+  adoption, prioritize investments, and improve the reliability,
+  performance, and developer experience of our CLIs.
+- **What We Do Not Collect:** Code completion outputs, source code, project
+  file names, directory contents, non-Mapbox API keys, or credentials.
+- **Who has Access:** Telemetry data will not be disclosed to, or accessed
+  by, third parties other than Mapbox affiliates and passive cloud storage
+  and hosting providers necessary to maintain our infrastructure.
+
+This also covers [update notices](#update-notices) above, since that check
+rides the same opt-out.
+
+**How to Opt Out:** The collection of telemetry data is enabled by default.
+You can disable it at any time and without affecting the functionality of
+our CLIs by setting
+
+```sh
+MAPBOX_CLI_NO_TELEMETRY=1
+```
+
+For additional information on our data processing activities and your
+related rights, please see our Mapbox
+[Privacy Policy](https://www.mapbox.com/legal/privacy).
 
 ## Uninstall
 

@@ -432,10 +432,9 @@ fi
 if telemetry_allowed; then
     cat <<EOF
 
-mapbox collects telemetry — installs, command names, exit codes, CLI
-version, OS/architecture, and more. Turn it off any time:
+mapbox collects telemetry. Turn it off any time:
 export MAPBOX_CLI_NO_TELEMETRY=1
-Details: ${REPO}#telemetry
+Details: https://github.com/mapbox/mapbox-cli#privacy
 EOF
 fi
 

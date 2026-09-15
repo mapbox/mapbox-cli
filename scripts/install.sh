@@ -62,7 +62,7 @@ USER_AGENT='mapbox-cli-install/1'
 # header.
 INSTALL_SOURCE="${MAPBOX_CLI_INSTALL_SOURCE:-}"
 
-# The switch `src/telemetry.rs` honours for the CLI's own User-Agent, read here
+# The switch `src/telemetry.rs` honors for the CLI's own User-Agent, read here
 # the same way, because someone who put it in a Dockerfile and then pipes this
 # script into sh in the same file has already said which way they want it. The
 # product token above is what survives it — the equivalent of
@@ -71,7 +71,7 @@ INSTALL_SOURCE="${MAPBOX_CLI_INSTALL_SOURCE:-}"
 #
 # **Two names, and only the binary dropped the old one.**
 # `MAPBOX_CLI_NO_TELEMETRY` is the documented switch; `DISABLE_TELEMETRY` is
-# what it was called before, and this script still honours it. The rename was
+# what it was called before, and this script still honors it. The rename was
 # announced as breaking for the binary, so a `DISABLE_TELEMETRY=1` there
 # genuinely stopped working and the changelog says so. Nothing announced it for
 # the installers — this file is fetched and run in one line, so a reader has no
@@ -625,7 +625,7 @@ install_tilesets() {
     return 2
 }
 
-# Honour MAPBOX_TILESETS_CLI, the override the CLI itself respects: someone
+# Honor MAPBOX_TILESETS_CLI, the override the CLI itself respects: someone
 # who has pointed it at a particular executable has already made this
 # decision, whether or not that executable is currently there.
 if [ -n "${MAPBOX_TILESETS_CLI:-}" ]; then

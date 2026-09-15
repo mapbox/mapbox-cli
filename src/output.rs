@@ -85,7 +85,7 @@ impl Mode {
     /// that cannot be arranged in a test, and every interesting case here is
     /// a combination of the two.
     ///
-    /// An unrecognised `requested` is treated as `auto`. Clap rejects those
+    /// An unrecognized `requested` is treated as `auto`. Clap rejects those
     /// before they reach us for both the flag and `MAPBOX_OUTPUT`; the one
     /// caller that can pass one is [`Mode::early`], which reads argv and the
     /// environment itself, before clap has had a chance to complain.
@@ -143,7 +143,7 @@ impl Mode {
 
 /// `MAPBOX_OUTPUT`, if it holds anything at all.
 ///
-/// An unrecognised value is passed through to [`Mode::resolve`], which falls
+/// An unrecognized value is passed through to [`Mode::resolve`], which falls
 /// back to `auto` — but it is worth saying so, since the caller plainly meant
 /// something by it.
 fn environment_request() -> Option<String> {
@@ -718,7 +718,7 @@ fn feature_collection_rows(value: &Value) -> Option<Vec<Value>> {
 /// `Null` is what all three row-builders — [`search_result_row`],
 /// [`feature_row`], [`tilequery_row`] — answer for a feature with no
 /// `properties` at all. An object with no fields is the same failure one step
-/// later: `properties` was there and held nothing that builder recognised.
+/// later: `properties` was there and held nothing that builder recognized.
 /// Both fall back the same way, because a numbered `(unnamed)` with no lines
 /// under it looks like a result that is genuinely blank rather than like a
 /// shape this renderer does not understand.
@@ -751,7 +751,7 @@ fn render_geocoder_list(value: &Value) -> Option<Rendered> {
 ///
 /// Note the asymmetry with [`render_batch_feature_list`], which refuses to
 /// render at all when a second key sits beside `batch`. There the extra key
-/// would be *lost* by rendering only what is recognised, so bailing out to
+/// would be *lost* by rendering only what is recognized, so bailing out to
 /// JSON is how nothing goes missing; here the extra key is the thing being
 /// carried through, so there is nothing to bail out for.
 fn attribution(value: &Value) -> Option<&str> {
@@ -1508,7 +1508,7 @@ pub fn emit_error(mode: Mode, err: &anyhow::Error) {
             }
             // The message is only ever one field of the body; print the rest
             // when there is a rest, so a person loses nothing that the old
-            // dump-the-body behaviour showed them.
+            // dump-the-body behavior showed them.
             if let Some(body) = e.body.as_ref().filter(|b| adds_detail(b)) {
                 if let Ok(pretty) = serde_json::to_string_pretty(body) {
                     eprintln!("{pretty}");
@@ -1552,7 +1552,7 @@ fn print_tips(tips: &[String]) {
     }
 }
 
-/// A labelled group of lines on stderr. Nothing for an empty list, so the
+/// A labeled group of lines on stderr. Nothing for an empty list, so the
 /// caller needs no guard.
 fn eprint_labelled(label: &str, values: &[String]) {
     for line in labelled_lines(label, values) {
@@ -1862,7 +1862,7 @@ mod tests {
     }
 
     /// An empty row is the same failure as a missing `properties` object one
-    /// step later — the feature was there and nothing in it was recognised —
+    /// step later — the feature was there and nothing in it was recognized —
     /// and has to fall back the same way rather than print a numbered
     /// `(unnamed)` with nothing under it. `feature_collection_rows` and
     /// `tilequery_feature_rows` guard this; search was still checking only
@@ -2259,7 +2259,7 @@ mod tests {
     }
 
     /// An empty row is the same failure as a missing `properties` object, one
-    /// step later: the feature was there and nothing in it was recognised.
+    /// step later: the feature was there and nothing in it was recognized.
     /// Both have to fall the whole collection back to JSON — a numbered
     /// `(unnamed)` with no lines under it reads as a result that is genuinely
     /// blank rather than as a shape this renderer does not understand.

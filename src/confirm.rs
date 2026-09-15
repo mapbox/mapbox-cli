@@ -10,7 +10,7 @@
 //! out unasked.
 //!
 //! `--yes` says the answer is yes before it is asked, which is the only way a
-//! caller *at* a terminal can get the non-interactive behaviour on purpose.
+//! caller *at* a terminal can get the non-interactive behavior on purpose.
 //!
 //! The question is deliberately not `--output`-aware. It goes to stderr as
 //! prose in both modes, because the only way to see it is to be a person at a

@@ -41,7 +41,7 @@ logged in.
 
 Four rules the compiler holds rather than a reviewer, declared in
 `Cargo.toml` with the reasoning beside each: no `unsafe`, no `println!`
-(stdout belongs to `output::emit`, the single place `--output` is honoured),
+(stdout belongs to `output::emit`, the single place `--output` is honored),
 no `dbg!`, no `todo!`/`unimplemented!`.
 
 ## Where the commands come from

@@ -459,7 +459,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 // — and `MAPBOX_TIMEOUT=30s` would each be a usage error on
                 // every command, including the ones needed to recover.
                 // `--yes`'s `FalseyValueParser` does not rescue this one: a
-                // boolean can read anything it does not recognise as one of
+                // boolean can read anything it does not recognize as one of
                 // its two answers, and a duration has no such reading.
                 // `http::read_timeout` reads the variable by hand instead,
                 // warns about a value it cannot use, and falls back to the
@@ -576,7 +576,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
     // service arm.
     app = app.subcommand(generate_skills::command());
 
-    // Beside `generate-skills` because the two are neighbours a reader will
+    // Beside `generate-skills` because the two are neighbors a reader will
     // want to tell apart: that one writes a skill describing this CLI, this
     // one installs the published Mapbox domain skills. Both write into the
     // same agent directories, which is why they share `skill_dest`.
@@ -1015,7 +1015,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             generate_skills::run(app, specs, skills_matches, mode)?
         }
         // Ahead of the generic service arm for the same reason as its
-        // neighbours: it makes no Mapbox request and needs no token. The one
+        // neighbors: it makes no Mapbox request and needs no token. The one
         // request it does make is to GitHub for a public tarball.
         Some((agent_skills::COMMAND, skills_matches)) => agent_skills::run(
             skills_matches,

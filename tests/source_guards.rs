@@ -163,7 +163,7 @@ fn only_output_completion_and_binary_responses_write_to_stdout() {
     assert!(
         unexpected.is_empty(),
         "these modules reach for stdout directly:\n  {}\n\n\
-         A result goes through `output::emit`, which is where `--output` is honoured; \
+         A result goes through `output::emit`, which is where `--output` is honored; \
          anything else belongs on stderr through `output::progress`. If a command really \
          does own its bytes — as `completion` does — add it to MAY_WRITE_STDOUT with the \
          reason.",

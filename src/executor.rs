@@ -1301,7 +1301,7 @@ fn suggested_extension(content_type: &str) -> &'static str {
 }
 
 /// Writes raw bytes to stdout, refusing to do so when that is a terminal —
-/// `curl`'s behaviour, and for the same reason: a few hundred KB of PNG will
+/// `curl`'s behavior, and for the same reason: a few hundred KB of PNG will
 /// otherwise scramble the user's shell.
 fn write_binary(body: &[u8], content_type: &str) -> Result<()> {
     use std::io::{IsTerminal, Write};

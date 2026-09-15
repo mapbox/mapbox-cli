@@ -1586,7 +1586,7 @@ mapbox sprites delete ckstyle00000000000000001a zz-clitest-1 --username user
 
 The sprite index **after** the delete — the named icon is gone from it, and
 everything else is still there. A 200 with the full layout, not a 204: the
-absence of the icon is the only acknowledgement there is.
+absence of the icon is the only acknowledgment there is.
 
 <table>
 <tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
@@ -1723,7 +1723,7 @@ one, so a plain map image needs no overlay expression.
 
 ### `mapbox static get-image`
 
-A map image centred on a point.
+A map image centered on a point.
 
 #### Parameters
 
@@ -2083,7 +2083,7 @@ mapbox styles delete ckstyle00000000000000003c --username user
 
 A 204 carries no body. Rather than print nothing, the CLI confirms what
 happened — nothing is asked beforehand, so the line after the fact is the
-only acknowledgement there is.
+only acknowledgment there is.
 
 <table>
 <tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
@@ -2524,7 +2524,7 @@ security, style quality, geospatial operations and the mobile and web SDKs.
 Twenty skills, each a directory of Markdown.
 
 **Not the same as [`generate-skills`](#generate-skills)**, which is its
-neighbour in `--help` and writes something else entirely: that one renders a
+neighbor in `--help` and writes something else entirely: that one renders a
 skill describing *this CLI's own commands*, from the specs compiled into the
 binary. These are about using Mapbox; that one is about using `mapbox`. They
 share the destination flags below and nothing else.
@@ -2834,7 +2834,7 @@ mapbox/mapbox-agent-skills@main.` and `"updated": []`.
 ### `mapbox agent-skills uninstall`
 
 Removes installed skill directories. At least one `NAME` is required — an
-empty list is not a licence to remove everything.
+empty list is not a license to remove everything.
 
 **This is the one subcommand that makes no request.** It works from what is on
 disk, which also means it can remove a skill that has since been unpublished.
@@ -3476,7 +3476,7 @@ names the flag rather than offering a login that could not outrank it.
 | `http_<status>` | The API answered non-2xx. Carries `status` and the response `body`. |
 | `request_failed` | Transport failure — proxy, DNS, TLS. Never carries the URL, because the access token rides in its query string. |
 
-The CLI honours `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY`, and
+The CLI honors `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY`, and
 needs no proxy configuration of its own. Two things that look like network
 faults and are not:
 

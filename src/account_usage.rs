@@ -1,15 +1,12 @@
 //! `mapbox usage` — account/token usage by product and day.
 //!
-//! Calls the Statistics API (`GET /statistics/v1`), a private preview:
-//! the account needs Mapbox support to enable it (403 otherwise), and the
-//! token needs the `statistics:read` scope. `mapbox auth login` requests it
-//! by default now that [`crate::feature_flags::flags::ACCOUNT_USAGE`] is on
-//! (see `auth::requested_scopes`); a token from before that flip won't
-//! carry it until logged in again.
+//! Calls the Statistics API (`GET /statistics/v1`); the token needs the
+//! `statistics:read` scope. `mapbox auth login` requests it by default now
+//! that [`crate::feature_flags::flags::ACCOUNT_USAGE`] is on (see
+//! `auth::requested_scopes`); a token from before that flip won't carry it
+//! until logged in again.
 //!
 //! Gated by [`crate::feature_flags::flags::ACCOUNT_USAGE`]; see that module.
-//! The gate stays while the API itself is a preview: the switch is what lets
-//! an official binary stop shipping the command if the preview is withdrawn.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -79,13 +76,12 @@ fn operation() -> &'static Operation {
 
 pub fn command() -> Command {
     Command::new(COMMAND)
-        .about("Show account/token usage by product and day (Statistics API, private preview)")
+        .about("Show account/token usage by product and day (Statistics API)")
         .long_about(format!(
             "Show usage per Mapbox product, by day, for the account or one token.\n\n\
-             Calls the Statistics API, a private preview gated two ways: the account has to \
-             be enabled for it by Mapbox support first — a 403 here means it isn't — and the \
-             token needs the `statistics:read` scope. `mapbox auth login` requests it by \
-             default; log in again if your stored token predates that.\n\n\
+             Calls the Statistics API; the token needs the `statistics:read` scope. \
+             `mapbox auth login` requests it by default; log in again if your stored \
+             token predates that.\n\n\
              See {REPO_URL}/issues."
         ))
         .arg(
@@ -659,8 +655,8 @@ fn remedy_for(status: u16) -> Remedy {
              if it predates that scope, or pass one from account.mapbox.com with --token.",
         ),
         403 => Remedy::default().with_fix(
-            "The Statistics API is a private preview: ask Mapbox support to enable it for \
-             this account before this can return anything.",
+            "This account doesn't have access to the Statistics API; contact Mapbox support \
+             if that's unexpected.",
         ),
         422 => Remedy::default().with_fix(
             "--period-start/--period-end take YYYY-MM-DD, the end can't be before the start, \
@@ -1286,7 +1282,7 @@ mod tests {
     }
 
     #[test]
-    fn a_403_carries_the_private_preview_explanation() {
+    fn a_403_points_at_mapbox_support() {
         let (server, base_url) = serve_once(
             "403 Forbidden",
             r#"{"message":"Statistics API feature is not enabled for this account"}"#,

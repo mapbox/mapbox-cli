@@ -55,8 +55,8 @@ fn enabled_for(switch: bool, build_env: Option<&str>) -> bool {
 pub mod flags {
     use super::Flag;
 
-    /// Gates `account_usage::COMMAND` (`mapbox usage`), which calls a
-    /// private-preview API. `statistics:read` is what that call needs;
+    /// Gates `account_usage::COMMAND` (`mapbox usage`), which calls the
+    /// Statistics API. `statistics:read` is what that call needs;
     /// `mapbox auth login`'s default scopes don't request it.
     pub const ACCOUNT_USAGE: Flag = Flag {
         switch: true,

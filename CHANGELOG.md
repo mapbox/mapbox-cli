@@ -19,6 +19,8 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+## 0.2.1 - 2026-09-15
+
 ### Fixed
 
 - A path parameter can no longer change the shape of the request URL. Values

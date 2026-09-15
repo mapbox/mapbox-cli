@@ -29,8 +29,8 @@ time from OpenAPI specs, so they always match the specs.
 ## Build from source
 
 This is the buildable core, and building it is the primary way to get it
-from here. Needs [Rust via rustup](https://rustup.rs) and nothing else — no
-second repository, no token, no network beyond crates.io:
+from here. It needs [Rust via rustup](https://rustup.rs) and nothing else:
+no second repository, no token, and no network beyond crates.io.
 
 ```sh
 cargo build --release
@@ -42,10 +42,9 @@ The OpenAPI specs the commands are generated from are vendored in
 
 ## Install a released binary
 
-Official signed builds for macOS, Linux and Windows are published by Mapbox
-from a separate repository, and the install script detects your platform,
-checks a SHA-256 checksum, and installs `mapbox` — no `sudo`, no admin
-rights:
+Mapbox publishes signed builds for macOS, Linux and Windows from a separate
+repository. The install script detects your platform, checks a SHA-256
+checksum, and installs `mapbox`. No `sudo`, no admin rights:
 
 ```sh
 curl -fsSL https://cli.mapbox.com/install.sh | sh
@@ -74,10 +73,11 @@ mapbox auth refresh   # force-refreshes the access token
 mapbox auth whoami    # reports which token the next command will use
 ```
 
-Credentials live in `~/.mapbox` (plain JSON, file permissions locked down —
-no OS keychain). Override with `--token`/`--username` or
-`MAPBOX_ACCESS_TOKEN`/`MAPBOX_USERNAME`; `MAPBOX_CONFIG_DIR` moves the whole
-store, e.g. for a container.
+Credentials live in `~/.mapbox` as plain JSON with locked-down file
+permissions. There is no OS keychain integration. Override them with
+`--token`/`--username` or `MAPBOX_ACCESS_TOKEN`/`MAPBOX_USERNAME`, and set
+`MAPBOX_CONFIG_DIR` to move the whole store, which a container usually
+wants.
 
 #### Named profiles
 
@@ -107,13 +107,13 @@ mapbox tilesets *
 ```
 
 A command group is not the same thing as a spec file: which one an operation
-belongs to is decided per operation, so `sprites` and `tilesets` are each
-assembled from operations the Styles, Raster Tiles and Vector Tiles specs
-declare. `mapbox tilesets` is also unrelated to `mapbox tilesets-cli`,
+belongs to is decided per operation. So `sprites` and `tilesets` are each
+assembled from operations declared by the Styles, Raster Tiles and Vector
+Tiles specs. `mapbox tilesets` is also unrelated to `mapbox tilesets-cli`,
 which proxies to the separate Python tool.
 
-An operation can nest one level deeper where a group reads better —
-`mapbox styles draft get`, `draft update`, `draft delete`.
+An operation can nest one level deeper where a group reads better, as in
+`mapbox styles draft get`, `draft update` and `draft delete`.
 
 For example:
 
@@ -137,26 +137,31 @@ mapbox agent-skills update      # re-install what's here, report what changed
 mapbox agent-skills uninstall <NAME>
 ```
 
-Installs the [Mapbox Agent Skills](https://github.com/mapbox/mapbox-agent-skills)
-— hand-written guidance for coding agents on cartography, token security,
-style quality, geospatial operations and the mobile and web SDKs. No token
-needed, and no Node: one tarball, extracted in the binary.
+Installs the [Mapbox Agent Skills](https://github.com/mapbox/mapbox-agent-skills):
+hand-written guidance for coding agents on cartography, token security, style
+quality, geospatial operations and the mobile and web SDKs. No token needed,
+and no Node. It's one tarball, extracted in the binary.
 
-Fifteen agents are known — Claude Code, Codex, Cursor, Cline, Gemini CLI,
+Fifteen agents are supported: Claude Code, Codex, Cursor, Cline, Gemini CLI,
 GitHub Copilot, Zed, OpenCode, Amp, Windsurf, Roo Code, Continue, Kiro CLI,
-Qwen Code and Goose — and by default it installs for whichever of them are on
-the machine. `--agent <name>` picks one (repeatable), `--global` writes to the
-agent's home directory instead of this project, and `--dir <path>` writes
-somewhere specific, which is what a Dockerfile or a CI job wants. Most of
-those agents read the same `.agents/skills` directory, so asking for several
-is usually one write.
+Qwen Code and Goose. By default, skills are installed for whichever of them
+are found on the machine.
+
+| Flag | What it does |
+| --- | --- |
+| `--agent <name>` | Install for one agent. Repeatable. |
+| `--global` | Write to the agent's home directory instead of this project. |
+| `--dir <path>` | Write to a directory you name, for a Dockerfile or a CI job. |
+
+Most of these agents read the same `.agents/skills` directory, so asking for
+several usually means a single write.
 
 `--ref <branch|tag|sha>` installs a particular version and a SHA pins it;
 `--dry-run` lists the files first. A skill directory that already exists stops
 the install until `--force`, since it may hold your edits.
 
 `update` compares what's installed with what's published, byte for byte, and
-rewrites only what differs — including restoring a file you edited. It never
+rewrites only what differs, including restoring a file you edited. It never
 installs a skill that wasn't already there. `uninstall <NAME>` removes the
 directory, asking first at a terminal; it makes no network request at all.
 There's no lock file: one tarball arrives before any record could be
@@ -172,7 +177,7 @@ writes a skill describing *this CLI*. These are about using Mapbox.
 mapbox completion bash | zsh | fish | powershell
 ```
 
-Prints a completion script on stdout — nothing is written to disk, so put it
+Prints a completion script on stdout. Nothing is written to disk, so put it
 where your shell looks:
 
 ```sh
@@ -187,10 +192,10 @@ mapbox completion powershell >> $PROFILE
 ```
 
 It completes commands, subcommands and flag names, generated from this
-binary's own command tree — so it matches the build that printed it and
+binary's own command tree. So it matches the build that printed it, and
 nothing about it is maintained by hand. Values (style ids, usernames) are not
 completed: that would mean an API request mid-keystroke. `--output` does not
-apply — the script is the result.
+apply, because the script is the result.
 
 ### Generate Skills
 
@@ -199,7 +204,7 @@ mapbox generate-skills
 ```
 
 Writes the whole command surface as an [Agent
-Skill](https://code.claude.com/docs/en/skills) — `.claude/skills` for
+Skill](https://code.claude.com/docs/en/skills): `.claude/skills` for
 Claude Code, `.agents/skills` for Codex. `--agent`, `--global`, `--dir`,
 and `--service` narrow it; `--dry-run` lists files without writing them.
 
@@ -217,7 +222,7 @@ CLI](https://github.com/mapbox/tilesets-cli):
 pipx install mapbox-tilesets       # Python 3.10+
 ```
 
-`--output` and `--yes` don't apply here — `tilesets` has its own; use
+`--output` and `--yes` don't apply here. `tilesets` has its own flags, so use
 `--force`/`-f` for its prompts. It needs a token too: `mapbox auth login`
 covers it, or pass `--token`/`MAPBOX_ACCESS_TOKEN` the same way as every
 other command. `mapbox auth whoami` shows which one is in play if a
@@ -225,7 +230,7 @@ tileset command answers for the wrong account.
 
 ## Usage
 
-These apply globally, across every command — not just the API ones above.
+These apply globally, across every command, not just the API ones above.
 
 ### Dry runs
 
@@ -253,18 +258,17 @@ whole shell.
 
 ### Proxies
 
-The standard variables are honoured — `HTTPS_PROXY`, `HTTP_PROXY`,
-`ALL_PROXY` and `NO_PROXY` — so a CLI behind a corporate proxy needs no
-configuration of its own.
+`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` are all honoured, so
+a CLI behind a corporate proxy needs no configuration of its own.
 
-Two things are worth knowing, because both are easy to spend an afternoon on:
+Two things are easy to lose an afternoon to:
 
 - **`HTTP_PROXY` alone does not carry Mapbox requests.** Every Mapbox base
   URL is `https`, and that variable applies to `http` URLs only. Set
   `HTTPS_PROXY` (or `ALL_PROXY`) instead.
 - **A SOCKS proxy is not supported.** `ALL_PROXY=socks5://…` fails the request
-  rather than being ignored, and the failure says `unsupported scheme socks5`
-  — so if you see that, it is the proxy and not the network.
+  rather than being ignored, and the failure says `unsupported scheme
+  socks5`. If you see that, it is the proxy and not the network.
 
 ### Output format
 
@@ -274,22 +278,22 @@ Two things are worth knowing, because both are easy to spend an afternoon on:
 | --- | --- |
 | `auto` (default) | `text` at a terminal, `json` when piped |
 | `text` | Pretty-printed, readable |
-| `json` | Everything on stdout is JSON — one compact document per command |
+| `json` | Everything on stdout is JSON: one compact document per command |
 
 `json` promises the shape, not the count. Every command today returns one
-document; a command that streams would emit one per line (JSON Lines), which
-is a property of that command rather than of the flag — there is no
+document. A command that streams would emit one per line (JSON Lines), but
+that is a property of the command rather than of the flag, so there is no
 `-o jsonl`. Nothing streams yet.
 
 Errors always go to stderr and never appear in stdout. Under `json` they're
-one flat object: `code`, `message`, and — where there's advice —
-`fix`/`next_actions`/`docs`. See [docs/commands.md](./docs/commands.md#errors)
+one flat object: `code`, `message`, plus `fix`, `next_actions` and `docs`
+where there is advice to give. See [docs/commands.md](./docs/commands.md#errors)
 for the list of codes.
 
 ### `--schema`
 
 `mapbox <command> --schema` describes a command as JSON instead of running
-it — arguments, types, and the request it would make. Needs no token.
+it: arguments, types, and the request it would make. Needs no token.
 
 ```sh
 mapbox styles get --schema         # one command
@@ -307,14 +311,14 @@ About to DELETE https://api.mapbox.com/styles/v1/me/my-style
 Continue? [y/N] n
 ```
 
-`--yes`/`-y`/`MAPBOX_YES=1` skips the question — for CI, or a script run at
-a terminal on purpose. It does **not** apply to `auth login`, which always
+`--yes`/`-y`/`MAPBOX_YES=1` skips the question, which is what CI wants, or a
+script deliberately run at a terminal. It does **not** apply to `auth login`, which always
 needs a person.
 
 ### Update notices
 
-`mapbox` can't update itself, so when a newer release exists it says so —
-once a day, on stderr, at a terminal:
+`mapbox` can't update itself, so when a newer release exists it says so once
+a day, on stderr, at a terminal:
 
 ```
 A newer mapbox is available: 0.2.0 (this is 0.1.5).
@@ -327,14 +331,14 @@ kept narrow:
 
 | | |
 | --- | --- |
-| What it sends | A `GET` for the channel's `latest/manifest.json` — no token, no account, no command, nothing about you or your machine beyond `User-Agent: mapbox-cli/<version>` |
+| What it sends | A `GET` for the channel's `latest/manifest.json`, with no token, no account, no command, and nothing about you or your machine beyond `User-Agent: mapbox-cli/<version>` |
 | When | At most once a day, and only when stderr is a terminal, so CI and piped runs never check and never print |
 | Where | A detached background process. Your command never waits on it: offline, the timing is unchanged and nothing is printed |
 | Off | `MAPBOX_NO_UPDATE_CHECK=1`, or `MAPBOX_CLI_NO_TELEMETRY=1`, which silences this too |
 
 `~/.mapbox/update-check.json` (or `$MAPBOX_CONFIG_DIR`) holds the answer
-between runs. A build that names no release channel — `cargo build` is one —
-never checks at all.
+between runs. A build that names no release channel never checks at all, and
+`cargo build` produces one.
 
 ### Privacy
 
@@ -384,7 +388,7 @@ related rights, please see our Mapbox
 mapbox uninstall
 ```
 
-Removes only the `mapbox` binary — credentials, profiles, and the separate
+Removes only the `mapbox` binary. Credentials, profiles, and the separate
 `tilesets` binary are untouched. Run
 [`mapbox auth logout`](./docs/commands.md#mapbox-auth-logout) first if you
 want those gone too. Asks for confirmation like any destructive command

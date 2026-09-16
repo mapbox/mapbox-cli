@@ -947,7 +947,7 @@ impl Identity<'_> {
             Some("pk") => "public (pk)",
             Some("sk") => "secret (sk)",
             Some("tk") => "temporary (tk)",
-            _ => "unrecognised prefix",
+            _ => "unrecognized prefix",
         };
         match self.expires_at {
             Some(exp) => format!("{usage}, expires {}", time_until(exp, now)),
@@ -1062,7 +1062,7 @@ fn rejected_token(
         ),
         "TokenInvalid" => (
             "token_invalid",
-            "Mapbox does not recognise the token it would be given.".to_string(),
+            "Mapbox does not recognize the token it would be given.".to_string(),
         ),
         "TokenExpired" => (
             "token_expired",
@@ -1190,7 +1190,7 @@ fn profile_name(profile: Option<&str>) -> &str {
 /// token in order to report that it would spend the refresh token is the
 /// exact mutation the flag exists to avoid — and it takes no
 /// [`CredentialLock`] either, since it writes nothing there is anything to
-/// serialise against.
+/// serialize against.
 ///
 /// A precondition the real command would fail on is still a failure here:
 /// `refresh` with nothing stored reports what `force_refresh` reports rather
@@ -2195,7 +2195,7 @@ mod tests {
         assert_eq!(token_usage("pk.body.signature"), Some("pk"));
         assert_eq!(token_usage("sk.body.signature"), Some("sk"));
         assert_eq!(token_usage("tk.body.signature"), Some("tk"));
-        // Anything else is reported as unrecognised rather than guessed at.
+        // Anything else is reported as unrecognized rather than guessed at.
         assert_eq!(token_usage("xx.body.signature"), None);
         assert_eq!(token_usage("pk."), None);
         assert_eq!(token_usage("nodotsatall"), None);
@@ -2515,7 +2515,7 @@ mod tests {
         );
         assert!(
             elapsed < Duration::from_secs(5),
-            "waited {elapsed:?}, so the deadline is not being honoured"
+            "waited {elapsed:?}, so the deadline is not being honored"
         );
     }
 

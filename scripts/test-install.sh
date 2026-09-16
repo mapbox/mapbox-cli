@@ -198,7 +198,7 @@ expect_says() { # command-output want label
 # and `sha256` has to choose between entries rather than match the only one
 # there. One of the decoys is the Windows `.zip`, sitting immediately after
 # the entry being read: extensions are no longer uniform across targets, and
-# the neighbour a greedy match would bleed into is the one that proves it does
+# the neighbor a greedy match would bleed into is the one that proves it does
 # not.
 make_channel() { # dir version [bad-sha|broken]
     channel_dir="$1"
@@ -658,7 +658,7 @@ expect_in_file "$CURL_LOG" "-A ${INSTALLER_UA} (${TARGET}" 'DISABLE_TELEMETRY=0 
 expect_in_file "$CURL_LOG" ' src/dockerfile' 'and the tag comes back with it'
 unset MAPBOX_TEST_CURL_LOG DISABLE_TELEMETRY MAPBOX_CLI_INSTALL_SOURCE
 
-start 'MAPBOX_CLI_NO_TELEMETRY is honoured, and outranks the old name'
+start 'MAPBOX_CLI_NO_TELEMETRY is honored, and outranks the old name'
 new_case_env telemetry-new-name
 export MAPBOX_INSTALL_TILESETS=no
 export MAPBOX_CLI_INSTALL_SOURCE=dockerfile
@@ -666,7 +666,7 @@ shim curl-recording curl
 CURL_LOG="${CASE_DIR}/curl-args"
 export MAPBOX_TEST_CURL_LOG="$CURL_LOG"
 
-# The documented name, which the binary reads and this script honours too.
+# The documented name, which the binary reads and this script honors too.
 : >"$CURL_LOG"
 export MAPBOX_CLI_NO_TELEMETRY=1
 run_piped && status=0 || status=$?
@@ -1026,7 +1026,7 @@ expect_no_out 'is not installed' 'says nothing else about it'
 expect_no_out 'Install it as well?' 'does not ask'
 expect_no_out 'fake pipx' 'installs nothing'
 
-start 'MAPBOX_TILESETS_CLI is honoured, set or broken'
+start 'MAPBOX_TILESETS_CLI is honored, set or broken'
 new_case_env tilesets-override
 shim pipx
 mkdir -p "${CASE_DIR}/opt"

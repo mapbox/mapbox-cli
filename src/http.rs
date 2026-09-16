@@ -164,7 +164,7 @@ fn environment_timeout() -> Option<Duration> {
 ///
 /// `--yes`'s `FalseyValueParser` is no help here either, and it is worth
 /// saying why the two switches take different routes. That parser works
-/// because a boolean can read everything it does not recognise as one of its
+/// because a boolean can read everything it does not recognize as one of its
 /// two answers. A duration has no such reading: there is no number that
 /// `sideways` obviously meant. So this warns and falls back, the way
 /// `MAPBOX_OUTPUT` does, and what it falls back to is the default rather than
@@ -322,7 +322,7 @@ mod tests {
     /// The point is the second half. `reqwest` supplies thirty seconds to a
     /// builder that names none, so before this module named one, every Mapbox
     /// request ran under a number nothing here had chosen — and a `reqwest`
-    /// upgrade that moved it would have moved this CLI's behaviour with no
+    /// upgrade that moved it would have moved this CLI's behavior with no
     /// line of this repo in the diff. Now the number is ours, and this fails
     /// if it ever silently becomes theirs again.
     #[test]

@@ -1268,7 +1268,7 @@ fn is_binary_content_type(content_type: &str) -> bool {
 ///
 /// Guessing from the content type rather than always saying `.png`: telling
 /// someone to redirect a glyph range into `out.png` is advice that produces
-/// a mislabelled file, and it reads as though the command misunderstood what
+/// a mislabeled file, and it reads as though the command misunderstood what
 /// it fetched.
 fn suggested_extension(content_type: &str) -> &'static str {
     let essence = content_type
@@ -1301,7 +1301,7 @@ fn suggested_extension(content_type: &str) -> &'static str {
 }
 
 /// Writes raw bytes to stdout, refusing to do so when that is a terminal —
-/// `curl`'s behaviour, and for the same reason: a few hundred KB of PNG will
+/// `curl`'s behavior, and for the same reason: a few hundred KB of PNG will
 /// otherwise scramble the user's shell.
 fn write_binary(body: &[u8], content_type: &str) -> Result<()> {
     use std::io::{IsTerminal, Write};

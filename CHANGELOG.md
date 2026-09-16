@@ -124,7 +124,7 @@ that may never merge. They are not releases and are not listed here.
   `unsupported scheme socks5` in the message is the part that distinguishes
   it from the network being down.
 
-- `rand` moved from 0.8 to 0.10. No behaviour changes: the two places it is
+- `rand` moved from 0.8 to 0.10. No behavior changes: the two places it is
   used — the PKCE verifier and the OAuth `state` in `mapbox auth login` —
   draw from `ThreadRng` before and after, which `rand` declares a CSPRNG, and
   `thread_rng().gen()` becoming `random()` is a rename. Recorded because it
@@ -132,7 +132,7 @@ that may never merge. They are not releases and are not listed here.
   this release should be able to find it. Both are now covered by tests
   against RFC 7636, which they were not before.
 
-- Both installers now honour `MAPBOX_CLI_NO_TELEMETRY`, the name the binary
+- Both installers now honor `MAPBOX_CLI_NO_TELEMETRY`, the name the binary
   reads. They were left on the old `DISABLE_TELEMETRY` when the binary was
   renamed, so neither name silenced both halves: the documented variable
   stopped the CLI's markers but not the installer's, and the old one did the

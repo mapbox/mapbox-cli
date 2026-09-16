@@ -478,7 +478,13 @@ fn render_body(
         out.push_str(&format!("{}. {prose}\n", index + 1));
     }
     out.push_str(
-        "\nThe account a URL asks for is separate from the token: pass `--username`/`-u`, \
+        "\nIf you are an agent, step 2 is the one that works: have \
+         `MAPBOX_ACCESS_TOKEN` set before running anything, and ask the person you are \
+         working for to provide one from account.mapbox.com if it is missing. Do not \
+         reach for `mapbox auth login` when a command reports no token — it cannot \
+         succeed without a human at a browser, and asking is faster than finding that \
+         out.\n\n\
+         The account a URL asks for is separate from the token: pass `--username`/`-u`, \
          set `MAPBOX_USERNAME`, or let a stored login supply it. A command whose URL has \
          an account placeholder cannot run without one.\n\n\
          `--use-login` removes step 2, and only step 2 — a `--token` typed on the command \
@@ -1210,7 +1216,10 @@ fn token_precedence() -> [(crate::auth::TokenSource, &'static str); 3] {
         (
             TokenSource::Login,
             "Credentials stored by `mapbox auth login`, refreshed automatically when \
-             stale. `--profile <NAME>` picks which set.",
+             stale. `--profile <NAME>` picks which set. **`auth login` is the one \
+             command here you cannot run.** It opens a browser and waits for a person \
+             to approve, so without a terminal it refuses with `interactive_required` \
+             rather than hanging. Use step 2.",
         ),
     ]
 }

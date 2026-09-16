@@ -246,6 +246,42 @@ pub(crate) fn config_dir_path() -> Option<PathBuf> {
 #[derive(Debug)]
 struct DirectoryBlocked {
     path: PathBuf,
+    /// Whether the file looks like the token older Mapbox tooling left here.
+    holds_a_token: bool,
+}
+
+/// Does this file look like the one-line token file older tooling wrote?
+///
+/// Worth answering because the answer changes the advice. "Move it aside" is
+/// the fix either way, but a reader who does not know what the file *is*
+/// cannot tell whether moving it loses something — and in this case it holds
+/// a working credential they can keep using in one line.
+///
+/// Deliberately shallow. The read is bounded, because nothing guarantees the
+/// thing in the way is small, and a wrong answer here costs a sentence of
+/// advice rather than a failed command. Any read error is a `false`: this
+/// runs while reporting a different problem and must not replace it.
+fn looks_like_a_legacy_token_file(path: &Path) -> bool {
+    use std::io::Read;
+
+    // Longer than any token Mapbox issues, short enough that a stray file
+    // is not worth reading.
+    const MOST: usize = 512;
+
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buffer = vec![0; MOST];
+    let Ok(read) = file.read(&mut buffer) else {
+        return false;
+    };
+    let Ok(text) = std::str::from_utf8(&buffer[..read]) else {
+        return false;
+    };
+
+    let token = text.trim();
+    ["pk.", "sk.", "tk."].iter().any(|p| token.starts_with(p))
+        && !token.contains(char::is_whitespace)
 }
 
 impl DirectoryBlocked {
@@ -273,7 +309,20 @@ impl std::fmt::Display for DirectoryBlocked {
              Move it aside to continue:\n\n    \
              mv {shown} {shown}.bak\n\n\
              Or set {CONFIG_DIR_ENV} to keep credentials somewhere else entirely."
-        )
+        )?;
+        // Only once the reader knows the fix. The token is never printed: it
+        // is a live credential, and this text reaches logs and terminals that
+        // the file's permissions were protecting it from.
+        if self.holds_a_token {
+            write!(
+                f,
+                "\n\nIt holds what looks like an access token, left by older Mapbox \
+                 tooling. Nothing is lost by moving it — the token still works, and \
+                 `{CLAP_TOKEN_ENV}` is how to keep using it:\n\n    \
+                 export {CLAP_TOKEN_ENV}=\"$(cat {shown}.bak)\""
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -291,6 +340,7 @@ fn prepare_config_dir(dir: &Path) -> Result<()> {
     if dir.exists() && !dir.is_dir() {
         return Err(DirectoryBlocked {
             path: dir.to_path_buf(),
+            holds_a_token: looks_like_a_legacy_token_file(dir),
         }
         .into());
     }
@@ -2627,6 +2677,57 @@ mod tests {
         assert!(
             !brief.contains(CONFIG_DIR_ENV),
             "the secondary route is what the short form drops: {brief}"
+        );
+    }
+
+    /// The obstruction usually *is* a credential, and saying so changes what
+    /// the reader does about it.
+    ///
+    /// Reported from a real session: someone found `~/.mapbox` in the way,
+    /// was told to move it aside, and did — with no way to know from the
+    /// message that the file held a working token rather than junk.
+    #[test]
+    fn a_legacy_token_file_says_the_token_is_not_lost() {
+        const TOKEN: &str = "sk.eyJ1IjoiZmFrZSJ9.not-a-real-token";
+
+        let path = scratch("config-dir-legacy-token").join(".mapbox");
+        std::fs::write(&path, format!("{TOKEN}\n")).unwrap();
+
+        let full = prepare_config_dir(&path).unwrap_err().to_string();
+
+        assert!(
+            full.contains(CLAP_TOKEN_ENV),
+            "the way to keep using it belongs in the message: {full}"
+        );
+        // The whole point of the `.bak` suffix here: the export has to name
+        // the file as it will be *after* the `mv` above it, or the reader
+        // follows two steps that contradict each other.
+        assert!(
+            full.contains(&format!("{}.bak", path.display())),
+            "the export has to name the moved file, not the original: {full}"
+        );
+
+        // The one thing this must never do. A live credential in an error
+        // message reaches every terminal and log the file's 0600 permissions
+        // were keeping it out of.
+        assert!(
+            !full.contains(TOKEN),
+            "the token itself must never be printed: {full}"
+        );
+    }
+
+    /// And the sentence is earned rather than always shown.
+    #[test]
+    fn a_file_that_is_not_a_token_gets_no_token_advice() {
+        let path = scratch("config-dir-not-a-token").join(".mapbox");
+        std::fs::write(&path, "[profile default]\nsomething = else\n").unwrap();
+
+        let full = prepare_config_dir(&path).unwrap_err().to_string();
+
+        assert!(full.contains("is a file"), "{full}");
+        assert!(
+            !full.contains(CLAP_TOKEN_ENV),
+            "nothing here is a token, so the advice would be a guess: {full}"
         );
     }
 

@@ -19,6 +19,24 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+### Changed
+
+- The skill `mapbox generate-skills` writes now tells an agent which of the
+  three ways to authenticate it can actually use. It listed all three without
+  comment, so an agent with no token would read "credentials stored by
+  `mapbox auth login`" as an option and try it — a command that opens a
+  browser and waits for a person, which in a coding-agent session can only
+  fail. It now says to have `MAPBOX_ACCESS_TOKEN` set, and to ask for one
+  rather than reaching for `auth login`. Reported from a real session that hit
+  exactly this.
+
+- A file sitting where the credential directory belongs now says so when it
+  looks like an access token, which the one older Mapbox tools left at
+  `~/.mapbox` does. The advice was to move it aside, with nothing to tell the
+  reader whether they were moving junk or a working credential; it now says
+  the token still works and gives the `MAPBOX_ACCESS_TOKEN` line that keeps
+  using it. The token itself is never printed, and a test holds that.
+
 ## 0.2.2 - 2026-09-15
 
 ### Changed

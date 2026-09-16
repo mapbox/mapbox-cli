@@ -284,45 +284,96 @@ fn looks_like_a_legacy_token_file(path: &Path) -> bool {
         && !token.contains(char::is_whitespace)
 }
 
+/// Setting an environment variable, written for the reader's shell.
+///
+/// `export NAME=value` is a line a Windows reader cannot run, and this CLI
+/// ships a Windows build and a PowerShell installer. PowerShell is the shell
+/// to write for there — the same choice [`crate::update_check`] makes when it
+/// offers `irm … | iex` rather than `curl … | sh`.
+///
+/// The platform arrives as an argument so both renderings can be rendered in
+/// a test on any host, rather than one of them being compiled out of every
+/// run on the machines this repository is actually built on.
+fn set_env_hint(name: &str, value: &str, windows: bool) -> String {
+    if windows {
+        format!("$env:{name} = '{value}'")
+    } else {
+        format!("export {name}={value}")
+    }
+}
+
 impl DirectoryBlocked {
+    /// The command that moves the obstruction aside, in a shell the reader has.
+    ///
+    /// `mv` is not it on Windows. PowerShell aliases `mv` to `Move-Item` so it
+    /// happens to work there, but `cmd.exe` has only `move`, and the installer
+    /// this CLI ships for Windows is PowerShell — so PowerShell is the shell
+    /// to write for, the same choice `update_check::notice` makes when it
+    /// offers `irm … | iex` instead of `curl … | sh`.
+    ///
+    /// Paths are quoted because Windows home directories routinely contain a
+    /// space, and `Move-Item C:\Users\Jane Smith\.mapbox …` is two arguments.
+    fn move_aside(&self, windows: bool) -> String {
+        let shown = self.path.display();
+        if windows {
+            format!("Move-Item '{shown}' '{shown}.bak'")
+        } else {
+            format!("mv '{shown}' '{shown}.bak'")
+        }
+    }
+
     /// The same fact in one line, fix included.
     ///
-    /// The `mv` stays. Pointing at another command to *learn* the fix would
-    /// send the reader to one that fails for this very reason, and "run
+    /// The move command stays. Pointing at another command to *learn* the fix
+    /// would send the reader to one that fails for this very reason, and "run
     /// `auth login`" reads as "you need to log in" when logging in is exactly
     /// what cannot help.
-    fn one_line(&self) -> String {
+    fn one_line(&self, windows: bool) -> String {
         let shown = self.path.display();
         format!(
             "{shown} is a file, not a directory, so no stored credentials can be read. \
-             Move it aside: mv {shown} {shown}.bak"
+             Move it aside: {}",
+            self.move_aside(windows)
         )
+    }
+
+    /// The whole message, with the shell chosen by the caller.
+    ///
+    /// Taken as a parameter rather than read from `cfg!` in here, so a test
+    /// can render both and neither depends on the host it runs on — the shape
+    /// [`crate::update_check`]'s `notice` uses, and for the same reason. A
+    /// `#[cfg(windows)]` block would leave the Windows wording compiled out of
+    /// every CI run this repository does.
+    fn rendered(&self, windows: bool) -> String {
+        let shown = self.path.display();
+        let mut out = format!(
+            "{shown} is a file, but that is the directory credentials are stored in.\n\n\
+             Move it aside to continue:\n\n    {}\n\n\
+             Or set {CONFIG_DIR_ENV} to keep credentials somewhere else entirely.",
+            self.move_aside(windows)
+        );
+        // Only once the reader knows the fix. The token is never printed: it
+        // is a live credential, and this text reaches logs and terminals that
+        // the file's permissions were protecting it from.
+        if self.holds_a_token {
+            let keep = if windows {
+                format!("$env:{CLAP_TOKEN_ENV} = Get-Content '{shown}.bak'")
+            } else {
+                format!("export {CLAP_TOKEN_ENV}=\"$(cat '{shown}.bak')\"")
+            };
+            out.push_str(&format!(
+                "\n\nIt holds what looks like an access token, left by older Mapbox \
+                 tooling. Nothing is lost by moving it — the token still works, and \
+                 `{CLAP_TOKEN_ENV}` is how to keep using it:\n\n    {keep}"
+            ));
+        }
+        out
     }
 }
 
 impl std::fmt::Display for DirectoryBlocked {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let shown = self.path.display();
-        write!(
-            f,
-            "{shown} is a file, but that is the directory credentials are stored in.\n\n\
-             Move it aside to continue:\n\n    \
-             mv {shown} {shown}.bak\n\n\
-             Or set {CONFIG_DIR_ENV} to keep credentials somewhere else entirely."
-        )?;
-        // Only once the reader knows the fix. The token is never printed: it
-        // is a live credential, and this text reaches logs and terminals that
-        // the file's permissions were protecting it from.
-        if self.holds_a_token {
-            write!(
-                f,
-                "\n\nIt holds what looks like an access token, left by older Mapbox \
-                 tooling. Nothing is lost by moving it — the token still works, and \
-                 `{CLAP_TOKEN_ENV}` is how to keep using it:\n\n    \
-                 export {CLAP_TOKEN_ENV}=\"$(cat {shown}.bak)\""
-            )?;
-        }
-        Ok(())
+        write!(f, "{}", self.rendered(cfg!(windows)))
     }
 }
 
@@ -798,7 +849,7 @@ pub fn load_fresh_credentials(debug: bool, profile: Option<&str>) -> Option<Cred
             match e.downcast_ref::<DirectoryBlocked>() {
                 // Not a locking problem, and saying so would send the reader
                 // looking in the wrong place.
-                Some(blocked) => eprintln!("Warning: {}", blocked.one_line()),
+                Some(blocked) => eprintln!("Warning: {}", blocked.one_line(cfg!(windows))),
                 None => eprintln!("Warning: could not lock credentials — {e}"),
             }
             return load_credentials(profile);
@@ -1037,7 +1088,7 @@ fn nothing_to_report(use_login: bool, profile: Option<&str>) -> anyhow::Error {
             profile_name(profile)
         )
     } else {
-        format!("Run `mapbox auth login`, export {CLAP_TOKEN_ENV}, or pass `--token`.")
+        format!("Run `mapbox auth login`, set {CLAP_TOKEN_ENV}, or pass `--token`.")
     };
 
     CliError::new("not_authenticated", "No Mapbox token available.")
@@ -1772,9 +1823,19 @@ fn login_has_no_way_to_show_the_url() -> anyhow::Error {
 /// could never complete. A flag about confirmations has no business asserting
 /// that a human is present.
 ///
-/// So the answer for a headless caller is a token, and the fix says so. A
-/// login on a machine with no terminal at all wants the device authorization
-/// grant, which is a feature, not an escape hatch on this one.
+/// The fix names both ways out, because there are two kinds of caller here
+/// and only one of them is headless.
+///
+/// This said only "set MAPBOX_ACCESS_TOKEN for a script or a CI job", which
+/// describes automation and quietly assumes that is who is asking. Often it
+/// is not: a person working through a coding agent hits this, and so does the
+/// same person when they try the command themselves in that agent's shell —
+/// which has no terminal either, so it fails identically. For them a token is
+/// the *workaround* and the real answer is a terminal window, which the
+/// message never mentioned. Reported by somebody who went looking for it.
+///
+/// A login on a machine with no terminal at all wants the device
+/// authorization grant, which is a feature, not an escape hatch on this one.
 fn login_needs_a_terminal() -> anyhow::Error {
     CliError::new(
         "interactive_required",
@@ -1783,7 +1844,12 @@ fn login_needs_a_terminal() -> anyhow::Error {
     )
     .with_remedy(
         Remedy::default()
-            .with_fix("Set MAPBOX_ACCESS_TOKEN for a script or a CI job.")
+            .with_fix(
+                "Run it in a terminal window — a shell an agent or an editor runs \
+                 commands through has no terminal, so the same command fails there \
+                 the same way. Or set MAPBOX_ACCESS_TOKEN, which is what a script, a \
+                 CI job or an agent should use.",
+            )
             .with_doc(Some(remedy::TOKENS_DOC)),
     )
     .into()
@@ -1866,7 +1932,9 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     let text = match &creds.username {
         Some(u) => format!(
             "Logged in as {u}{profile_note}.\n\
-             Tip: export MAPBOX_USERNAME={u} to skip --username on each command."
+             Tip: {} to skip --username on each command.",
+            // The name `main.rs` binds this flag to; there is no const for it.
+            set_env_hint("MAPBOX_USERNAME", u, cfg!(windows))
         ),
         None => format!("Logged in successfully{profile_note}."),
     };
@@ -2654,7 +2722,7 @@ mod tests {
         assert!(full.contains("is a file"), "{full}");
         assert!(full.contains(&path.display().to_string()), "{full}");
         assert!(
-            full.contains("mv "),
+            full.contains("mv ") || full.contains("Move-Item "),
             "the message has to carry the fix, not just the diagnosis: {full}"
         );
         assert!(
@@ -2664,20 +2732,75 @@ mod tests {
 
         // The same fact for a command that is not about credentials at all,
         // which only needs to explain why the stored ones went missing.
-        let brief = err
+        let blocked = err
             .downcast_ref::<DirectoryBlocked>()
-            .expect("the obstruction has to survive as its own type")
-            .one_line();
+            .expect("the obstruction has to survive as its own type");
+        let brief = blocked.one_line(cfg!(windows));
         assert_eq!(brief.lines().count(), 1, "{brief}");
         assert!(brief.contains("not a directory"), "{brief}");
         assert!(
-            brief.contains(&format!("mv {}", path.display())),
+            brief.contains(&path.display().to_string()),
             "the short form still carries the fix itself: {brief}"
         );
         assert!(
             !brief.contains(CONFIG_DIR_ENV),
             "the secondary route is what the short form drops: {brief}"
         );
+    }
+
+    /// Both shells, on whichever host the suite happens to run.
+    ///
+    /// The advice is a command the reader is meant to paste, so it has to be
+    /// one their shell has. `export` and `$(cat …)` are neither of the two
+    /// things a Windows user runs, and a `#[cfg(windows)]` block would have
+    /// left that wording compiled out of every CI run this repository does —
+    /// which is why the platform is a parameter here, the way
+    /// `update_check::notice` takes it.
+    ///
+    /// Caught in review, on a change that had already shipped the POSIX-only
+    /// version to a PR.
+    #[test]
+    fn the_repair_is_written_for_the_shell_the_reader_has() {
+        let path = scratch("config-dir-shells").join(".mapbox");
+        std::fs::write(&path, "sk.a-legacy-token").unwrap();
+        let blocked = DirectoryBlocked {
+            path: path.clone(),
+            holds_a_token: true,
+        };
+
+        let unix = blocked.rendered(false);
+        assert!(unix.contains("mv '"), "{unix}");
+        assert!(unix.contains("export "), "{unix}");
+        assert!(unix.contains("$(cat "), "{unix}");
+        assert!(
+            !unix.contains("Move-Item") && !unix.contains("$env:"),
+            "PowerShell has no business in the POSIX rendering: {unix}"
+        );
+
+        let windows = blocked.rendered(true);
+        assert!(windows.contains("Move-Item '"), "{windows}");
+        assert!(
+            windows.contains(&format!("$env:{CLAP_TOKEN_ENV} =")),
+            "{windows}"
+        );
+        assert!(windows.contains("Get-Content "), "{windows}");
+        assert!(
+            !windows.contains("export ") && !windows.contains("$(cat "),
+            "a Windows reader cannot run any of that: {windows}"
+        );
+
+        // Windows home directories routinely contain a space, so an unquoted
+        // path is two arguments and the repair silently does the wrong thing.
+        for rendered in [&unix, &windows] {
+            assert!(
+                rendered.contains(&format!("'{}'", path.display())),
+                "the path has to be quoted: {rendered}"
+            );
+        }
+
+        // The short form forks the same way.
+        assert!(blocked.one_line(false).contains("mv '"));
+        assert!(blocked.one_line(true).contains("Move-Item '"));
     }
 
     /// The obstruction usually *is* a credential, and saying so changes what

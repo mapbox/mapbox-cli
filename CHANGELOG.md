@@ -30,6 +30,33 @@ that may never merge. They are not releases and are not listed here.
   rather than reaching for `auth login`. Reported from a real session that hit
   exactly this.
 
+- `mapbox generate-skills` now prints the command that removes what it wrote,
+  in both output modes, and the JSON carries it as `remove_with`. The write is
+  `generate-skills` and the undo is `agent-skills uninstall`, a differently
+  named command belonging to a different feature, so there was no way to get
+  from one to the other — a reader of `generate-skills --help` saw no way back.
+  Reported after an agent reached for `rm -rf` instead, had it refused by its
+  sandbox, and left untracked directories in a git working tree. A dry run does
+  not print it, since nothing was written. `--help`, the generated reference
+  page and the README say it too.
+
+- Advice that is a command to paste is now written for the reader's shell on
+  Windows too. The repair for a file blocking the credential directory offered
+  `mv` and `export NAME="$(cat …)"`, none of which a Windows reader can run,
+  and the tip after a successful login offered `export MAPBOX_USERNAME=…`;
+  those now render as `Move-Item`, `$env:NAME = Get-Content …` and
+  `$env:MAPBOX_USERNAME = …` on Windows. Paths in them are quoted, because a
+  Windows home directory routinely contains a space and an unquoted path is two
+  arguments.
+
+- The refusal from `mapbox auth login` with no terminal now names both ways
+  out. It said "Set MAPBOX_ACCESS_TOKEN for a script or a CI job", which
+  describes automation and assumes that is who is asking; a person working
+  through a coding agent hits this too, and hits it again when they try the
+  command themselves in that agent's shell, which has no terminal either. The
+  fix now leads with running it in a terminal window and keeps the token as the
+  answer for a script, a CI job or an agent.
+
 - A file sitting where the credential directory belongs now says so when it
   looks like an access token, which the one older Mapbox tools left at
   `~/.mapbox` does. The advice was to move it aside, with nothing to tell the

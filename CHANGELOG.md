@@ -40,14 +40,20 @@ that may never merge. They are not releases and are not listed here.
   not print it, since nothing was written. `--help`, the generated reference
   page and the README say it too.
 
-- Advice that is a command to paste is now written for the reader's shell on
-  Windows too. The repair for a file blocking the credential directory offered
-  `mv` and `export NAME="$(cat …)"`, none of which a Windows reader can run,
-  and the tip after a successful login offered `export MAPBOX_USERNAME=…`;
-  those now render as `Move-Item`, `$env:NAME = Get-Content …` and
-  `$env:MAPBOX_USERNAME = …` on Windows. Paths in them are quoted, because a
-  Windows home directory routinely contains a space and an unquoted path is two
-  arguments.
+- Advice that is a command to paste now names every shell instead of guessing
+  one. The repair for a file blocking the credential directory offered `mv` and
+  `export NAME="$(cat …)"`, which a Windows reader cannot run; it now gives
+  `mv`/`Move-Item`/`move` and all four of `export`, fish's `set -gx`,
+  PowerShell's `$env: … Get-Content` and `cmd.exe`'s `set /p`, each labelled
+  with the shell it belongs to. The tip printed after a successful login no
+  longer offers `export MAPBOX_USERNAME=…` either; it says what to set rather
+  than how.
+
+  Keying this on the operating system would have been wrong in both
+  directions, which is why it does not: PowerShell runs on macOS and Linux and
+  Git Bash runs on Windows. Each row also uses the name its shell owns rather
+  than one that may be aliased — `Move-Item` and `Get-Content` rather than `mv`
+  and `cat`, which resolve differently depending on what is installed.
 
 - The refusal from `mapbox auth login` with no terminal now names both ways
   out. It said "Set MAPBOX_ACCESS_TOKEN for a script or a CI job", which

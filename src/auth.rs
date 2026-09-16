@@ -284,87 +284,107 @@ fn looks_like_a_legacy_token_file(path: &Path) -> bool {
         && !token.contains(char::is_whitespace)
 }
 
-/// Setting an environment variable, written for the reader's shell.
-///
-/// `export NAME=value` is a line a Windows reader cannot run, and this CLI
-/// ships a Windows build and a PowerShell installer. PowerShell is the shell
-/// to write for there — the same choice [`crate::update_check`] makes when it
-/// offers `irm … | iex` rather than `curl … | sh`.
-///
-/// The platform arrives as an argument so both renderings can be rendered in
-/// a test on any host, rather than one of them being compiled out of every
-/// run on the machines this repository is actually built on.
-fn set_env_hint(name: &str, value: &str, windows: bool) -> String {
-    if windows {
-        format!("$env:{name} = '{value}'")
-    } else {
-        format!("export {name}={value}")
-    }
-}
-
 impl DirectoryBlocked {
-    /// The command that moves the obstruction aside, in a shell the reader has.
+    /// Moving the file aside, in every shell this CLI can be run from.
     ///
-    /// `mv` is not it on Windows. PowerShell aliases `mv` to `Move-Item` so it
-    /// happens to work there, but `cmd.exe` has only `move`, and the installer
-    /// this CLI ships for Windows is PowerShell — so PowerShell is the shell
-    /// to write for, the same choice `update_check::notice` makes when it
-    /// offers `irm … | iex` instead of `curl … | sh`.
+    /// Each row uses the name that shell owns, not one that might be aliased
+    /// to it. `mv` in PowerShell is an alias for `Move-Item` on Windows and no
+    /// alias at all on Unix, where the native tool is found instead — and a
+    /// machine with GNU coreutils installed has a third answer. None of that
+    /// is knowable from here, so the PowerShell row says `Move-Item`, which is
+    /// a cmdlet in `Microsoft.PowerShell.Management` and cannot be shadowed
+    /// out from under the reader.
     ///
-    /// Paths are quoted because Windows home directories routinely contain a
-    /// space, and `Move-Item C:\Users\Jane Smith\.mapbox …` is two arguments.
-    fn move_aside(&self, windows: bool) -> String {
+    /// This is what keying on the *shell* buys over keying on the operating
+    /// system. An earlier version picked `Move-Item` for Windows and `mv`
+    /// everywhere else, which handed Git Bash on Windows a cmdlet it does not
+    /// have and PowerShell on macOS a syntax it does not use.
+    ///
+    /// Paths are quoted because a Windows home directory routinely contains a
+    /// space, and an unquoted `C:\Users\Jane Smith\.mapbox` is two arguments.
+    fn move_aside(&self) -> Vec<String> {
         let shown = self.path.display();
-        if windows {
-            format!("Move-Item '{shown}' '{shown}.bak'")
-        } else {
-            format!("mv '{shown}' '{shown}.bak'")
-        }
+        vec![
+            format!("bash, zsh, fish:  mv '{shown}' '{shown}.bak'"),
+            format!("PowerShell:       Move-Item '{shown}' '{shown}.bak'"),
+            format!("cmd.exe:          move \"{shown}\" \"{shown}.bak\""),
+        ]
+    }
+
+    /// Setting the token, in every shell, because there is no common spelling.
+    ///
+    /// `export` with `$(…)`, fish's `set -gx` with `(…)`, PowerShell's `$env:`
+    /// with `Get-Content`, and `cmd.exe`'s `set /p` reading a redirect.
+    ///
+    /// The fish row is not there because `export` is missing — fish ships an
+    /// `export` function for bash compatibility, and the bash row does work
+    /// there (checked on fish 4.9). It is there because `set -gx` is what a
+    /// fish user writes, and because a compatibility shim in someone else's
+    /// shell is a thinner promise than that shell's own spelling.
+    ///
+    /// The label goes in front rather than in a trailing `# comment`, because
+    /// `#` does not start a comment in `cmd.exe` — a trailing label would be
+    /// part of the command for the one reader least able to spot it.
+    fn keep_the_token(&self) -> Vec<String> {
+        let shown = self.path.display();
+        vec![
+            format!("bash, zsh:   export {CLAP_TOKEN_ENV}=\"$(cat '{shown}.bak')\""),
+            format!("fish:        set -gx {CLAP_TOKEN_ENV} (cat '{shown}.bak')"),
+            format!("PowerShell:  $env:{CLAP_TOKEN_ENV} = Get-Content '{shown}.bak'"),
+            format!("cmd.exe:     set /p {CLAP_TOKEN_ENV}=<\"{shown}.bak\""),
+        ]
     }
 
     /// The same fact in one line, fix included.
+    ///
+    /// One line means one shell's spelling, so it is `mv` — the one that works
+    /// in four of the five. A `cmd.exe` reader gets the full form from any
+    /// `auth` command, which is where the repair actually belongs.
     ///
     /// The move command stays. Pointing at another command to *learn* the fix
     /// would send the reader to one that fails for this very reason, and "run
     /// `auth login`" reads as "you need to log in" when logging in is exactly
     /// what cannot help.
-    fn one_line(&self, windows: bool) -> String {
+    fn one_line(&self) -> String {
         let shown = self.path.display();
         format!(
             "{shown} is a file, not a directory, so no stored credentials can be read. \
-             Move it aside: {}",
-            self.move_aside(windows)
+             Move it aside: mv '{shown}' '{shown}.bak'"
         )
     }
 
-    /// The whole message, with the shell chosen by the caller.
+    /// The whole message.
     ///
-    /// Taken as a parameter rather than read from `cfg!` in here, so a test
-    /// can render both and neither depends on the host it runs on — the shape
-    /// [`crate::update_check`]'s `notice` uses, and for the same reason. A
-    /// `#[cfg(windows)]` block would leave the Windows wording compiled out of
-    /// every CI run this repository does.
-    fn rendered(&self, windows: bool) -> String {
+    /// Every shell is spelled out rather than one being guessed at. The guess
+    /// this replaces was `cfg!(windows)`, which is the wrong question: it names
+    /// the operating system and the answer depends on the shell. PowerShell
+    /// runs on macOS and Linux, Git Bash runs on Windows, and that fork handed
+    /// both of them the other one's syntax.
+    fn rendered(&self) -> String {
         let shown = self.path.display();
+        let indented = |lines: Vec<String>| {
+            lines
+                .into_iter()
+                .map(|line| format!("    {line}"))
+                .collect::<Vec<String>>()
+                .join("\n")
+        };
+
         let mut out = format!(
             "{shown} is a file, but that is the directory credentials are stored in.\n\n\
-             Move it aside to continue:\n\n    {}\n\n\
+             Move it aside to continue:\n\n{}\n\n\
              Or set {CONFIG_DIR_ENV} to keep credentials somewhere else entirely.",
-            self.move_aside(windows)
+            indented(self.move_aside())
         );
         // Only once the reader knows the fix. The token is never printed: it
         // is a live credential, and this text reaches logs and terminals that
         // the file's permissions were protecting it from.
         if self.holds_a_token {
-            let keep = if windows {
-                format!("$env:{CLAP_TOKEN_ENV} = Get-Content '{shown}.bak'")
-            } else {
-                format!("export {CLAP_TOKEN_ENV}=\"$(cat '{shown}.bak')\"")
-            };
             out.push_str(&format!(
                 "\n\nIt holds what looks like an access token, left by older Mapbox \
                  tooling. Nothing is lost by moving it — the token still works, and \
-                 `{CLAP_TOKEN_ENV}` is how to keep using it:\n\n    {keep}"
+                 `{CLAP_TOKEN_ENV}` is how to keep using it:\n\n{}",
+                indented(self.keep_the_token())
             ));
         }
         out
@@ -373,7 +393,7 @@ impl DirectoryBlocked {
 
 impl std::fmt::Display for DirectoryBlocked {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.rendered(cfg!(windows)))
+        write!(f, "{}", self.rendered())
     }
 }
 
@@ -849,7 +869,7 @@ pub fn load_fresh_credentials(debug: bool, profile: Option<&str>) -> Option<Cred
             match e.downcast_ref::<DirectoryBlocked>() {
                 // Not a locking problem, and saying so would send the reader
                 // looking in the wrong place.
-                Some(blocked) => eprintln!("Warning: {}", blocked.one_line(cfg!(windows))),
+                Some(blocked) => eprintln!("Warning: {}", blocked.one_line()),
                 None => eprintln!("Warning: could not lock credentials — {e}"),
             }
             return load_credentials(profile);
@@ -1932,9 +1952,7 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     let text = match &creds.username {
         Some(u) => format!(
             "Logged in as {u}{profile_note}.\n\
-             Tip: {} to skip --username on each command.",
-            // The name `main.rs` binds this flag to; there is no const for it.
-            set_env_hint("MAPBOX_USERNAME", u, cfg!(windows))
+             Tip: setting MAPBOX_USERNAME to {u} skips --username on each command."
         ),
         None => format!("Logged in successfully{profile_note}."),
     };
@@ -2735,7 +2753,7 @@ mod tests {
         let blocked = err
             .downcast_ref::<DirectoryBlocked>()
             .expect("the obstruction has to survive as its own type");
-        let brief = blocked.one_line(cfg!(windows));
+        let brief = blocked.one_line();
         assert_eq!(brief.lines().count(), 1, "{brief}");
         assert!(brief.contains("not a directory"), "{brief}");
         assert!(
@@ -2748,86 +2766,66 @@ mod tests {
         );
     }
 
-    /// Both shells, on whichever host the suite happens to run.
+    /// Every shell gets a line it can actually run.
     ///
-    /// The advice is a command the reader is meant to paste, so it has to be
-    /// one their shell has. `export` and `$(cat …)` are neither of the two
-    /// things a Windows user runs, and a `#[cfg(windows)]` block would have
-    /// left that wording compiled out of every CI run this repository does —
-    /// which is why the platform is a parameter here, the way
-    /// `update_check::notice` takes it.
+    /// The advice is meant to be pasted, so it has to be in the reader's
+    /// language. This started as `export …="$(cat …)"` unconditionally, became
+    /// a `cfg!(windows)` fork, and neither was right: the operating system does
+    /// not determine the shell. PowerShell runs on macOS and Linux, Git Bash
+    /// runs on Windows, and that fork handed each of them the other's syntax.
     ///
-    /// Caught in review, on a change that had already shipped the POSIX-only
-    /// version to a PR.
+    /// So every shell is spelled out and none is guessed at. Checked by hand
+    /// where a shell was available: fish 4.9 runs the fish row and leaves the
+    /// variable exported, and pwsh 7.6 has no `mv` alias but does have
+    /// `Move-Item`. The `cmd.exe` rows are from its documented syntax; there
+    /// is no Windows machine here to run them on, and that is worth knowing
+    /// rather than papering over.
     #[test]
-    fn the_repair_is_written_for_the_shell_the_reader_has() {
+    fn every_shell_gets_a_line_it_can_run() {
+        const TOKEN: &str = "sk.eyJ1IjoiZmFrZSJ9.not-a-real-token";
+
         let path = scratch("config-dir-shells").join(".mapbox");
-        std::fs::write(&path, "sk.a-legacy-token").unwrap();
+        std::fs::write(&path, format!("{TOKEN}\n")).unwrap();
         let blocked = DirectoryBlocked {
             path: path.clone(),
             holds_a_token: true,
         };
+        let full = blocked.rendered();
 
-        let unix = blocked.rendered(false);
-        assert!(unix.contains("mv '"), "{unix}");
-        assert!(unix.contains("export "), "{unix}");
-        assert!(unix.contains("$(cat "), "{unix}");
-        assert!(
-            !unix.contains("Move-Item") && !unix.contains("$env:"),
-            "PowerShell has no business in the POSIX rendering: {unix}"
-        );
-
-        let windows = blocked.rendered(true);
-        assert!(windows.contains("Move-Item '"), "{windows}");
-        assert!(
-            windows.contains(&format!("$env:{CLAP_TOKEN_ENV} =")),
-            "{windows}"
-        );
-        assert!(windows.contains("Get-Content "), "{windows}");
-        assert!(
-            !windows.contains("export ") && !windows.contains("$(cat "),
-            "a Windows reader cannot run any of that: {windows}"
-        );
-
-        // Windows home directories routinely contain a space, so an unquoted
-        // path is two arguments and the repair silently does the wrong thing.
-        for rendered in [&unix, &windows] {
-            assert!(
-                rendered.contains(&format!("'{}'", path.display())),
-                "the path has to be quoted: {rendered}"
-            );
+        // Moving it aside: each shell's own name for the operation, never one
+        // that depends on an alias being present.
+        for expected in [
+            &format!("mv '{}'", path.display()),
+            &format!("Move-Item '{}'", path.display()),
+            &format!("move \"{}\"", path.display()),
+        ] {
+            assert!(full.contains(expected), "no row for {expected}: {full}");
         }
 
-        // The short form forks the same way.
-        assert!(blocked.one_line(false).contains("mv '"));
-        assert!(blocked.one_line(true).contains("Move-Item '"));
-    }
+        // Keeping the token: four genuinely different languages.
+        for expected in [
+            &format!("export {CLAP_TOKEN_ENV}=\"$(cat "),
+            &format!("set -gx {CLAP_TOKEN_ENV} (cat "),
+            &format!("$env:{CLAP_TOKEN_ENV} = Get-Content "),
+            &format!("set /p {CLAP_TOKEN_ENV}=<"),
+        ] {
+            assert!(full.contains(expected), "no row for {expected}: {full}");
+        }
 
-    /// The obstruction usually *is* a credential, and saying so changes what
-    /// the reader does about it.
-    ///
-    /// Reported from a real session: someone found `~/.mapbox` in the way,
-    /// was told to move it aside, and did — with no way to know from the
-    /// message that the file held a working token rather than junk.
-    #[test]
-    fn a_legacy_token_file_says_the_token_is_not_lost() {
-        const TOKEN: &str = "sk.eyJ1IjoiZmFrZSJ9.not-a-real-token";
-
-        let path = scratch("config-dir-legacy-token").join(".mapbox");
-        std::fs::write(&path, format!("{TOKEN}\n")).unwrap();
-
-        let full = prepare_config_dir(&path).unwrap_err().to_string();
-
+        // Labels lead rather than trail. `#` does not start a comment in
+        // `cmd.exe`, so a trailing label would be part of the command for the
+        // one reader least equipped to notice.
         assert!(
-            full.contains(CLAP_TOKEN_ENV),
-            "the way to keep using it belongs in the message: {full}"
+            !full.contains(" # "),
+            "a trailing label is part of the command in cmd.exe: {full}"
         );
-        // The whole point of the `.bak` suffix here: the export has to name
-        // the file as it will be *after* the `mv` above it, or the reader
-        // follows two steps that contradict each other.
+
+        // Quoted, because a Windows home directory routinely contains a space
+        // and an unquoted path is two arguments.
         assert!(
-            full.contains(&format!("{}.bak", path.display())),
-            "the export has to name the moved file, not the original: {full}"
+            full.contains(&format!("'{}.bak'", path.display()))
+                && full.contains(&format!("\"{}.bak\"", path.display())),
+            "paths have to be quoted in both quoting styles: {full}"
         );
 
         // The one thing this must never do. A live credential in an error

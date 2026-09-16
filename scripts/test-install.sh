@@ -756,6 +756,29 @@ expect_status 0 "$status" 'exits 0'
 expect_out 'Installed mapbox 0.1.0-dev.abc1234' 'installs that exact version'
 expect_out 'channel  v0.1.0-dev.abc1234' 'names the channel it resolved'
 
+# The channel's directories carry a leading `v`. Every place a person reads a
+# version from — `mapbox --version`, CHANGELOG.md, Cargo.toml — shows it
+# without one, so the spelling somebody copies is the one that has to work.
+# It used to 403, which reads as "not allowed" rather than "no such version".
+start 'MAPBOX_CLI_VERSION accepts a version without the leading v'
+new_case_env pinned-bare
+export MAPBOX_CLI_VERSION=0.1.0-dev.abc1234
+export MAPBOX_INSTALL_TILESETS=no
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_out 'Installed mapbox 0.1.0-dev.abc1234' 'installs that exact version'
+expect_out 'channel  v0.1.0-dev.abc1234' 'and resolved the v-prefixed directory'
+
+# `latest` starts with a letter, so nothing is prepended to it. Pinning this
+# wrong would break the default install rather than an edge case.
+start 'a channel name that is not a version is left alone'
+new_case_env pinned-latest
+export MAPBOX_CLI_VERSION=latest
+export MAPBOX_INSTALL_TILESETS=no
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_out 'channel  latest' 'asked for latest, not vlatest'
+
 start 'an unsupported platform stops before downloading'
 new_case_env unsupported
 shim uname-unsupported uname

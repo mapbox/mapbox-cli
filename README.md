@@ -55,6 +55,21 @@ curl -fsSL https://cli.mapbox.com/install.sh | sh
 irm https://cli.mapbox.com/install.ps1 | iex
 ```
 
+`MAPBOX_CLI_VERSION` pins a version instead of taking the newest:
+
+```sh
+curl -fsSL https://cli.mapbox.com/install.sh | MAPBOX_CLI_VERSION=0.2.1 sh
+```
+
+```powershell
+$env:MAPBOX_CLI_VERSION = '0.2.1'; irm https://cli.mapbox.com/install.ps1 | iex
+```
+
+With or without the leading `v`: `0.2.1` and `v0.2.1` both work, so the
+version `mapbox --version` prints can be pasted straight in.
+`MAPBOX_INSTALL_DIR` chooses where the binary lands, and defaults to
+`~/.local/bin`.
+
 `scripts/install.sh` and `scripts/install.ps1` here are those installers'
 sources; `scripts/test-install.sh` and `scripts/test-install.ps1` exercise
 them end to end without touching the network.

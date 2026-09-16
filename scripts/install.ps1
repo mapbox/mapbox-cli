@@ -56,6 +56,13 @@
     $Version = 'latest'
     if ($env:MAPBOX_CLI_VERSION) { $Version = $env:MAPBOX_CLI_VERSION }
 
+    # Accepted with or without the leading `v`, same as install.sh. The
+    # channel names its directories `v0.2.1`, but `mapbox --version`,
+    # CHANGELOG.md and Cargo.toml all show the version without one, so the
+    # spelling a person copies is the one that used to 403. `latest` and any
+    # other non-numeric channel name is left alone.
+    if ($Version -match '^[0-9]') { $Version = "v$Version" }
+
     $InstallDir = $env:MAPBOX_INSTALL_DIR
 
     # Only set if you need a non-production channel. Set MAPBOX_CLI_AUTH to

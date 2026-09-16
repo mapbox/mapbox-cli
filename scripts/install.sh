@@ -21,6 +21,20 @@ set -eu
 
 BASE_URL="${MAPBOX_CLI_BASE_URL:-__MAPBOX_CLI_BASE_URL__}"
 VERSION="${MAPBOX_CLI_VERSION:-latest}"
+
+# A pinned version is accepted with or without the leading `v`.
+#
+# The channel's directories are named `v0.2.1`, but every place a person reads
+# a version from shows it without one: `mapbox --version`, CHANGELOG.md,
+# Cargo.toml. So the spelling somebody copies is the spelling that used to
+# fail, and it failed as `403` from S3 on a path that does not exist — which
+# reads as "you are not allowed" rather than "no such version".
+#
+# `latest` and anything else non-numeric is left alone: only a leading digit
+# means a version number is being named.
+case "$VERSION" in
+    [0-9]*) VERSION="v${VERSION}" ;;
+esac
 INSTALL_DIR="${MAPBOX_INSTALL_DIR:-$HOME/.local/bin}"
 
 # Where a reader is sent to build from source or report a bad artifact. One

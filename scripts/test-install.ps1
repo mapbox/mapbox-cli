@@ -599,9 +599,13 @@ try {
     Expect-Out "channel  $PinnedVersion" 'names the channel it resolved'
 
     # The channel's directories carry a leading `v`. Every place a person
-    # reads a version from — `mapbox --version`, CHANGELOG.md, Cargo.toml —
+    # reads a version from (`mapbox --version`, CHANGELOG.md, Cargo.toml)
     # shows it without one, so the spelling somebody copies has to work. It
     # used to 403, which reads as "not allowed" rather than "no such version".
+    #
+    # ASCII only, deliberately: PSScriptAnalyzer's
+    # PSUseBOMForUnicodeEncodedFile fails a non-ASCII .ps1 that has no BOM,
+    # and an em-dash in this comment is what turned CI red the first time.
     Start-Case 'MAPBOX_CLI_VERSION accepts a version without the leading v'
     New-CaseEnv 'pinned-bare'
     $env:MAPBOX_CLI_VERSION = $PinnedVersion -replace '^v', ''

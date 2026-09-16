@@ -87,6 +87,28 @@ tar -xzf "$file"
 mv mapbox ~/.local/bin/
 ```
 
+On Windows the archive is a `.zip` and PowerShell can read the manifest
+directly, so there is no text file to parse:
+
+```powershell
+$version = 'v0.2.1'
+$target  = 'x86_64-pc-windows-msvc'
+
+$manifest = Invoke-RestMethod "https://cli.mapbox.com/$version/manifest.json"
+$artifact = $manifest.artifacts.$target
+
+Invoke-WebRequest "https://cli.mapbox.com/$version/$($artifact.file)" -OutFile $artifact.file
+if ((Get-FileHash -Algorithm SHA256 $artifact.file).Hash -ine $artifact.sha256) {
+    throw 'checksum mismatch'
+}
+
+Expand-Archive $artifact.file -DestinationPath .
+```
+
+`Invoke-WebRequest` and `Get-FileHash` rather than `curl` and `sha256sum`:
+the first is an alias for something else in Windows PowerShell and neither of
+the others is guaranteed to be present.
+
 Use `latest` in place of the version for whatever is current. Each archive
 holds one file, the `mapbox` executable, so there is no directory to step
 into and nothing else to place. `~/.local/bin` is where the install script

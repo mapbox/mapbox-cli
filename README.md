@@ -213,9 +213,9 @@ finds, and it prints every directory it used. To take them out again:
 mapbox agent-skills uninstall mapbox-cli
 ```
 
-That removes every copy this command wrote, which is more than a hand-written
-`rm` usually catches — a default run writes for each agent on the machine, not
-just the one you had in mind.
+That removes every copy this command wrote, which is more than deleting the
+directories by hand usually catches — a default run writes for each agent on
+the machine, not just the one you had in mind.
 
 ### Tileset CLI
 

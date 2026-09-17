@@ -19,6 +19,24 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+### Added
+
+- The README now documents installing without the install script: the
+  archives are plain HTTP downloads, `manifest.json` lists every target with
+  its checksum, and the commands to verify and extract one are written out.
+  Nothing new is published — this is the same channel the install script
+  reads, for anyone whose employer does not allow piping a script into a
+  shell.
+
+### Fixed
+
+- The README described the published builds as signed. They are not
+  code-signed with a Developer ID or an Authenticode certificate; what the
+  install script checks is a SHA-256 checksum. The claim is gone, and the new
+  section says what a macOS user hits because of it: Gatekeeper refuses an
+  unsigned binary carrying a quarantine flag, which a browser download sets
+  and `curl` does not.
+
 ## 0.2.2 - 2026-09-15
 
 ### Changed

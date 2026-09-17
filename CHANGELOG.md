@@ -19,6 +19,15 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+### Added
+
+- The README now documents installing without the install script: the
+  archives are plain HTTP downloads, `manifest.json` lists every target with
+  its checksum, and the commands to verify and extract one are written out.
+  Nothing new is published — this is the same channel the install script
+  reads, for anyone whose employer does not allow piping a script into a
+  shell.
+
 ### Changed
 
 - The skill `mapbox generate-skills` writes now tells an agent which of the
@@ -69,6 +78,15 @@ that may never merge. They are not releases and are not listed here.
   reader whether they were moving junk or a working credential; it now says
   the token still works and gives the `MAPBOX_ACCESS_TOKEN` line that keeps
   using it. The token itself is never printed, and a test holds that.
+
+### Fixed
+
+- The README described the published builds as signed. They are not
+  code-signed with a Developer ID or an Authenticode certificate; what the
+  install script checks is a SHA-256 checksum. The claim is gone, and the new
+  section says what a macOS user hits because of it: Gatekeeper refuses an
+  unsigned binary carrying a quarantine flag, which a browser download sets
+  and `curl` does not.
 
 ## 0.2.2 - 2026-09-15
 
@@ -175,7 +193,7 @@ that may never merge. They are not releases and are not listed here.
   `unsupported scheme socks5` in the message is the part that distinguishes
   it from the network being down.
 
-- `rand` moved from 0.8 to 0.10. No behaviour changes: the two places it is
+- `rand` moved from 0.8 to 0.10. No behavior changes: the two places it is
   used — the PKCE verifier and the OAuth `state` in `mapbox auth login` —
   draw from `ThreadRng` before and after, which `rand` declares a CSPRNG, and
   `thread_rng().gen()` becoming `random()` is a rename. Recorded because it
@@ -183,7 +201,7 @@ that may never merge. They are not releases and are not listed here.
   this release should be able to find it. Both are now covered by tests
   against RFC 7636, which they were not before.
 
-- Both installers now honour `MAPBOX_CLI_NO_TELEMETRY`, the name the binary
+- Both installers now honor `MAPBOX_CLI_NO_TELEMETRY`, the name the binary
   reads. They were left on the old `DISABLE_TELEMETRY` when the binary was
   renamed, so neither name silenced both halves: the documented variable
   stopped the CLI's markers but not the installer's, and the old one did the

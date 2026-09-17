@@ -164,7 +164,7 @@ pub fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mod
 
 /// The services to describe, or `None` for all of them.
 ///
-/// An unrecognised name is an error naming the alternatives rather than a
+/// An unrecognized name is an error naming the alternatives rather than a
 /// silent no-op: `--service style` is a typo, and writing a skill that
 /// describes nothing is a worse answer to it than refusing.
 fn requested_services(schema: &Schema, matches: &ArgMatches) -> Result<Option<Vec<String>>> {
@@ -867,7 +867,7 @@ const CELL_BUDGET: usize = 220;
 /// fit, and `crate::first_sentence` would cut `--output`'s at the `.` in
 /// "Output format." and throw away everything that says what the formats
 /// are. So the cut applies by length, to the text that would overflow.
-fn summarise(text: &str) -> String {
+fn summarize(text: &str) -> String {
     let whole = cell(text);
     if whole.len() <= CELL_BUDGET {
         return whole;
@@ -884,7 +884,7 @@ fn describe(arg: &Argument) -> String {
     let mut parts: Vec<String> = vec![];
 
     if let Some(description) = arg.description.as_deref() {
-        let summary = summarise(description);
+        let summary = summarize(description);
         if !summary.is_empty() {
             let ends_a_sentence = summary.ends_with('.') || summary.ends_with('!');
             parts.push(if ends_a_sentence {
@@ -1152,7 +1152,7 @@ fn split_example(line: &str) -> Vec<String> {
 ///
 /// So a heading in embedded prose is demoted to sit below the command's.
 /// Lines inside a fenced block are left exactly as they are — a `#` there is
-/// a shell comment or a colour, and rewriting one would corrupt the example
+/// a shell comment or a color, and rewriting one would corrupt the example
 /// it belongs to.
 fn demote_headings(text: &str) -> String {
     /// One level below the `###` a command heading uses.
@@ -1806,7 +1806,7 @@ mod tests {
 
     /// Every service gets a reference page, and every page belongs to a
     /// service — including the three hand-written ones, which is where the
-    /// cross-cutting behaviour an agent trips over actually lives.
+    /// cross-cutting behavior an agent trips over actually lives.
     #[test]
     fn every_service_has_a_reference_page() {
         let (_, _, files) = generated();
@@ -1986,7 +1986,7 @@ mod tests {
         assert_eq!(demote_headings("#hashtag"), "#hashtag");
         assert_eq!(demote_headings("plain prose"), "plain prose");
 
-        // A `#` inside a fence is a comment or a colour, not a heading.
+        // A `#` inside a fence is a comment or a color, not a heading.
         let fenced = "```bash\n# curl it\n```\n### After";
         assert_eq!(
             fenced.replace("### After", "#### After"),
@@ -2142,8 +2142,8 @@ mod tests {
 
         // A cell is escaped exactly once, whichever branch produced it.
         assert!(!describe(types).contains("\\\\|"));
-        assert_eq!(summarise("a | b"), "a \\| b");
-        assert_eq!(summarise("one\ntwo"), "one two");
+        assert_eq!(summarize("a | b"), "a \\| b");
+        assert_eq!(summarize("one\ntwo"), "one two");
 
         // And a help string that already says "repeatable" does not say it
         // twice.

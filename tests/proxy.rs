@@ -2,13 +2,13 @@
 //!
 //! Nothing in `src/` mentions a proxy: `http::build` never calls
 //! `.no_proxy()`, so `reqwest`'s own system-proxy detection applies and
-//! `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` are honoured. That
-//! is an important behaviour for anyone on a corporate network and it rests
+//! `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` are honored. That
+//! is an important behavior for anyone on a corporate network and it rests
 //! entirely on a library default nobody here chose — a single `.no_proxy()`
 //! added to fix something else would remove it, and no existing test would
 //! notice.
 //!
-//! So these tests assert the behaviour rather than the absence of a call. A
+//! So these tests assert the behavior rather than the absence of a call. A
 //! grep for `no_proxy` would pass just as well if the client were rebuilt
 //! somewhere else, or if a future `reqwest` changed its default.
 //!
@@ -18,7 +18,7 @@
 //! asked for. Proving a *negative* — that `HTTP_PROXY` alone does not carry an
 //! https request, or that `NO_PROXY` exempts a host — means the request goes
 //! to the real API instead, so those tests would put the internet in the suite
-//! to assert behaviour that belongs to `reqwest` rather than to this crate.
+//! to assert behavior that belongs to `reqwest` rather than to this crate.
 //! They are in `docs/commands.md` as prose instead.
 
 use std::io::{Read, Write};
@@ -124,7 +124,7 @@ fn accept_within(
 ///
 /// `env_remove` rather than `env_clear`, matching `tests/update_check.rs`.
 /// Clearing takes `SystemRoot` with it on Windows, and without that the
-/// socket and TLS stacks cannot initialise — so the CLI failed before it
+/// socket and TLS stacks cannot initialize — so the CLI failed before it
 /// could reach any proxy, which is what left the earlier version of this
 /// test waiting for a connection that was never going to come.
 fn mapbox() -> Command {
@@ -157,7 +157,7 @@ fn http_proxy(stream: &mut TcpStream) -> String {
         .to_string()
 }
 
-/// **The behaviour this file exists for.** An `HTTPS_PROXY` in the environment
+/// **The behavior this file exists for.** An `HTTPS_PROXY` in the environment
 /// is used, and the proxy is asked for the host the CLI was going to reach.
 #[test]
 fn an_https_proxy_in_the_environment_is_used() {

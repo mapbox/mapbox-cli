@@ -41,8 +41,18 @@ logged in.
 
 Four rules the compiler holds rather than a reviewer, declared in
 `Cargo.toml` with the reasoning beside each: no `unsafe`, no `println!`
-(stdout belongs to `output::emit`, the single place `--output` is honoured),
+(stdout belongs to `output::emit`, the single place `--output` is honored),
 no `dbg!`, no `todo!`/`unimplemented!`.
+
+Write American English: comments, documentation, commit messages, and every
+string the CLI prints. `prose_is_american_english` in
+`tests/source_guards.rs` reads the files and fails on the British spelling,
+so this is a test rather than something a reviewer has to notice, and the
+failure names the file and the line. It leaves two things alone on purpose.
+Fenced code blocks, because sample output and captured API responses are
+quoted rather than written, and rewriting a word inside one would make the
+document misquote its source. And the `cancelled` error code, which is a
+compatibility promise scripts may match on rather than a spelling.
 
 ## Where the commands come from
 

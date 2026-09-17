@@ -85,7 +85,7 @@ impl Mode {
     /// that cannot be arranged in a test, and every interesting case here is
     /// a combination of the two.
     ///
-    /// An unrecognised `requested` is treated as `auto`. Clap rejects those
+    /// An unrecognized `requested` is treated as `auto`. Clap rejects those
     /// before they reach us for both the flag and `MAPBOX_OUTPUT`; the one
     /// caller that can pass one is [`Mode::early`], which reads argv and the
     /// environment itself, before clap has had a chance to complain.
@@ -143,7 +143,7 @@ impl Mode {
 
 /// `MAPBOX_OUTPUT`, if it holds anything at all.
 ///
-/// An unrecognised value is passed through to [`Mode::resolve`], which falls
+/// An unrecognized value is passed through to [`Mode::resolve`], which falls
 /// back to `auto` — but it is worth saying so, since the caller plainly meant
 /// something by it.
 fn environment_request() -> Option<String> {
@@ -718,7 +718,7 @@ fn feature_collection_rows(value: &Value) -> Option<Vec<Value>> {
 /// `Null` is what all three row-builders — [`search_result_row`],
 /// [`feature_row`], [`tilequery_row`] — answer for a feature with no
 /// `properties` at all. An object with no fields is the same failure one step
-/// later: `properties` was there and held nothing that builder recognised.
+/// later: `properties` was there and held nothing that builder recognized.
 /// Both fall back the same way, because a numbered `(unnamed)` with no lines
 /// under it looks like a result that is genuinely blank rather than like a
 /// shape this renderer does not understand.
@@ -751,7 +751,7 @@ fn render_geocoder_list(value: &Value) -> Option<Rendered> {
 ///
 /// Note the asymmetry with [`render_batch_feature_list`], which refuses to
 /// render at all when a second key sits beside `batch`. There the extra key
-/// would be *lost* by rendering only what is recognised, so bailing out to
+/// would be *lost* by rendering only what is recognized, so bailing out to
 /// JSON is how nothing goes missing; here the extra key is the thing being
 /// carried through, so there is nothing to bail out for.
 fn attribution(value: &Value) -> Option<&str> {
@@ -1491,11 +1491,11 @@ pub fn emit_error(mode: Mode, err: &anyhow::Error) {
             // wrapped error keeps the context that explains it.
             None => json!({ "code": GENERIC_CODE, "message": format!("{err:#}") }),
         };
-        // Serialising a `json!` object cannot fail; fall back rather than
+        // Serializing a `json!` object cannot fail; fall back rather than
         // panic while already on the error path.
         let pretty = matches!(mode, Mode::Json { pretty: true });
         let line = encode(&payload, pretty)
-            .unwrap_or_else(|_| r#"{"code":"error","message":"unserialisable error"}"#.to_string());
+            .unwrap_or_else(|_| r#"{"code":"error","message":"unserializable error"}"#.to_string());
         eprintln!("{line}");
         return;
     }
@@ -1508,7 +1508,7 @@ pub fn emit_error(mode: Mode, err: &anyhow::Error) {
             }
             // The message is only ever one field of the body; print the rest
             // when there is a rest, so a person loses nothing that the old
-            // dump-the-body behaviour showed them.
+            // dump-the-body behavior showed them.
             if let Some(body) = e.body.as_ref().filter(|b| adds_detail(b)) {
                 if let Ok(pretty) = serde_json::to_string_pretty(body) {
                     eprintln!("{pretty}");
@@ -1524,8 +1524,8 @@ pub fn emit_error(mode: Mode, err: &anyhow::Error) {
             if let Some(request_id) = e.support_request_id() {
                 eprintln!("Request ID: {request_id} (quote this to Mapbox support)");
             }
-            eprint_labelled("Next", &e.next_actions);
-            eprint_labelled("Docs", &e.docs);
+            eprint_labeled("Next", &e.next_actions);
+            eprint_labeled("Docs", &e.docs);
         }
         None => eprintln!("Error: {err:#}"),
     }
@@ -1552,10 +1552,10 @@ fn print_tips(tips: &[String]) {
     }
 }
 
-/// A labelled group of lines on stderr. Nothing for an empty list, so the
+/// A labeled group of lines on stderr. Nothing for an empty list, so the
 /// caller needs no guard.
-fn eprint_labelled(label: &str, values: &[String]) {
-    for line in labelled_lines(label, values) {
+fn eprint_labeled(label: &str, values: &[String]) {
+    for line in labeled_lines(label, values) {
         eprintln!("{line}");
     }
 }
@@ -1565,7 +1565,7 @@ fn eprint_labelled(label: &str, values: &[String]) {
 /// `Next: mapbox styles list` reads as one thing; a second `Next:` on
 /// the line below reads as two unrelated ones. Continuation lines are
 /// indented to the label's width instead.
-fn labelled_lines(label: &str, values: &[String]) -> Vec<String> {
+fn labeled_lines(label: &str, values: &[String]) -> Vec<String> {
     values
         .iter()
         .enumerate()
@@ -1605,8 +1605,8 @@ mod tests {
     /// Two commands under one `Next:` have to read as two commands, not as
     /// one wrapped line and not as two unrelated labels.
     #[test]
-    fn a_second_labelled_line_is_aligned_under_the_first() {
-        let lines = labelled_lines(
+    fn a_second_labeled_line_is_aligned_under_the_first() {
+        let lines = labeled_lines(
             "Next",
             &[
                 "mapbox styles list-styles".to_string(),
@@ -1621,7 +1621,7 @@ mod tests {
                 "      mapbox auth whoami"
             ]
         );
-        assert!(labelled_lines("Next", &[]).is_empty());
+        assert!(labeled_lines("Next", &[]).is_empty());
     }
 
     #[test]
@@ -1862,13 +1862,13 @@ mod tests {
     }
 
     /// An empty row is the same failure as a missing `properties` object one
-    /// step later — the feature was there and nothing in it was recognised —
+    /// step later — the feature was there and nothing in it was recognized —
     /// and has to fall back the same way rather than print a numbered
     /// `(unnamed)` with nothing under it. `feature_collection_rows` and
     /// `tilequery_feature_rows` guard this; search was still checking only
     /// for `Null`.
     #[test]
-    fn a_search_feature_with_nothing_recognisable_falls_back_to_json() {
+    fn a_search_feature_with_nothing_recognizable_falls_back_to_json() {
         for properties in ["{}", r#"{"mapbox_id":"opaque-id-nobody-reads"}"#] {
             let fc = rows(&format!(
                 r#"{{"type":"FeatureCollection","features":[{{"properties":{properties}}}]}}"#
@@ -2259,12 +2259,12 @@ mod tests {
     }
 
     /// An empty row is the same failure as a missing `properties` object, one
-    /// step later: the feature was there and nothing in it was recognised.
+    /// step later: the feature was there and nothing in it was recognized.
     /// Both have to fall the whole collection back to JSON — a numbered
     /// `(unnamed)` with no lines under it reads as a result that is genuinely
     /// blank rather than as a shape this renderer does not understand.
     #[test]
-    fn a_feature_with_no_recognised_properties_falls_back_to_json() {
+    fn a_feature_with_no_recognized_properties_falls_back_to_json() {
         for properties in ["{}", r#"{"mapbox_id":"opaque-id-nobody-reads"}"#] {
             let fc = rows(&format!(
                 r#"{{"type":"FeatureCollection","features":[{{"properties":{properties}}}]}}"#
@@ -2852,7 +2852,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unrecognised_value_falls_back_to_auto() {
+    fn an_unrecognized_value_falls_back_to_auto() {
         assert_eq!(Mode::resolve("", true), Mode::Text);
         assert_eq!(Mode::resolve("yaml", false), Mode::Json { pretty: false });
     }
@@ -2862,7 +2862,7 @@ mod tests {
     }
 
     #[test]
-    fn every_spelling_clap_accepts_is_recognised_on_argv() {
+    fn every_spelling_clap_accepts_is_recognized_on_argv() {
         for line in [
             &["mapbox", "--output", "json", "styles", "list"][..],
             &["mapbox", "--output=json", "styles", "list"][..],

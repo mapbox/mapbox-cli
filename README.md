@@ -7,6 +7,7 @@ time from OpenAPI specs, so they always match the specs.
 
 - [Build from source](#build-from-source)
 - [Install a released binary](#install-a-released-binary)
+  - [Download the archive yourself](#download-the-archive-yourself)
 - [Commands](#commands)
   - [Auth](#auth)
     - [Named profiles](#named-profiles)
@@ -42,9 +43,9 @@ The OpenAPI specs the commands are generated from are vendored in
 
 ## Install a released binary
 
-Mapbox publishes signed builds for macOS, Linux and Windows from a separate
-repository. The install script detects your platform, checks a SHA-256
-checksum, and installs `mapbox`. No `sudo`, no admin rights:
+Mapbox publishes builds for macOS, Linux and Windows. The install script
+detects your platform, checks a SHA-256 checksum, and installs `mapbox`.
+No `sudo`, no admin rights:
 
 ```sh
 curl -fsSL https://cli.mapbox.com/install.sh | sh
@@ -59,6 +60,65 @@ sources; `scripts/test-install.sh` and `scripts/test-install.ps1` exercise
 them end to end without touching the network.
 
 Run `mapbox --help` once it's on your `PATH`.
+
+### Download the archive yourself
+
+Nothing about the install script is required. If piping one into a shell is
+not allowed where you work, the archives are ordinary HTTP downloads, and
+`manifest.json` lists every target with its checksum:
+
+```sh
+curl -fsSL https://cli.mapbox.com/latest/manifest.json
+```
+
+Five targets are published: `aarch64-apple-darwin`, `x86_64-apple-darwin`,
+`aarch64-unknown-linux-musl`, `x86_64-unknown-linux-musl` and
+`x86_64-pc-windows-msvc`. Pick yours, check it, then extract:
+
+```sh
+version=v0.2.1
+file=mapbox-${version}-aarch64-apple-darwin.tar.gz
+
+curl -fsSLO "https://cli.mapbox.com/${version}/${file}"
+curl -fsSL "https://cli.mapbox.com/${version}/SHA256SUMS" |
+    grep "$file" | shasum -a 256 -c -
+
+tar -xzf "$file"
+mv mapbox ~/.local/bin/
+```
+
+On Windows the archive is a `.zip` and PowerShell can read the manifest
+directly, so there is no text file to parse:
+
+```powershell
+$version = 'v0.2.1'
+$target  = 'x86_64-pc-windows-msvc'
+
+$manifest = Invoke-RestMethod "https://cli.mapbox.com/$version/manifest.json"
+$artifact = $manifest.artifacts.$target
+
+Invoke-WebRequest "https://cli.mapbox.com/$version/$($artifact.file)" -OutFile $artifact.file
+if ((Get-FileHash -Algorithm SHA256 $artifact.file).Hash -ine $artifact.sha256) {
+    throw 'checksum mismatch'
+}
+
+Expand-Archive $artifact.file -DestinationPath .
+```
+
+`Invoke-WebRequest` and `Get-FileHash` rather than `curl` and `sha256sum`:
+the first is an alias for something else in Windows PowerShell and neither of
+the others is guaranteed to be present.
+
+Use `latest` in place of the version for whatever is current. Each archive
+holds one file, the `mapbox` executable, so there is no directory to step
+into and nothing else to place. `~/.local/bin` is where the install script
+puts it too, and `MAPBOX_INSTALL_DIR` is the variable it reads if you prefer
+somewhere else.
+
+The macOS builds are not code-signed with a Developer ID. `curl` attaches no
+quarantine flag, which is why the commands above run, but a download through
+a browser does, and Gatekeeper will refuse an unsigned binary that carries
+one. Clear it with `xattr -d com.apple.quarantine mapbox`.
 
 ## Commands
 

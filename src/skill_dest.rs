@@ -630,7 +630,7 @@ pub fn from_matches(
 ) -> Result<Vec<Destination>> {
     let dir = matches.get_one::<PathBuf>(DIR_ARG).map(PathBuf::as_path);
     // Clap has already refused anything that is not one of the known
-    // spellings, so an unrecognised value here is impossible rather than
+    // spellings, so an unrecognized value here is impossible rather than
     // ignored.
     let requested: Vec<Agent> = matches
         .get_many::<String>(AGENT_ARG)
@@ -1069,7 +1069,7 @@ mod tests {
         );
     }
 
-    /// `$XDG_CONFIG_HOME` is honoured on every platform, and falls back to
+    /// `$XDG_CONFIG_HOME` is honored on every platform, and falls back to
     /// `~/.config` rather than to the OS config directory.
     // `env::set_var` is unsafe because another thread may be reading the
     // environment. This test is the only reader inside itself, it restores

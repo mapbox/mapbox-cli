@@ -53,7 +53,7 @@ that may never merge. They are not releases and are not listed here.
   one. The repair for a file blocking the credential directory offered `mv` and
   `export NAME="$(cat …)"`, which a Windows reader cannot run; it now gives
   `mv`/`Move-Item`/`move` and all four of `export`, fish's `set -gx`,
-  PowerShell's `$env: … Get-Content` and `cmd.exe`'s `set /p`, each labelled
+  PowerShell's `$env: … Get-Content` and `cmd.exe`'s `set /p`, each labeled
   with the shell it belongs to. The tip printed after a successful login no
   longer offers `export MAPBOX_USERNAME=…` either; it says what to set rather
   than how.

@@ -19,6 +19,24 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+### Fixed
+
+- The URL printed by `--debug`, and by a text-mode `--dry-run`, is now a URL.
+  Query values were concatenated raw, so any value containing a space rendered
+  with literal spaces and `curl` refused it outright — which is the one thing
+  that line is printed for. Found with `mapbox search forward --q "Dog
+  friendly coffee shops near me"`, an ordinary call now that the Search Box
+  API takes free text. The request itself was never affected: reqwest encodes
+  what it sends, and a JSON dry run keeps `url` and `query` as separate
+  fields, so only this rendering was wrong. Values are percent-encoded with
+  `%20` rather than form-urlencoding's `+`, and `,` `:` `/` `@` are kept
+  literal, so a coordinate or a style URI still reads as one.
+
+  It also stops a value from misrepresenting the request. A value holding `&`
+  used to split into another `name=value` pair, so the line claimed a
+  parameter the request never carried, and anyone pasting it sent something
+  different from what was being debugged.
+
 ## 0.2.2 - 2026-09-15
 
 ### Changed

@@ -562,7 +562,19 @@ fn with_page_context(err: anyhow::Error, next_page: Option<&NextPage>) -> anyhow
 fn redacted_url(url: &str, query: &[(String, String)]) -> String {
     let rendered: Vec<String> = query
         .iter()
-        .map(|(name, value)| format!("{name}={}", shown_value(name, value)))
+        .map(|(name, value)| {
+            let shown = shown_value(name, value);
+            // The token's stand-in is spliced in literally. It is not a value
+            // anyone sends, so encoding it would only turn an obvious
+            // placeholder into `%3Credacted%3E`, and the URL cannot be used
+            // until the reader puts their own token there regardless.
+            let shown = if name == ACCESS_TOKEN {
+                shown.to_string()
+            } else {
+                encode_query_value(shown)
+            };
+            format!("{}={shown}", encode_query_value(name))
+        })
         .collect();
 
     if rendered.is_empty() {
@@ -570,6 +582,41 @@ fn redacted_url(url: &str, query: &[(String, String)]) -> String {
     } else {
         format!("{url}?{}", rendered.join("&"))
     }
+}
+
+/// One query value, encoded so the rendered URL is a URL.
+///
+/// This existed as plain string concatenation, and the result was a line that
+/// could not be used for the one thing it is printed for. A free-text query —
+/// `--q "Dog friendly coffee shops near me"`, which the Search Box API now
+/// takes — rendered with literal spaces, and `curl` rejects that outright:
+/// the request the CLI itself made was fine, because reqwest encodes what it
+/// sends, but the URL beside it on stderr was not the URL that went out and
+/// could not be pasted anywhere.
+///
+/// `%20` rather than form-urlencoding's `+`. Both decode to a space at any
+/// server that reads the query as a form, but only `%20` means a space
+/// everywhere else, and `+` in a URL a person is reading is a character they
+/// have to stop and think about.
+///
+/// The kept set is the unreserved characters of RFC 3986 plus the four
+/// sub-delims and gen-delims that are legal in a query and appear in real
+/// values here: `,` in a coordinate pair or a bbox, `:` and `/` in a
+/// route-geometry or a style URI, `@` in a static-images overlay. Everything
+/// else is escaped, which matters most for `&`, `=` and `+` — left alone they
+/// change the shape of the query rather than a value in it.
+fn encode_query_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(byte as char);
+            }
+            b',' | b':' | b'/' | b'@' => out.push(byte as char),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
 }
 
 /// One query parameter's value, or the stand-in when it is the token.
@@ -1658,6 +1705,84 @@ mod tests {
             rendered,
             "https://api.mapbox.com/styles/v1/me?access_token=<redacted>&draft=true"
         );
+    }
+
+    /// The printed URL has to *be* a URL.
+    ///
+    /// Found by running the thing: the Search Box API takes free text now, so
+    /// `--q "Dog friendly coffee shops near me"` is an ordinary call, and the
+    /// URL beside it on stderr came out with literal spaces. `curl` answers
+    /// that with nothing at all — exit 3, no request made — which makes a
+    /// debugging aid useless for debugging.
+    ///
+    /// The request itself was always fine; reqwest encodes what it sends. It
+    /// was only this rendering, which is also the dry run's.
+    #[test]
+    fn a_free_text_query_renders_a_url_that_can_be_used() {
+        let query = [
+            ("access_token".to_string(), "sk.a-real-token".to_string()),
+            (
+                "q".to_string(),
+                "Dog friendly coffee shops near me".to_string(),
+            ),
+            ("proximity".to_string(), "-77.0336,38.8996".to_string()),
+        ];
+        let rendered = redacted_url("https://api.mapbox.com/search/searchbox/v1/forward", &query);
+
+        assert!(
+            rendered.contains("q=Dog%20friendly%20coffee%20shops%20near%20me"),
+            "{rendered}"
+        );
+        // A comma is legal in a query and carries meaning to a reader, so it
+        // survives: `proximity=-77.0336%2C38.8996` would be correct and worse.
+        assert!(
+            rendered.contains("proximity=-77.0336,38.8996"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("sk.a-real-token"), "{rendered}");
+
+        // The claim, checked rather than eyeballed: it parses, and every value
+        // comes back out the way it went in.
+        let parsed = reqwest::Url::parse(&rendered).expect("the rendered URL has to parse");
+        let back: Vec<(String, String)> = parsed
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        assert_eq!(
+            back,
+            vec![
+                ("access_token".to_string(), "<redacted>".to_string()),
+                (
+                    "q".to_string(),
+                    "Dog friendly coffee shops near me".to_string()
+                ),
+                ("proximity".to_string(), "-77.0336,38.8996".to_string()),
+            ]
+        );
+    }
+
+    /// A value cannot invent a parameter that was never sent.
+    ///
+    /// This is the half that is worse than ugly. Concatenated raw, a value
+    /// holding `&` splits into another `name=value` pair, so the line claims
+    /// the request carried something it did not — and anyone who pastes it
+    /// sends a different request than the one being debugged. `=` and `+`
+    /// are here for the same reason: one changes where a value starts, and
+    /// the other is read as a space by anything parsing a form.
+    #[test]
+    fn a_value_cannot_forge_another_query_parameter() {
+        let query = [(
+            "q".to_string(),
+            "coffee&limit=99&access_token=sk.theirs".to_string(),
+        )];
+        let rendered = redacted_url("https://api.mapbox.com/search/searchbox/v1/forward", &query);
+
+        let parsed = reqwest::Url::parse(&rendered).expect("parses");
+        let names: Vec<String> = parsed.query_pairs().map(|(k, _)| k.into_owned()).collect();
+        assert_eq!(names, vec!["q"], "one parameter went in: {rendered}");
+
+        let (_, value) = parsed.query_pairs().next().expect("the one pair");
+        assert_eq!(value, "coffee&limit=99&access_token=sk.theirs");
     }
 
     /// An unauthenticated call has no query at all, and a URL ending in `?`

@@ -145,6 +145,22 @@ same for the completion scripts.
 - **CI builds `--locked`.** What CI tests is the graph in `Cargo.lock`. Run
   without it locally, since a legitimate dependency change has to be able to
   write the lockfile, then commit the result in the same PR.
+- **Two things you cannot check from a Mac, and one that lies about it.**
+  `cargo check --target x86_64-pc-windows-msvc` does not work here, so
+  `#[cfg(windows)]` code is only ever compiled by CI. To check it locally,
+  lift it into a standalone file with stub consts and run `rustc` or
+  `clippy-driver` against that, with no Cargo in the way.
+
+  And confirm which toolchain you actually have: a Homebrew `rust` puts
+  `cargo` ahead of rustup's shim on `PATH`, and Homebrew's cargo does not read
+  `rust-toolchain.toml` at all. The pin below is then inert, and nothing says
+  so — `rustc --version` reporting `(Homebrew)` is the only tell.
+- **`actionlint` before pushing a workflow change.** Valid YAML is not a valid
+  workflow — `shell:` takes no expression context, for one — and a bad
+  workflow file fails with no job and no log to read.
+- **`mapbox --schema` beats `--help` for exploring.** One JSON document
+  describes every command, its arguments and the request each makes, rather
+  than a `--help` per command.
 - **Comments explain why, not what.** The density here is high and
   deliberate: a comment that records the failure a line prevents is what stops
   the next person removing it. Match the surrounding style rather than the

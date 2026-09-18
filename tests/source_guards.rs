@@ -376,6 +376,7 @@ fn prose_files() -> Vec<(String, String)> {
 
     for name in [
         "AGENTS.md",
+        "CLAUDE.md",
         "README.md",
         "CONTRIBUTING.md",
         "CHANGELOG.md",

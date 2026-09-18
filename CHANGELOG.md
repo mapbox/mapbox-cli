@@ -28,6 +28,57 @@ that may never merge. They are not releases and are not listed here.
   reads, for anyone whose employer does not allow piping a script into a
   shell.
 
+### Changed
+
+- The skill `mapbox generate-skills` writes now tells an agent which of the
+  three ways to authenticate it can actually use. It listed all three without
+  comment, so an agent with no token would read "credentials stored by
+  `mapbox auth login`" as an option and try it — a command that opens a
+  browser and waits for a person, which in a coding-agent session can only
+  fail. It now says to have `MAPBOX_ACCESS_TOKEN` set, and to ask for one
+  rather than reaching for `auth login`. Reported from a real session that hit
+  exactly this.
+
+- `mapbox generate-skills` now prints the command that removes what it wrote,
+  in both output modes, and the JSON carries it as `remove_with`. The write is
+  `generate-skills` and the undo is `agent-skills uninstall`, a differently
+  named command belonging to a different feature, so there was no way to get
+  from one to the other — a reader of `generate-skills --help` saw no way back.
+  Reported after an agent reached for `rm -rf` instead, had it refused by its
+  sandbox, and left untracked directories in a git working tree. A dry run does
+  not print it, since nothing was written. `--help`, the generated reference
+  page and the README say it too.
+
+- Advice that is a command to paste now names every shell instead of guessing
+  one. The repair for a file blocking the credential directory offered `mv` and
+  `export NAME="$(cat …)"`, which a Windows reader cannot run; it now gives
+  `mv`/`Move-Item`/`move` and all four of `export`, fish's `set -gx`,
+  PowerShell's `$env: … Get-Content` and `cmd.exe`'s `set /p`, each labeled
+  with the shell it belongs to. The tip printed after a successful login no
+  longer offers `export MAPBOX_USERNAME=…` either; it says what to set rather
+  than how.
+
+  Keying this on the operating system would have been wrong in both
+  directions, which is why it does not: PowerShell runs on macOS and Linux and
+  Git Bash runs on Windows. Each row also uses the name its shell owns rather
+  than one that may be aliased — `Move-Item` and `Get-Content` rather than `mv`
+  and `cat`, which resolve differently depending on what is installed.
+
+- The refusal from `mapbox auth login` with no terminal now names both ways
+  out. It said "Set MAPBOX_ACCESS_TOKEN for a script or a CI job", which
+  describes automation and assumes that is who is asking; a person working
+  through a coding agent hits this too, and hits it again when they try the
+  command themselves in that agent's shell, which has no terminal either. The
+  fix now leads with running it in a terminal window and keeps the token as the
+  answer for a script, a CI job or an agent.
+
+- A file sitting where the credential directory belongs now says so when it
+  looks like an access token, which the one older Mapbox tools left at
+  `~/.mapbox` does. The advice was to move it aside, with nothing to tell the
+  reader whether they were moving junk or a working credential; it now says
+  the token still works and gives the `MAPBOX_ACCESS_TOKEN` line that keeps
+  using it. The token itself is never printed, and a test holds that.
+
 ### Fixed
 
 - The README described the published builds as signed. They are not

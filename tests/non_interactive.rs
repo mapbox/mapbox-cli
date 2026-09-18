@@ -128,12 +128,23 @@ fn the_refusal_carries_a_code_and_a_fix() {
     assert_eq!(error_code(&out), "interactive_required");
     let value: serde_json::Value =
         serde_json::from_str(stderr(&out).trim()).expect("JSON on stderr");
+    let fix = value["fix"].as_str().unwrap_or_default();
     assert!(
-        value["fix"]
-            .as_str()
-            .is_some_and(|fix| fix.contains("MAPBOX_ACCESS_TOKEN")),
-        "the fix is the actionable half, and the only action that helps here \
-         is a token: {}",
+        fix.contains("MAPBOX_ACCESS_TOKEN"),
+        "the fix is the actionable half, and a token is what unblocks a script, \
+         a CI job or an agent: {}",
+        stderr(&out)
+    );
+    // The other way out, and the one this used to omit. A person working
+    // through a coding agent lands here, and so does that person when they try
+    // the command themselves in the agent's shell — which has no terminal
+    // either, so it fails identically. For them the token is the workaround and
+    // a terminal window is the answer, and a fix that names only the token
+    // reads as "you are automation" to somebody who is not.
+    assert!(
+        fix.contains("terminal"),
+        "a human who can open a terminal is told to set an environment \
+         variable instead: {}",
         stderr(&out)
     );
     // Both ways out are changes to how the command is invoked, so there is no

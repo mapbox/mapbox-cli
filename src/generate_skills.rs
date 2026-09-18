@@ -111,7 +111,12 @@ pub fn command() -> Command {
              committed and a diff means the CLI changed. Nothing here reaches the \
              network, and no token is needed.\n\n\
              With no flags, writes into the project directory of every agent whose \
-             home directory is present."
+             home directory is present — so a run usually writes several places, \
+             all of them named in the output.\n\n\
+             `mapbox agent-skills uninstall mapbox-cli` removes every copy again. \
+             Reach for that rather than deleting the directories by hand: it knows \
+             all of the places this command writes to, and a sandboxed agent is \
+             often allowed to run it when it is not allowed to remove files."
         ))
         .args(skill_dest::args())
         .arg(
@@ -478,7 +483,13 @@ fn render_body(
         out.push_str(&format!("{}. {prose}\n", index + 1));
     }
     out.push_str(
-        "\nThe account a URL asks for is separate from the token: pass `--username`/`-u`, \
+        "\nIf you are an agent, step 2 is the one that works: have \
+         `MAPBOX_ACCESS_TOKEN` set before running anything, and ask the person you are \
+         working for to provide one from account.mapbox.com if it is missing. Do not \
+         reach for `mapbox auth login` when a command reports no token — it cannot \
+         succeed without a human at a browser, and asking is faster than finding that \
+         out.\n\n\
+         The account a URL asks for is separate from the token: pass `--username`/`-u`, \
          set `MAPBOX_USERNAME`, or let a stored login supply it. A command whose URL has \
          an account placeholder cannot run without one.\n\n\
          `--use-login` removes step 2, and only step 2 — a `--token` typed on the command \
@@ -1210,7 +1221,10 @@ fn token_precedence() -> [(crate::auth::TokenSource, &'static str); 3] {
         (
             TokenSource::Login,
             "Credentials stored by `mapbox auth login`, refreshed automatically when \
-             stale. `--profile <NAME>` picks which set.",
+             stale. `--profile <NAME>` picks which set. **`auth login` is the one \
+             command here you cannot run.** It opens a browser and waits for a person \
+             to approve, so without a terminal it refuses with `interactive_required` \
+             rather than hanging. Use step 2.",
         ),
     ]
 }
@@ -1377,6 +1391,24 @@ fn write_tree(root: &Path, files: &[GeneratedFile]) -> Result<()> {
     Ok(())
 }
 
+/// The command that removes what this one wrote.
+///
+/// Printed with the destinations, and it exists because leaving it out cost
+/// somebody real work. A coding agent generated skills into a project, found
+/// them redundant, and reached for `rm -rf` — which its sandbox refused,
+/// leaving untracked directories in a git working tree for a human to clear
+/// by hand. The undo was there the whole time; nothing pointed at it.
+///
+/// Nothing *would* have. The command that writes is `generate-skills` and the
+/// command that removes is `agent-skills uninstall`, which is named for a
+/// different feature and documented on a different page. No amount of reading
+/// `generate-skills --help` gets you there.
+///
+/// It is also the more correct cleanup than the one a person would type: a
+/// default run writes to every agent it detects, so the `rm -rf` in that
+/// report named two directories where three had been written.
+const HOW_TO_REMOVE: &str = "Remove them with: mapbox agent-skills uninstall mapbox-cli";
+
 /// What was written, or what would have been.
 fn report(mode: Mode, plans: &[Plan], dry_run: bool) -> Result<()> {
     let mut lines: Vec<String> = vec![];
@@ -1400,9 +1432,20 @@ fn report(mode: Mode, plans: &[Plan], dry_run: bool) -> Result<()> {
         }
     }
 
+    // After the list rather than before it: on a dry run the reader has not
+    // written anything yet, and on a real one this is what they need next.
+    if !dry_run {
+        lines.push(String::new());
+        lines.push(HOW_TO_REMOVE.to_string());
+    }
+
     let json = json!({
         "dry_run": dry_run,
         "skill": SKILL_NAME,
+        // The same fact where a program reads, not only where a person does —
+        // an agent is the caller that most needs it and the least likely to
+        // be parsing the text rendering.
+        "remove_with": (!dry_run).then_some("mapbox agent-skills uninstall mapbox-cli"),
         "destinations": plans
             .iter()
             .map(|plan| json!({

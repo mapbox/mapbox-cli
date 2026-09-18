@@ -266,6 +266,17 @@ Skill](https://code.claude.com/docs/en/skills): `.claude/skills` for
 Claude Code, `.agents/skills` for Codex. `--agent`, `--global`, `--dir`,
 and `--service` narrow it; `--dry-run` lists files without writing them.
 
+Without `--global` it writes into the current project, once per agent it
+finds, and it prints every directory it used. To take them out again:
+
+```sh
+mapbox agent-skills uninstall mapbox-cli
+```
+
+That removes every copy this command wrote, which is more than deleting the
+directories by hand usually catches — a default run writes for each agent on
+the machine, not just the one you had in mind.
+
 ### Tileset CLI
 
 ```sh

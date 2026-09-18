@@ -457,3 +457,71 @@ fn no_token_is_needed_and_the_help_says_what_it_does() {
         assert!(help.contains(flag), "--help does not mention {flag}");
     }
 }
+
+/// Writing tells you how to unwrite, in both renderings.
+///
+/// From a real report: an agent generated skills into a project, found them
+/// redundant, and reached for `rm -rf` — which its sandbox refused, leaving
+/// untracked directories in a git working tree for a person to clear by hand.
+/// The undo existed the whole time and nothing pointed at it, and nothing
+/// would have: the command that writes is `generate-skills` and the command
+/// that removes is `agent-skills uninstall`, named for a different feature.
+///
+/// Both renderings, because the caller who most needs this is the one least
+/// likely to be reading the text one.
+#[test]
+fn what_was_written_carries_the_command_that_removes_it() {
+    const REMOVAL: &str = "mapbox agent-skills uninstall mapbox-cli";
+
+    let dir = scratch("removal-hint");
+    let out = dir.join("out");
+    std::fs::create_dir_all(&out).expect("create the destination");
+    let target = out.to_str().unwrap();
+
+    let text = stdout(&generate(
+        "removal-hint-text",
+        &["generate-skills", "--dir", target, "-o", "text"],
+    ));
+    assert!(
+        text.contains(REMOVAL),
+        "the text output does not say how to remove what it wrote: {text}"
+    );
+
+    let json = stdout(&generate(
+        "removal-hint-json",
+        &["generate-skills", "--dir", target, "--force", "-o", "json"],
+    ));
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("JSON on stdout");
+    assert_eq!(
+        parsed["remove_with"], REMOVAL,
+        "the JSON output does not carry it: {json}"
+    );
+}
+
+/// And a dry run does not, because nothing is there to remove.
+///
+/// Advice to undo something that did not happen is noise, and worse, it
+/// implies the write went ahead.
+#[test]
+fn a_dry_run_does_not_offer_to_remove_what_it_did_not_write() {
+    let dir = scratch("removal-hint-dry");
+    let out = dir.join("out");
+    std::fs::create_dir_all(&out).expect("create the destination");
+
+    let json = stdout(&generate(
+        "removal-hint-dry",
+        &[
+            "generate-skills",
+            "--dry-run",
+            "--dir",
+            out.to_str().unwrap(),
+            "-o",
+            "json",
+        ],
+    ));
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("JSON on stdout");
+    assert!(
+        parsed["remove_with"].is_null(),
+        "a dry run offered a removal for files it never wrote: {json}"
+    );
+}

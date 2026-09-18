@@ -598,6 +598,31 @@ try {
     Expect-Out 'Installed mapbox 0.1.0-dev.abc1234' 'installs that exact version'
     Expect-Out "channel  $PinnedVersion" 'names the channel it resolved'
 
+    # The channel's directories carry a leading `v`. Every place a person
+    # reads a version from (`mapbox --version`, CHANGELOG.md, Cargo.toml)
+    # shows it without one, so the spelling somebody copies has to work. It
+    # used to 403, which reads as "not allowed" rather than "no such version".
+    #
+    # ASCII only, deliberately: PSScriptAnalyzer's
+    # PSUseBOMForUnicodeEncodedFile fails a non-ASCII .ps1 that has no BOM,
+    # and an em-dash in this comment is what turned CI red the first time.
+    Start-Case 'MAPBOX_CLI_VERSION accepts a version without the leading v'
+    New-CaseEnv 'pinned-bare'
+    $env:MAPBOX_CLI_VERSION = $PinnedVersion -replace '^v', ''
+    Invoke-Installer
+    Expect-Status 0 'exits 0'
+    Expect-Out 'Installed mapbox 0.1.0-dev.abc1234' 'installs that exact version'
+    Expect-Out "channel  $PinnedVersion" 'and resolved the v-prefixed directory'
+
+    # `latest` starts with a letter, so nothing is prepended. Getting this
+    # wrong would break the default install rather than an edge case.
+    Start-Case 'a channel name that is not a version is left alone'
+    New-CaseEnv 'pinned-latest'
+    $env:MAPBOX_CLI_VERSION = 'latest'
+    Invoke-Installer
+    Expect-Status 0 'exits 0'
+    Expect-Out 'channel  latest' 'asked for latest, not vlatest'
+
     Start-Case 'reinstalling reports the version it replaced'
     New-CaseEnv 'upgrade'
     New-FakeBinary (Join-Path $script:BinDir 'mapbox.exe') 'mapbox 0.0.1'

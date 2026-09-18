@@ -104,6 +104,18 @@ that may never merge. They are not releases and are not listed here.
   parameter the request never carried, and anyone pasting it sent something
   different from what was being debugged.
 
+- `MAPBOX_CLI_VERSION` now accepts a version with or without the leading `v`.
+  The channel's directories are named `v0.2.1`, but every place a person reads
+  a version from shows it without one — `mapbox --version`, this file,
+  `Cargo.toml` — so the spelling somebody would copy was the one that failed,
+  and it failed as a bare `403` from S3 on a path that does not exist. That
+  reads as "you are not allowed" rather than "no such version". `latest` and
+  any other non-numeric channel name are untouched. Both installers, both
+  covered by their suites.
+
+- `MAPBOX_CLI_VERSION` and `MAPBOX_INSTALL_DIR` are documented in the README,
+  which never mentioned either of them.
+
 ## 0.2.2 - 2026-09-15
 
 ### Changed

@@ -375,6 +375,8 @@ fn prose_files() -> Vec<(String, String)> {
     let mut out = vec![];
 
     for name in [
+        "AGENTS.md",
+        "CLAUDE.md",
         "README.md",
         "CONTRIBUTING.md",
         "CHANGELOG.md",

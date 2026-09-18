@@ -158,22 +158,6 @@ components:
       schema:
         type: string
         example: pin-s+ff0000(-118.2437,34.0522),pin-s+0000ff(-118.2537,34.0422)
-    bbox:
-      name: bbox
-      in: path
-      required: true
-      description: |
-        Bounding box as `[minlon,minlat,maxlon,maxlat]`. Coordinates are
-        WGS84 longitude/latitude. `minlon` must be less than `maxlon` and
-        `minlat` less than `maxlat`, otherwise the request returns `422`.
-
-        The square brackets may be sent literally or percent-encoded as `%5B`
-        and `%5D`; both are accepted. Note that `curl` treats `[` and `]` as
-        glob characters, so a literal bounding box on the command line needs
-        either the percent-encoded form or the `--globoff` flag.
-      schema:
-        type: string
-        example: '[-77.043686,38.892035,-76.933086,38.942035]'
     lon:
       name: lon
       in: path
@@ -311,24 +295,6 @@ components:
       schema:
         type: string
         example: waterway-label
-    padding:
-      name: padding
-      in: query
-      required: false
-      description: |
-        Padding in pixels around the overlay or bounding box. Accepts 1 to 4
-        comma-separated integers (CSS shorthand order: top, right, bottom,
-        left). Only applies to `auto` and bounding box positioning; using it on
-        any other endpoint returns `422`.
-
-        Left plus right padding must be less than `width`, and top plus bottom
-        padding must be less than `height`, otherwise the request returns
-        `422`.
-
-        Defaults to 5% of the smallest dimension, up to a maximum of 12 pixels.
-      schema:
-        type: string
-        example: 50,20,50,20
     addlayer:
       name: addlayer
       in: query

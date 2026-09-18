@@ -19,14 +19,8 @@ servers:
 - url: https://api.mapbox.com
   description: Production server
 tags:
-- name: health
-  description: Service-level health and uptime probes
 - name: tiles
   description: Raster tile delivery endpoints (v4)
-- name: grid
-  description: UTFGrid JSON endpoints (v4 and legacy)
-- name: legacy
-  description: Deprecated or legacy endpoints (API versions 1–3)
 security:
 - ApiKeyAuth: []
 paths:

@@ -29,10 +29,10 @@ pub struct Operation {
     /// takes one at all.
     pub body: Option<RequestBody>,
     pub base_url: String,
-    /// Set when this operation's spec-documented required scope does not exist
-    /// as a registrable OAuth scope (see UNSUPPORTED_OPERATIONS below). A token
-    /// obtained via `mapbox auth login` can never carry it, so the command refuses to
-    /// run instead of failing with a confusing 403 at request time.
+    /// Set when the operation needs a scope that isn't registrable as OAuth
+    /// (see `UNSUPPORTED_OPERATIONS` below). A `mapbox auth login` token can
+    /// never carry that scope, so the command refuses to run instead of
+    /// failing later with a confusing 403.
     pub disabled_scope: Option<&'static str>,
     /// The operation that shows one of the things this one lists, when the
     /// spec describes such a pair. Filled in by [`link_detail_operations`].
@@ -50,97 +50,93 @@ pub struct Operation {
     pub deprecated: bool,
     /// Set for an operation listed in [`WITHHELD_OPERATIONS`].
     withheld: bool,
-    /// Extra, visible names this command answers to and lists in `--help`
-    /// and `--schema` — see [`COMMAND_ALIASES`]. Empty for every operation
-    /// but the one whose spec-generated name is worth keeping alongside a
+    /// Extra, visible names this command answers to — listed in `--help`
+    /// and `--schema`. See [`COMMAND_ALIASES`]. Empty except for the one
+    /// operation whose spec-generated name is worth keeping alongside a
     /// better one.
     pub aliases: Vec<&'static str>,
-    /// Extra names this command answers to but does not offer anyone — also
-    /// from [`COMMAND_ALIASES`]. A caller already using one keeps working,
-    /// and nothing publishes it: not `--help`, not `--schema`, not the docs
-    /// page. Only `clap` and this field know it is there, which is why
-    /// `api_command_surface`'s fixture reads the built command tree rather
-    /// than the schema — the schema cannot see one by design.
+    /// Extra names this command answers to but doesn't advertise anywhere
+    /// — not `--help`, not `--schema`, not the docs page. Also from
+    /// [`COMMAND_ALIASES`]. A caller already using one keeps working. Only
+    /// `clap` and this field know it exists, which is why
+    /// `api_command_surface`'s fixture reads the built command tree instead
+    /// of the schema, which can't see hidden aliases by design.
     ///
-    /// `String`, not `&'static str`: what lands here is the *generated*
-    /// name (`camel_to_kebab` of the spec's own `operationId`), computed at
+    /// `String`, not `&'static str`, because this holds the *generated*
+    /// name (`camel_to_kebab` of the spec's `operationId`), computed at
     /// parse time rather than written in the table.
     pub hidden_aliases: Vec<String>,
 }
 
-/// (service, operationId, the media type the API actually requires) for
-/// bodies whose spec is wrong.
+/// (service, operationId, the media type the API actually wants) for
+/// operations whose spec gets the content type wrong.
 ///
-/// Not a workaround for a hard case — a correction. `starFile` declares
-/// `application/json` with a `boolean` schema, and the service answers
-/// `400 Must be plaintext true or false` to exactly that. Sending the same
-/// `true` as `text/plain` returns 204. Verified with curl against
-/// production: `application/json` and no content type both fail, `text/plain`
-/// succeeds.
+/// `starFile`'s spec says `application/json` with a `boolean` schema, but
+/// the service rejects that with `400 Must be plaintext true or false`.
+/// Sending the same `true` as `text/plain` works (204). Verified with curl
+/// against production.
 ///
-/// Kept as data rather than a branch in the executor so the divergence is
-/// visible next to the operation it belongs to, and so a spec fix is a
-/// deletion from this list.
+/// Kept as a table instead of a branch in the executor, so the fix is
+/// visible next to the operation it's for, and removing it later is just
+/// deleting a row.
 const BODY_CONTENT_TYPE_OVERRIDES: &[(&str, &str, &str)] = &[("styles", "starFile", "text/plain")];
 
 /// The media types an operation's request body may be sent as.
 ///
-/// This used to be a bare `has_body: bool`, which threw the declared type
-/// away and left the executor with one choice: call everything
-/// `application/json`. That is right for the twenty JSON operations and
-/// wrong for the three that are not — `uploadSpriteImage` wants raw SVG
-/// bytes, `batchUploadSprite` a multipart form, `uploadChunk` raw bytes —
-/// so those had no way to send a body at all.
+/// This used to be a plain `has_body: bool`, which forced the executor to
+/// always send `application/json`. That's right for most operations but
+/// wrong for three: `uploadSpriteImage` (raw SVG bytes), `batchUploadSprite`
+/// (multipart form), and `uploadChunk` (raw bytes). Those three had no way
+/// to send a body at all under the old design.
 #[derive(Debug, Clone)]
 pub struct RequestBody {
-    /// Whether the operation refuses to work without one.
+    /// Whether the operation refuses to work without a body.
     ///
-    /// Read but not enforced: clap still accepts a bodyless invocation of
-    /// `create-style`, and turning that into a local error is a change to
-    /// what the CLI rejects rather than to what it describes. It is here so
-    /// `--schema` can say which bodies the API insists on — thirteen of the
-    /// sixteen body-carrying operations the CLI exposes, which between them
-    /// declare eighteen flags — instead of calling every one of them
-    /// optional.
+    /// We read this but don't enforce it: clap still lets you run
+    /// `create-style` with no body. Rejecting that locally would change what
+    /// the CLI refuses, not just what it describes. This field exists so
+    /// `--schema` can correctly say which bodies the API requires, instead
+    /// of calling all of them optional.
     pub required: bool,
     /// Declared media types, in the order the spec lists them. Usually one;
     /// `initUpload` declares both `application/octet-stream` and
     /// `application/json`.
     pub content_types: Vec<String>,
-    /// The multipart property the files go under — `images` for
-    /// `batchUploadSprite`. Read from the schema rather than hard-coded:
-    /// it is the field name the API matches on, so guessing it wrong fails
-    /// at request time with nothing to point at.
+    /// The multipart field the files go under — `images` for
+    /// `batchUploadSprite`. Read from the schema instead of hard-coded,
+    /// since the API matches on this field name exactly; guessing it wrong
+    /// would fail the request with no clear error.
     pub multipart_field: Option<String>,
 }
 
 pub const MULTIPART: &str = "multipart/form-data";
 
-/// The path placeholders the global `--username` fills, rather than a
-/// parameter of their own.
+/// The path placeholders that the global `--username` flag fills, rather
+/// than each becoming its own parameter.
 ///
-/// One list, because three places act on it and they have to agree:
-/// `parse_spec` drops the matching parameters, `executor::execute`
-/// substitutes them, `link_detail_operations` refuses to treat them as an
-/// identifier, and `crate::schema` describes the flag that fills them. A
-/// fourth spelling appearing in a spec and being added to only some of those
-/// is the failure this prevents; `every_url_placeholder_has_an_argument`
-/// fails the build if the schema and this list ever come apart.
+/// Kept as one shared list because four places need to agree on it:
+/// `parse_spec` drops these as parameters, `executor::execute` fills them
+/// in, `link_detail_operations` won't treat them as an identifier, and
+/// `crate::schema` describes the flag that fills them. If a spec used a new
+/// spelling and only some of those four places knew about it, things would
+/// break inconsistently. `every_url_placeholder_has_an_argument` fails the
+/// build if this list and the schema ever disagree.
 pub const ACCOUNT_PLACEHOLDERS: [&str; 3] = ["username", "owner", "account"];
 
 impl RequestBody {
     /// Whether `--data` applies.
     ///
     /// An empty list means the spec declared a `requestBody` without saying
-    /// what goes in it. The CLI has always assumed JSON there, and still
-    /// does — the alternative is withdrawing a flag that works today.
+    /// what type it is. The CLI has always assumed JSON in that case, and
+    /// still does — the alternative would be removing a flag that works
+    /// today.
     pub fn accepts_json(&self) -> bool {
         self.content_types.is_empty() || self.content_types.iter().any(|ct| is_json(ct))
     }
 
-    /// The media type a `--file` would be sent as: the first declared type
-    /// that is not JSON. `None` when the body is JSON-only, which is what
-    /// makes `--file` a flag those commands never show.
+    /// The media type `--file` would send: the first declared type that
+    /// isn't JSON. `None` for a JSON-only body — that's why `--file` never
+    /// shows up on those commands.
     pub fn file_content_type(&self) -> Option<&str> {
         self.content_types
             .iter()
@@ -154,10 +150,10 @@ impl RequestBody {
             .is_some_and(|ct| essence(ct) == MULTIPART)
     }
 
-    /// The media type for a body that is text the caller types, not a file.
+    /// The media type for a body that's typed text, not a file.
     ///
-    /// `--data` carries it, unparsed: `starFile`'s whole body is the word
-    /// `true`, and there is nothing to be gained by making that a file.
+    /// `--data` carries it as-is. `starFile`'s whole body is just the word
+    /// `true`, so there's no point making that a file.
     pub fn text_content_type(&self) -> Option<&str> {
         self.content_types
             .iter()
@@ -191,51 +187,50 @@ fn is_json(content_type: &str) -> bool {
     essence == "application/json" || essence.ends_with("+json")
 }
 
-/// (service name, operationId, why) for operations this CLI declines to
+/// (service name, operationId, why) for operations this CLI chooses not to
 /// expose.
 ///
-/// Distinct from `UNSUPPORTED_OPERATIONS`, which lists what the platform
-/// makes impossible. These would work; we choose not to offer them, so the
-/// reason has to be written down or a later reader will "fix" the omission.
+/// Different from `UNSUPPORTED_OPERATIONS`, which lists what the platform
+/// makes impossible. These operations would work fine — we just chose not
+/// to offer them — so the reason has to be written down, or a later reader
+/// might "fix" the omission by mistake.
 const WITHHELD_OPERATIONS: &[(&str, &str, &str)] = &[
     // "Lock or unlock a style from editing and deletion." Unlocking is the
-    // dangerous half: it turns a protected style into a deletable one, and a
-    // CLI makes that a single line with no confirmation.
+    // dangerous half: it turns a protected style into a deletable one, and
+    // a CLI would make that a single line with no confirmation.
     //
     // Verified 2026-09-08 against production with a real token holding
-    // `styles:protect` (already registrable): the endpoint
-    // works — `PUT .../protected` returned 200. It rejects a JSON body
+    // `styles:protect` (already registrable): the endpoint works —
+    // `PUT .../protected` returns 200. It rejects a JSON body
     // (`{"protected":false}` → 400 "Must be plaintext true or false") and
-    // wants the literal string `true`/`false` instead. So this is not
-    // platform-blocked the way the admin-only style endpoints below are —
-    // it is withheld purely for the safety reason above, not for lack of
-    // access.
+    // wants the literal string `true`/`false` instead. So unlike the
+    // admin-only endpoints below, this isn't blocked by the platform — we're
+    // withholding it purely for the safety reason above.
     (
         "styles",
         "setStyleProtected",
         "unlocks a style for deletion",
     ),
-    // Admin-only, and gated on a role rather than a scope: a token from
-    // `mapbox auth login` gets a bare 403 with no scope named, including for
-    // an account that belongs to Mapbox.
+    // Admin-only, gated by role rather than scope. A `mapbox auth login`
+    // token gets a bare 403 with no scope named, even for a Mapbox-owned
+    // account.
     ("styles", "adminGetStyle", "admin-only endpoint"),
     ("styles", "adminUpdateStyle", "admin-only endpoint"),
-    // 3D model assets are a different product surface from the glyph and
-    // metadata endpoints the rest of `fonts` covers, and nothing here has
-    // ever fetched one — no account reachable from this CLI has a model to
-    // ask for, so the command would ship untested.
+    // 3D model assets are a different product from the glyph/metadata
+    // endpoints the rest of `fonts` covers, and we've never fetched one —
+    // no account we can reach has a model to test against, so shipping this
+    // command would mean shipping it untested.
     //
-    // Verified 2026-09-08: this is purely a test-data gap, not a scope
-    // problem. A request for a nonexistent model against production returned
-    // 404 "Model ... not found", not 403 — confirming the endpoint only
-    // needs `fonts:read`, which `DEFAULT_SCOPES` already requests.
+    // Verified 2026-09-08: this is a test-data gap, not a scope problem. A
+    // request for a nonexistent model returned 404 "Model ... not found",
+    // not 403 — so the endpoint only needs `fonts:read`, which
+    // `DEFAULT_SCOPES` already requests.
     ("fonts", "getModelAsset", "not supported yet"),
-    // The v1-v3 API is dead to this CLI. `getLegacyTile` answers 410 for
-    // every request, which the spec agrees is correct — it documents the
-    // endpoint as deprecated and no longer supported. `getLegacyGrid`
-    // rejects a token from `mapbox auth login` with a JSONP-wrapped 401,
-    // for every version and every tileset, including the one whose grid
-    // `getGrid` returns. Neither can succeed, so neither is a command.
+    // The v1-v3 API is dead to this CLI. `getLegacyTile` answers 410 to
+    // every request — the spec agrees, marking it deprecated and no longer
+    // supported. `getLegacyGrid` rejects a `mapbox auth login` token with a
+    // JSONP-wrapped 401, for every version and tileset, including the one
+    // `getGrid` works on. Neither can succeed, so neither is a command.
     (
         "maps",
         "getLegacyGrid",
@@ -250,64 +245,59 @@ fn withheld(service_name: &str, operation_id: &str) -> bool {
         .any(|(svc, op, _)| *svc == service_name && *op == operation_id)
 }
 
-/// Some commands get an ugly name because we build `command_name` from the
-/// spec's own `operationId`, and once in a while that `operationId` is bad
-/// — tilequery's names its one operation after its own URL path instead of
-/// after what it does. We can't fix the spec, so this table gives that
-/// command a better name to go by instead.
+/// We build `command_name` from the spec's own `operationId`, and sometimes
+/// that gives a command an ugly name — tilequery names its one operation
+/// after its URL path instead of what it does. We can't fix the spec, so
+/// this table gives that command a better name instead.
 ///
 /// Table shape: `(service, operationId, alias, show_generated_name)`.
-///   - `service` / `operationId`: which operation this is about — same key
-///     `WITHHELD_OPERATIONS` and `BODY_CONTENT_TYPE_OVERRIDES` use.
+///   - `service` / `operationId`: which operation this is about — the same
+///     key `WITHHELD_OPERATIONS` and `BODY_CONTENT_TYPE_OVERRIDES` use.
 ///   - `alias`: the better name.
-///   - `show_generated_name`: `true` keeps the generated name as the command
-///     and makes the alias a second, equally visible way to write it.
-///     `false` swaps them — the alias becomes the command, and the generated
-///     name survives only as a hidden alias: it still runs, and nothing
-///     names it anywhere, `--help`, `--schema` and `docs/commands.md`
-///     alike.
+///   - `show_generated_name`: `true` keeps the generated name as the
+///     command and adds the alias as a second, equally visible spelling.
+///     `false` swaps them: the alias becomes the command, and the
+///     generated name survives only as a hidden alias — it still runs, but
+///     nothing publishes it (not `--help`, not `--schema`, not
+///     `docs/commands.md`).
 ///
-/// Empty today. Its one row renamed tilequery's operation to `get-tilequery`,
-/// and [`CLI_COMMAND_EXTENSION`] now names that operation `tilequery get`
-/// directly — a renaming table beside a renaming extension is two answers to
-/// one question. The mechanism stays because the extension cannot express
-/// the other half of what a row does: keep a retired spelling running while
-/// publishing it nowhere.
+/// Empty today. Its one row used to rename tilequery's operation to
+/// `get-tilequery`; [`CLI_COMMAND_EXTENSION`] now names that operation
+/// `tilequery get` directly, making the row redundant. The mechanism stays
+/// because the extension can't do the other thing a row can: keep an old
+/// spelling working while publishing it nowhere.
 const COMMAND_ALIASES: &[(&str, &str, &str, bool)] = &[];
 
 /// The OpenAPI extension that says where an operation's command belongs:
 /// `x-mapbox-cli-command: [service, path_segment...]`.
 ///
-/// A maintainer-only step writes it onto every operation it keeps, from a
-/// per-operation decision record for what belongs in this CLI's command
-/// surface. So `openapi/` carries the whole answer and nothing here has a
-/// second opinion about it.
-/// Two consequences nothing else in this file would lead you to expect:
+/// This is written onto every operation `openapi/` keeps, so `openapi/`
+/// carries the full answer and nothing here second-guesses it. Two things
+/// to know:
 ///
-///   - **The first element is the real service, and it need not be the one
-///     the spec file is wired under.** `styles.yaml`'s sprite operations name
+///   - **The first element is the real service, and doesn't have to match
+///     the spec file it came from.** `styles.yaml`'s sprite operations name
 ///     `sprites`; the one operation in `vectortiles.yaml` names `tilesets`.
-///     A service in [`MAPBOX_SPEC_ENTRIES`] can therefore end up with no
-///     operations at all, and a service nothing wires can end up with five.
-///     [`regroup_by_service`] is where that happens, and it is the reason
-///     `parse_spec`'s answer is an intermediate rather than the surface.
-///   - **The rest is a path, not a name.** More than one segment nests:
-///     `["draft", "get"]` puts the command under an intermediate `draft`
-///     group, as `mapbox styles draft get`.
+///     So a service in [`MAPBOX_SPEC_ENTRIES`] can end up with zero
+///     operations, while a service no file is wired under can end up with
+///     five. [`regroup_by_service`] does that regrouping — which is why
+///     `parse_spec`'s output is an intermediate step, not the final surface.
+///   - **The rest is a path, not a single name.** More than one segment
+///     nests: `["draft", "get"]` puts the command under a `draft` group, as
+///     `mapbox styles draft get`.
 ///
-/// Absent from everything in `custom-openapi/`, which the decision record
-/// does not cover. Those keep the pre-extension behavior: their file's own
-/// service name, and one flat generated command name.
+/// Not present in `custom-openapi/` files — those keep the older behavior:
+/// their file's own service name, and one flat generated command name.
 const CLI_COMMAND_EXTENSION: &str = "x-mapbox-cli-command";
 
 /// Where [`CLI_COMMAND_EXTENSION`] says this operation's command goes, as
-/// (service, command path). `None` for an operation that declares none.
+/// (service, command path). `None` if the operation declares nothing.
 ///
-/// A declared-but-unusable value is an error rather than a fallback. It can
-/// only come from a bug in the strip step, and the quiet reading of it —
-/// keeping the file's own service and the generated name — is a command that
-/// silently appears under the wrong service, which is exactly the failure
-/// this extension exists to prevent.
+/// A value that's present but malformed is an error, not something to fall
+/// back from. It can only mean a bug in the strip step, and silently
+/// falling back to the file's own service and generated name would put the
+/// command under the wrong service — exactly what this extension exists to
+/// prevent.
 fn cli_command_target(
     op: &Value,
     operation_id: Option<&str>,
@@ -341,12 +331,13 @@ fn cli_command_target(
 }
 
 /// The alias for this operation, if it has one, and whether the generated
-/// name it stands in for should keep showing up alongside it.
+/// name it replaces should still show up alongside it.
 ///
-/// A row whose `service` or `operationId` matches nothing answers `None` for
-/// every operation, and a dead row looks exactly like a working one from
-/// here — so `every_command_alias_names_a_real_operation` checks the other
-/// end, that each row actually reaches an operation.
+/// A row whose `service` or `operationId` doesn't match anything just
+/// returns `None` here, same as a working row that hasn't matched yet — so
+/// a typo'd row would go unnoticed from this function alone.
+/// `every_command_alias_names_a_real_operation` is the test that checks
+/// each row actually reaches a real operation.
 fn alias_for(service_name: &str, operation_id: &str) -> Option<(&'static str, bool)> {
     COMMAND_ALIASES
         .iter()
@@ -354,22 +345,24 @@ fn alias_for(service_name: &str, operation_id: &str) -> Option<(&'static str, bo
         .map(|(_, _, alias, show_generated)| (*alias, *show_generated))
 }
 
-/// What an operation ends up called, given the name its `operationId`
-/// generated and whatever [`COMMAND_ALIASES`] says about it: the command
-/// name, its visible aliases, and its hidden ones.
+/// What an operation ends up called, combining its generated name with
+/// whatever [`COMMAND_ALIASES`] says about it: the command name, its
+/// visible aliases, and its hidden ones.
 ///
-/// Split out of `parse_spec` so both answers can be tested without a row in
-/// the real table standing for them — today every row says `false`, which
-/// would leave the `true` arm running nowhere.
+/// Split out of `parse_spec` so both branches below can be tested directly,
+/// without needing a real row in the table for each — every row in the
+/// table today says `false`, so the `true` branch would otherwise never
+/// run.
 fn command_names(
     generated_name: String,
     alias: Option<(&'static str, bool)>,
 ) -> (String, Vec<&'static str>, Vec<String>) {
     match alias {
         // The generated name stays the command; the alias is a second
-        // spelling `--help` lists beside it.
+        // spelling that `--help` also lists.
         Some((alias, true)) => (generated_name, vec![alias], vec![]),
-        // The alias *is* the command, and the generated name goes quiet.
+        // The alias becomes the command; the generated name still works
+        // but is hidden.
         Some((alias, false)) => (alias.to_string(), vec![], vec![generated_name]),
         None => (generated_name, vec![], vec![]),
     }
@@ -390,17 +383,17 @@ impl Operation {
         format!("{} {}", self.service, self.command_path.join(" "))
     }
 
-    /// Whether this is a service's own liveness probe rather than something
-    /// a person or an agent would ask for.
+    /// Whether this is a service's own health check, rather than something
+    /// a person or an agent would actually want to call.
     ///
-    /// Every spec that has one puts it at the service root or at a
-    /// conventional health-check path, and matching on the path catches all
-    /// five — two of them have no `operationId` at all, so their command
-    /// names are generated from a summary and cannot be matched by name.
+    /// Every spec that has one puts it at the service root or a
+    /// conventional health-check path, so matching on the path catches all
+    /// five of them. Two have no `operationId` at all, so their command
+    /// names come from a summary and can't be matched by name.
     ///
-    /// Excluded for a different reason from `UNSUPPORTED_OPERATIONS`: these
-    /// are not impossible, they are simply not this CLI's business. Three of
-    /// the five answer 404 in production anyway.
+    /// Excluded for a different reason than `UNSUPPORTED_OPERATIONS`: these
+    /// aren't impossible to call, they're just not this CLI's business.
+    /// Three of the five return 404 in production anyway.
     pub fn is_liveness_probe(&self) -> bool {
         matches!(self.path_template.as_str(), "/" | "/mbx-health")
     }
@@ -413,11 +406,11 @@ impl Operation {
 
     /// Whether the operation is part of the command surface at all.
     ///
-    /// One predicate rather than three repeated conditions, because two
-    /// places have to agree on it exactly: the command tree
+    /// One shared check instead of three repeated conditions, because two
+    /// places must agree exactly: the command tree
     /// (`build_service_command`) and the schema (`crate::schema`). An
-    /// operation described but not runnable, or runnable but not described,
-    /// is worse than one that is neither.
+    /// operation that's described but not runnable — or runnable but not
+    /// described — is worse than one that's neither.
     pub fn is_exposed(&self) -> bool {
         self.disabled_scope.is_none() && !self.is_liveness_probe() && !self.is_withheld()
     }
@@ -425,14 +418,14 @@ impl Operation {
     /// Whether running this operation changes something on Mapbox's side —
     /// which is what earns it a `--dry-run`.
     ///
-    /// The HTTP method is the answer, and deliberately the only one. It is
-    /// the single signal every spec carries, so the rule stays correct for a
-    /// service nobody has looked at and for the next one that lands in
-    /// `openapi-specs`; a hand-kept list of mutating operation IDs would go
-    /// stale on the first sync. The cost is that a POST which only reads —
-    /// `batchGeocode` posts a query and gets answers back — is offered a
-    /// `--dry-run` it does not need. That is a spare flag on a handful of
-    /// commands, against the alternative of a missing one on a `delete`.
+    /// We use the HTTP method, and only the HTTP method, deliberately. It's
+    /// the one signal every spec carries, so the rule stays correct even
+    /// for a service nobody's looked at yet, or the next one added to
+    /// `openapi-specs`. A hand-kept list of mutating operation IDs would go
+    /// stale on the first sync. The cost: a read-only POST like
+    /// `batchGeocode` (posts a query, gets answers back) gets an unneeded
+    /// `--dry-run`. That's a harmless spare flag on a few commands, versus
+    /// the alternative of a missing one on a real `delete`.
     pub fn is_mutating(&self) -> bool {
         matches!(
             self.method.to_ascii_uppercase().as_str(),
@@ -444,16 +437,15 @@ impl Operation {
 /// A sibling operation that lists the items another one shows one of.
 #[derive(Debug, Clone)]
 pub struct ListingOperation {
-    /// The whole command minus `mapbox`: `styles list`. Service included,
-    /// because a pair can straddle two services now — the operations are
-    /// paired by URL path, and `x-mapbox-cli-command` is free to file the two
-    /// ends of one path under different services.
+    /// The whole command minus `mapbox`: `styles list`. Includes the
+    /// service, because a pair can straddle two services — operations are
+    /// paired by URL path, and `x-mapbox-cli-command` can file either end
+    /// of one path under a different service.
     pub command: String,
-    /// The listing's own path. It is the detail operation's path less its
-    /// last segment, but carrying it means a caller can see which of the
-    /// failing operation's path parameters the listing needs as well —
-    /// `/styles/v1/{username}/{style_id}/sprite` still wants a style — and
-    /// does not have to re-derive an invariant this pass already knows.
+    /// The listing's own path — the detail operation's path minus its last
+    /// segment. Kept here so a caller can see which path parameters the
+    /// listing itself needs too (`/styles/v1/{username}/{style_id}/sprite`
+    /// still needs a style), instead of re-deriving that elsewhere.
     pub path_template: String,
 }
 
@@ -466,51 +458,50 @@ pub struct DetailOperation {
     pub parameter: String,
 }
 
-/// (service name, operationId, scope) for operations whose spec-documented required
-/// scope is absent from the Accounts API's registration allowlist,
-/// audited 2026-08-28. Re-check before removing an entry — these can't be
-/// fixed from this side: the fix is Mapbox making the scope registrable, and
-/// an entry comes off this list once a direct `POST /oauth/register` grants
-/// it back unchanged.
+/// (service name, operationId, scope) for operations whose required scope
+/// isn't in the Accounts API's registration allowlist. Audited 2026-08-28.
 ///
-/// `fonts:list` and `fonts:write` (and therefore `listFonts`, `uploadFont`,
-/// `deleteFont` and `updateFontMetadata`) came off this list once both
-/// became registrable on 2026-09-08. `DEFAULT_SCOPES` in `auth.rs` requests
-/// them now, so all four commands ship. `updateFontMetadata` briefly sat in
-/// `WITHHELD_OPERATIONS` instead: a same-day retest with a `mapbox auth
-/// login` token found `PATCH .../{face}/metadata` 404 "Font not found for
-/// expected owner" against a font the same token could upload, read and
-/// delete at that exact path. A later retest, same day, with a freshly
-/// uploaded font and the same token, got 200 both ways (`visibility`
-/// flipped and stuck, confirmed with `get-font-metadata --fresh`) — most
-/// likely the scope's authorization hadn't finished propagating yet right
-/// after the scopes became registrable. Moved back here rather than back to
-/// `WITHHELD_OPERATIONS`, since the 404 was a propagation delay, not
-/// something about the `tk` usage code.
+/// Re-check before removing an entry. We can't fix these ourselves — Mapbox
+/// has to make the scope registrable — and an entry comes off once a direct
+/// `POST /oauth/register` grants it back unchanged.
+///
+/// `fonts:list` and `fonts:write` came off this list on 2026-09-08 once
+/// both became registrable, which is why `listFonts`, `uploadFont`,
+/// `deleteFont` and `updateFontMetadata` all ship today (`DEFAULT_SCOPES`
+/// in `auth.rs` now requests both scopes). `updateFontMetadata` briefly sat
+/// in `WITHHELD_OPERATIONS` instead: a same-day retest found
+/// `PATCH .../{face}/metadata` returning 404 "Font not found for expected
+/// owner" against a font the same token could otherwise upload, read and
+/// delete. A later retest that same day, on a freshly uploaded font, got
+/// 200 both ways — most likely the new scope's authorization just hadn't
+/// finished propagating yet. Moved back here rather than left in
+/// `WITHHELD_OPERATIONS`, since the 404 was a propagation delay, not a real
+/// problem with the operation.
 const UNSUPPORTED_OPERATIONS: &[(&str, &str, &str)] = &[
-    // Confirmed live 2026-09-08: `fonts:metadata` is a real scope name, not a
-    // documentation typo — the endpoint answers 403 "This API requires a
-    // token with fonts:metadata scope" verbatim. It just isn't in
-    // the registration allowlist yet.
+    // Confirmed live 2026-09-08: `fonts:metadata` is a real scope name, not
+    // a typo in the docs — the endpoint literally answers 403 "This API
+    // requires a token with fonts:metadata scope". It's just not in the
+    // registration allowlist yet.
     ("fonts", "getFontCoverage", "fonts:metadata"),
-    // tokens:write is not registrable either — confirmed by a direct
-    // POST /oauth/register against production: it's silently dropped from the
-    // granted scope even when requested via both body and query. It only exists
-    // in the classic, role-gated (ADMIN-only) token-creation path, not DCR.
+    // tokens:write isn't registrable either — confirmed with a direct
+    // POST /oauth/register against production, which silently drops it
+    // from the granted scope even when requested via both body and query.
+    // It only exists in the older, role-gated (ADMIN-only) token-creation
+    // path, not this newer one (DCR).
     ("accounts", "createToken", "tokens:write"),
     ("accounts", "updateToken", "tokens:write"),
     ("accounts", "deleteToken", "tokens:write"),
-    // Found by running it, not by reading: the styles spec documents no
-    // scope, and an early probe answered 403 "requires a token with
-    // styles:download scope". `POST /oauth/register` then drops
-    // `styles:download` from the granted set, so no login can carry it.
+    // Found by testing it, not by reading the spec: the styles spec
+    // documents no scope, but an early probe got 403 "requires a token
+    // with styles:download scope". `POST /oauth/register` then drops
+    // `styles:download` from the granted set, so no login can get it.
     //
-    // Deeper still (verified 2026-09-08 with a real token, no scope
+    // Deeper problem too (verified 2026-09-08 with a real token, no scope
     // involved): the endpoint now answers 403 "This is a prerelease API.
-    // Please contact support at help@mapbox.com to request access." —
-    // access is gated per-account, not by OAuth scope at all. Making
-    // `styles:download` registrable would not unblock this command by
-    // itself; that's why it wasn't made registrable alongside the other two
+    // Please contact support at help@mapbox.com to request access." So
+    // access is gated per-account, not by OAuth scope at all — making
+    // `styles:download` registrable wouldn't unblock this command by
+    // itself, which is why it wasn't registered alongside the other two
     // fonts scopes.
     ("styles", "downloadStyleZip", "styles:download"),
 ];
@@ -530,14 +521,14 @@ pub struct Parameter {
     pub description: Option<String>,
     pub enum_values: Vec<String>,
     pub is_boolean: bool,
-    /// The spec's `type`, when it is one clap can check before we spend a
-    /// request finding out. `boolean` is absent here because it is handled
-    /// as a flag rather than a value.
+    /// The spec's `type`, when clap can check it before we spend a request
+    /// finding out the value is wrong. No `boolean` here — that's handled
+    /// as a flag instead of a value.
     pub numeric: Option<Numeric>,
 }
 
-/// A numeric parameter's width, kept apart from the generic string case so
-/// the value can still be handed to the query string as text.
+/// A numeric parameter's width. Kept separate from the plain string case,
+/// but the value is still sent to the query string as text either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Numeric {
     Integer,
@@ -547,33 +538,25 @@ pub enum Numeric {
 /// One spec file's embedded OpenAPI YAML, with the name this repo files it
 /// under, ready for [`parse_spec`].
 ///
-/// `name` is no longer necessarily a service anyone can type.
-/// [`CLI_COMMAND_EXTENSION`] decides that per operation, so this is the
-/// file's own name: the fallback service for an operation that declares no
-/// target, the key `WITHHELD_OPERATIONS` and its neighbors match on, and
-/// what a maintainer-only drift check compares the two tables by. `maps` is the
-/// clearest case — the entry is still called that, and the service it used
-/// to produce is gone.
+/// `name` isn't necessarily a service anyone can type — that's decided per
+/// operation by [`CLI_COMMAND_EXTENSION`] instead. This is just the file's
+/// own name: the fallback service for an operation that declares no
+/// target, the key that `WITHHELD_OPERATIONS` and similar tables match on,
+/// and what a drift check compares those tables against. `maps` is the
+/// clearest example — the entry is still called that, even though the
+/// service it used to produce is gone.
 #[derive(Clone, Copy)]
 pub struct SpecEntry {
     pub name: &'static str,
     pub yaml: &'static str,
 }
 
-/// Every spec file that comes from openapi-specs. Each `yaml` is pulled in
-/// via `include_str!` from `openapi/`, a vendored copy this repo owns.
+/// Every spec file this CLI ships with. Each `yaml` is pulled in via
+/// `include_str!` from `openapi/`, a copy this repo vendors.
 ///
 /// Not what the CLI builds commands from — see [`effective_services`], and
 /// [`CLI_COMMAND_EXTENSION`] for why a file's name and a service's name are
 /// two different things.
-///
-/// `openapi/` no longer mirrors upstream verbatim: every operation a
-/// maintainer-only decision record doesn't mark `enabled` is stripped out
-/// before this file ever sees it. `sources` isn't listed below for that
-/// reason: every operation in it is disabled there — it is not exposed as
-/// a command, and this repo drops it from the running CLI now rather than
-/// carrying a command group with nothing in it — so the vendoring step no
-/// longer writes a file for it at all.
 ///
 /// `maps` and `vectortiles` are listed, but each contributes only one
 /// operation, and both now target the merged `tilesets` command group
@@ -594,10 +577,6 @@ pub const MAPBOX_SPEC_ENTRIES: &[SpecEntry] = &[
     SpecEntry {
         name: "maps",
         yaml: include_str!("../openapi/api-rastertiles/rastertiles.production.v1.yaml"),
-    },
-    SpecEntry {
-        name: "rasterarrays",
-        yaml: include_str!("../openapi/api-rasterarrays/rasterarrays.production.v1.yaml"),
     },
     SpecEntry {
         name: "static-images",
@@ -622,30 +601,30 @@ pub const MAPBOX_SPEC_ENTRIES: &[SpecEntry] = &[
 ];
 
 /// Services whose spec this repo writes and versions itself, under
-/// `custom-openapi/<service>/openapi/<file>.yaml` — one level up, not two:
-/// `include_str!("../custom-openapi/search/openapi/search.yaml")`.
+/// `custom-openapi/<service>/openapi/<file>.yaml` (one level up, not two —
+/// see `include_str!("../custom-openapi/search/openapi/search.yaml")`).
 ///
-/// For an API openapi-specs doesn't publish a usable spec for yet. A name
-/// here wins over the same name in [`MAPBOX_SPEC_ENTRIES`]; delete the
-/// override once upstream ships the service — a maintainer-only drift check
-/// flags a name wired on both sides for exactly that reason.
+/// For an API that `openapi-specs` doesn't publish a usable spec for yet. A
+/// name here wins over the same name in [`MAPBOX_SPEC_ENTRIES`]. Delete the
+/// override once upstream ships the service — a drift check flags a name
+/// wired on both sides, for exactly this reason.
 pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[SpecEntry {
     name: "search",
     yaml: include_str!("../custom-openapi/search/openapi/search.yaml"),
 }];
 
-/// The list the CLI actually generates commands from: [`MAPBOX_SPEC_ENTRIES`]
-/// with each [`CUSTOM_SPEC_ENTRIES`] override swapped in, then the
-/// custom-only services appended.
+/// The list the CLI actually generates commands from: [`MAPBOX_SPEC_ENTRIES`],
+/// with each [`CUSTOM_SPEC_ENTRIES`] override swapped in and the
+/// custom-only services added at the end.
 pub fn effective_spec_entries() -> Vec<SpecEntry> {
     merge_entries(MAPBOX_SPEC_ENTRIES, CUSTOM_SPEC_ENTRIES)
 }
 
 /// The services the CLI builds its command tree from: every wired spec
-/// parsed, then re-bucketed by each operation's own target service.
+/// parsed, then regrouped by each operation's own target service.
 ///
-/// One function because the two steps are not separable — see
-/// [`regroup_by_service`] — and every caller wants the pair.
+/// One function because the two steps can't be separated — see
+/// [`regroup_by_service`] — and every caller needs both anyway.
 pub fn effective_services() -> Result<Vec<ServiceSpec>> {
     let parsed: Vec<ServiceSpec> = effective_spec_entries()
         .iter()
@@ -654,9 +633,10 @@ pub fn effective_services() -> Result<Vec<ServiceSpec>> {
     Ok(regroup_by_service(parsed))
 }
 
-/// Split out so the precedence rule is testable against small tables.
-/// Custom wins by replacement, in place — appending would leave two entries
-/// claiming one service name, which clap only refuses in a debug build.
+/// Split out so this precedence rule can be tested against small tables.
+/// Custom wins by replacing the entry in place — appending instead would
+/// leave two entries claiming one service name, which clap only catches in
+/// a debug build.
 fn merge_entries(mapbox: &[SpecEntry], custom: &[SpecEntry]) -> Vec<SpecEntry> {
     assert_no_duplicate_name(mapbox, "MAPBOX_SPEC_ENTRIES");
     assert_no_duplicate_name(custom, "CUSTOM_SPEC_ENTRIES");
@@ -686,10 +666,10 @@ fn merge_entries(mapbox: &[SpecEntry], custom: &[SpecEntry]) -> Vec<SpecEntry> {
     merged
 }
 
-/// A second entry for the same name would otherwise vanish silently — the
-/// second one dropped by [`merge_entries`]'s `find`/filter with no trace of
-/// which spec was discarded. Catches it in either table, before the merge
-/// hides it.
+/// Without this, a second entry with the same name would silently
+/// disappear — [`merge_entries`]'s `find`/filter just drops it, with no
+/// record of which spec got discarded. This catches the duplicate in
+/// either table before the merge can hide it.
 fn assert_no_duplicate_name(entries: &[SpecEntry], table: &str) {
     let mut seen = std::collections::HashSet::new();
     for entry in entries {
@@ -701,16 +681,16 @@ fn assert_no_duplicate_name(entries: &[SpecEntry], table: &str) {
     }
 }
 
-/// Title and description for a service no spec file is wired under.
+/// Title and description for a service that no spec file is wired under.
 ///
-/// [`CLI_COMMAND_EXTENSION`] assembles these out of operations that live in
-/// other files — `sprites` out of five of `styles.yaml`'s, `tilesets` out of
-/// one each from `rastertiles.yaml`, `rasterarrays.yaml`, `tilequery.yaml`
-/// and `vectortiles.yaml` (#116), `static` out of one each from
-/// `static-images.yaml` and `static-tiles.yaml` — so there is no
-/// `info.title` left that describes any of them. Hand-written for that
-/// reason and only that reason: a service that still owns a file keeps that
-/// file's `info` exactly as before.
+/// [`CLI_COMMAND_EXTENSION`] builds these services out of operations that
+/// actually live in other files — `sprites` from five operations in
+/// `styles.yaml`, `tilesets` from one operation each in `rastertiles.yaml`,
+/// `rasterarrays.yaml`, `tilequery.yaml` and `vectortiles.yaml` (#116),
+/// `static` from one operation each in `static-images.yaml` and
+/// `static-tiles.yaml`. None of those files' `info.title` describes the
+/// merged service, so this table is hand-written to fill that gap. A
+/// service that still owns its own file keeps that file's `info` as-is.
 const MERGED_SERVICES: &[(&str, &str, &str)] = &[
     (
         "sprites",
@@ -730,15 +710,15 @@ const MERGED_SERVICES: &[(&str, &str, &str)] = &[
 ];
 
 /// One line of help for an intermediate command group — a path segment
-/// several operations share, which is a command in the tree with no
-/// operation of its own behind it.
+/// several operations share, that shows up as a command in the tree with
+/// no operation of its own.
 ///
-/// Hand-written because nothing describes it: the group exists only because
-/// [`CLI_COMMAND_EXTENSION`] filed two commands under one word, and no spec
-/// has anything to say about that word. Keyed by the whole path, service
-/// included, which is how `crate::build_service_command` looks one up.
-/// `every_command_group_is_described` holds the table to the groups the
-/// surface really builds.
+/// Hand-written because nothing else describes it: the group exists only
+/// because [`CLI_COMMAND_EXTENSION`] filed two commands under one shared
+/// word, and no spec says anything about that word. Keyed by the whole
+/// path, service included — that's how `crate::build_service_command`
+/// looks it up. `every_command_group_is_described` checks this table
+/// against the groups the surface actually builds.
 const COMMAND_GROUPS: &[(&str, &str)] = &[(
     "styles draft",
     "Work with a style's draft, the unpublished copy edits are made against",
@@ -756,25 +736,26 @@ pub fn command_group_about(path: &str) -> Option<&'static str> {
 /// answers [`parse_spec`] gives.
 ///
 /// This pass exists because an operation's service comes from
-/// [`CLI_COMMAND_EXTENSION`] rather than from the file it was parsed out of,
-/// and may name a service some *other* file is wired under — or one no file
-/// is. Which operations a service has is therefore not knowable until every
-/// file has been parsed, which is why `parse_spec` answers per file and the
-/// surface is assembled here. Three things follow:
+/// [`CLI_COMMAND_EXTENSION`], not from the file it was parsed out of — and
+/// it might name a service that some *other* file is wired under, or one no
+/// file is wired under at all. So we can't know which operations a service
+/// has until every file has been parsed. That's why `parse_spec` answers
+/// per file, and this function assembles the real surface afterward. Three
+/// consequences:
 ///
-///   - **A service whose operations all moved away is dropped**, rather than
-///     built as a command group with nothing in it. `maps` and `vectortiles`
-///     are exactly that today: their one operation each now targets
-///     `tilesets`. An empty group would be listed by `mapbox --help` and then
-///     refused by its own `subcommand_required(true)`.
-///   - **A service no file is wired under** takes its title and description
-///     from [`MERGED_SERVICES`].
-///   - **Order is first appearance**, across the files in
-///     [`effective_spec_entries`] order, so a service sits where its
-///     operations put it.
+///   - **A service whose operations all moved away is dropped**, instead
+///     of built as an empty command group. `maps` and `vectortiles` are
+///     exactly that today — their one operation each now targets
+///     `tilesets`. An empty group would show up in `mapbox --help` and then
+///     get refused by its own `subcommand_required(true)`.
+///   - **A service with no file wired under it** takes its title and
+///     description from [`MERGED_SERVICES`].
+///   - **Order is first appearance**, across files in
+///     [`effective_spec_entries`] order — so a service ends up wherever its
+///     operations first show up.
 pub fn regroup_by_service(parsed: Vec<ServiceSpec>) -> Vec<ServiceSpec> {
-    // Kept before `parsed` is consumed: a service that still owns a file
-    // keeps that file's `info`, and the file is the only place it exists.
+    // Grabbed before `parsed` is consumed: a service that still owns a
+    // file keeps that file's `info`, which only exists in `parsed`.
     let from_specs: Vec<(String, String, Option<String>)> = parsed
         .iter()
         .map(|svc| (svc.name.clone(), svc.title.clone(), svc.description.clone()))
@@ -829,11 +810,11 @@ pub fn regroup_by_service(parsed: Vec<ServiceSpec>) -> Vec<ServiceSpec> {
 
 /// One spec file, as far as it can be read on its own.
 ///
-/// The `name`, `title` and `description` are the file's; the operations may
-/// not be, since each one carries the service its own
+/// The `name`, `title` and `description` belong to the file, but the
+/// operations might not — each carries whatever service its own
 /// [`CLI_COMMAND_EXTENSION`] names. [`regroup_by_service`] is what turns a
-/// list of these into the services the CLI actually builds — nothing else
-/// should treat one of these as a service.
+/// list of these into the services the CLI actually builds. Nothing else
+/// should treat one of these as a real service.
 pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
     let doc: Value = serde_yaml::from_str(yaml)
         .with_context(|| format!("Failed to parse YAML for service '{}'", service_name))?;
@@ -843,8 +824,9 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
         .unwrap_or(service_name)
         .to_string();
 
-    // Flattened to one line, unlike a parameter's: this renders as a
-    // service's `long_about`, where the spec's own wrapping buys nothing.
+    // Flattened to one line (unlike a parameter's description): this
+    // renders as a service's `long_about`, where the spec's own line
+    // wrapping doesn't help.
     let description = doc["info"]["description"]
         .as_str()
         .map(|text| first_paragraph(text).replace('\n', " "));
@@ -874,7 +856,6 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
     for (path_key, path_item) in paths {
         let path_str = path_key.as_str().unwrap_or("");
 
-        // Collect path-level parameters (shared across methods)
         let path_level_params = collect_parameters(path_item, "parameters", &doc);
 
         for method in &["get", "post", "put", "patch", "delete"] {
@@ -899,9 +880,9 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
                 operation_id.and_then(|id| alias_for(service_name, id)),
             );
 
-            // The extension has the last word on both where the command
-            // lives and what it is called; the generated name is what is
-            // left when a spec declares none. See `CLI_COMMAND_EXTENSION`.
+            // The extension has the final say on both where the command
+            // lives and what it's called. The generated name is only used
+            // when a spec declares no extension. See `CLI_COMMAND_EXTENSION`.
             let (service, command_path) = cli_command_target(op, operation_id)?
                 .unwrap_or_else(|| (service_name.to_string(), vec![generated_command]));
 
@@ -994,17 +975,17 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
 
 /// Reads an operation's `requestBody` into the media types it declares.
 ///
-/// `Some` with an empty `content_types` is deliberate rather than `None`: a
-/// `requestBody` with no `content` still means the operation takes a body,
-/// which is exactly what the old `has_body` bool recorded, and
-/// [`RequestBody::accepts_json`] keeps treating it as JSON.
+/// `Some` with an empty `content_types` is deliberate, not a bug: a
+/// `requestBody` with no `content` still means the operation takes a body
+/// — the same thing the old `has_body` bool recorded — and
+/// [`RequestBody::accepts_json`] still treats it as JSON.
 fn parse_request_body(op: &Value, full_spec: &Value) -> Option<RequestBody> {
     let request_body = &op["requestBody"];
     // A shared body lives under `components/requestBodies` and arrives here
-    // as a `$ref`. That is still a mapping, so the check below would pass it
-    // through as a body with no declared type and no `required` — an
-    // operation that insists on a body, described as taking an optional JSON
-    // one. No bundled spec factors a body out today; one sync could.
+    // as a `$ref`, which is still a mapping — so without resolving it, the
+    // check below would treat an operation that requires a body as one
+    // with no declared type and no `required` flag. No bundled spec shares
+    // a body today, but a future sync could add one.
     let request_body = request_body["$ref"]
         .as_str()
         .and_then(|reference| resolve_ref(full_spec, reference))
@@ -1047,10 +1028,10 @@ fn parse_request_body(op: &Value, full_spec: &Value) -> Option<RequestBody> {
 
 /// The multipart property that carries the uploaded files.
 ///
-/// Preferring a property whose schema is `format: binary` — directly or as an
-/// array's items — rather than taking the first one: a multipart body can mix
-/// files with ordinary text fields, and posting the bytes under the wrong
-/// name is a 400 that names neither.
+/// We prefer a property whose schema is `format: binary` (directly, or as
+/// an array's items) over just taking the first property. A multipart body
+/// can mix files with ordinary text fields, and posting the bytes under the
+/// wrong field name gives a 400 that doesn't name either one.
 fn multipart_file_field(schema: &Value, full_spec: &Value) -> Option<String> {
     let schema = match schema["$ref"].as_str() {
         Some(reference) => resolve_ref(full_spec, reference)?,
@@ -1100,21 +1081,21 @@ fn collect_parameters(node: &Value, key: &str, full_spec: &Value) -> Vec<Paramet
 }
 
 /// Links each listing to the operation that shows one of its items, and
-/// each of those back to the listing.
+/// each of those back to its listing.
 ///
 /// A detail operation is a `GET` whose path is the listing's path plus one
-/// more parameter — `/styles/v1/{username}` and
-/// `/styles/v1/{username}/{style_id}`. That extra parameter has to identify
-/// an item, so the account-scoping ones are excluded: `/tokens/v2` extended
-/// by `{username}` is another listing, not a way to look at one token, and
-/// offering `mapbox accounts list-tokens <username>` as "see one of these"
-/// would be a lie about what the API can do.
+/// more parameter — e.g. `/styles/v1/{username}` and
+/// `/styles/v1/{username}/{style_id}`. That extra parameter has to
+/// identify an item, so account-scoping parameters don't count:
+/// `/tokens/v2` extended by `{username}` is still just another listing,
+/// not a way to look at one token. Treating it as one would wrongly offer
+/// `mapbox accounts list-tokens <username>` as "see one of these".
 fn link_detail_operations(operations: &mut [Operation]) {
-    // Only operations that are commands may be pointed at. The hint this
-    // fills reaches a caller as something to run — `--schema` publishes it as
-    // `detail_command` — and half the withheld and unusable sets are GETs on
-    // exactly the paths this matches, so an unfiltered pairing would sooner
-    // or later name a command that answers like a typo.
+    // Only real commands can be pointed at here. This hint reaches a
+    // caller as something to run — `--schema` publishes it as
+    // `detail_command` — and many withheld or unsupported operations are
+    // GETs on exactly these kinds of paths. Without this filter, we could
+    // point someone at a command that doesn't actually work.
     let candidates: Vec<(String, String)> = operations
         .iter()
         .filter(|op| op.method == "GET" && op.is_exposed())
@@ -1124,9 +1105,9 @@ fn link_detail_operations(operations: &mut [Operation]) {
     for op in operations.iter_mut().filter(|op| op.method == "GET") {
         let prefix = format!("{}/{{", op.path_template);
         op.detail = candidates.iter().find_map(|(path, command)| {
-            // The name comes from the path, not from the parameter list: the
-            // path is what defines the extension, and some specs describe a
-            // placeholder without declaring a parameter for it.
+            // The name comes from the path, not the parameter list — some
+            // specs use a placeholder in the path without ever declaring a
+            // matching parameter for it.
             let name = path
                 .strip_prefix(&prefix)
                 .and_then(|rest| rest.strip_suffix('}'))?;
@@ -1140,11 +1121,11 @@ fn link_detail_operations(operations: &mut [Operation]) {
         });
     }
 
-    // The same pairing read the other way, for the failure that wants it: a
-    // 404 from a detail operation is most often an id that does not exist,
-    // and the listing is where the ids that do exist come from. Only a
-    // listing that is itself a command may be named — the pass above pairs on
-    // paths alone, so an unexposed GET can hold a `detail` link while not
+    // The same pairing, read backwards, for when it matters most: a 404
+    // from a detail operation usually means the id doesn't exist, and the
+    // listing is where valid ids come from. Only a listing that's itself a
+    // real command gets named here — the pass above pairs on paths alone,
+    // so an unexposed GET could otherwise hold a `detail` link while not
     // being runnable itself.
     let listings: Vec<(String, ListingOperation)> = operations
         .iter()
@@ -1162,8 +1143,9 @@ fn link_detail_operations(operations: &mut [Operation]) {
         .collect();
 
     for op in operations.iter_mut() {
-        // Matched on the whole command, service included, rather than on the
-        // last word: `styles get` and `styles draft get` share one.
+        // Matched on the whole command, service included, not just the
+        // last word — `styles get` and `styles draft get` both end in
+        // `get`.
         let command = op.command();
         op.listing = listings
             .iter()
@@ -1172,15 +1154,17 @@ fn link_detail_operations(operations: &mut [Operation]) {
     }
 }
 
-/// Everything up to the first blank line, wrapped as the spec wrapped it.
+/// Everything up to the first blank line, with line breaks kept as the
+/// spec wrote them.
 ///
-/// Spec prose puts the definition first and the reference material after a
-/// break — the options table, the per-country notes, the worked examples.
-/// The first paragraph is the part that describes the thing.
+/// Spec prose usually puts the actual definition first, then reference
+/// material after a blank line — an options table, per-country notes,
+/// worked examples. The first paragraph is the part that describes the
+/// thing itself.
 ///
-/// The line breaks inside it are kept. They are what `--help` has always
-/// rendered, so dropping them would reflow four arguments' help for no
-/// reason, and they are the only structure the bulleted ones have.
+/// We keep the line breaks because `--help` has always rendered them, and
+/// dropping them would needlessly reflow a few arguments' help text — plus
+/// they're the only structure that bulleted descriptions have.
 fn first_paragraph(text: &str) -> String {
     text.lines()
         .take_while(|line| !line.trim().is_empty())
@@ -1204,17 +1188,18 @@ fn scalar_to_string(value: &Value) -> Option<String> {
 fn parse_parameter(val: &Value) -> Option<Parameter> {
     let name = val["name"].as_str()?.to_string();
     let required = val["required"].as_bool().unwrap_or(false);
-    // The first paragraph, the same rule the service description above uses.
+    // The first paragraph, same rule as the service description above.
     //
-    // It used to be cut at the first `.`, which is fine for a line of help
-    // and wrong for `--schema`, where it is the field a caller reasons from:
-    // that cut lands inside `username.tileset-id`, inside `(range -85.0511,
-    // 85.0511)` and inside `e.g.`, publishing a truncated identifier and a
-    // wrong bound. Keeping the whole text instead was the other extreme —
-    // `geocoder --types` alone is 4.6 KB of feature-type reference, and the
-    // schema is read on every call. A paragraph keeps every case the cut
-    // broke and leaves the appendices behind. `crate::first_sentence`
-    // shortens it further for help, which renders exactly as it always has.
+    // This used to cut at the first `.`, which works fine for a line of
+    // help but breaks `--schema`, where callers actually reason from this
+    // field. That cut landed inside `username.tileset-id`, inside `(range
+    // -85.0511, 85.0511)`, and inside `e.g.` — publishing a truncated
+    // identifier and a wrong bound. Keeping the whole text was the other
+    // extreme: `geocoder --types` alone is 4.6 KB of feature-type
+    // reference, and the schema gets read on every call. A paragraph
+    // avoids both problems, and leaves the appendices out.
+    // `crate::first_sentence` shortens it further for `--help`, which
+    // still renders exactly as it always has.
     let description = val["description"].as_str().map(first_paragraph);
 
     let schema = &val["schema"];
@@ -1226,11 +1211,11 @@ fn parse_parameter(val: &Value) -> Option<Parameter> {
         _ => None,
     };
 
-    // Numbers and booleans count. Keeping only the strings silently dropped
-    // `tilesize: enum [256, 512]`, the one non-string enum among the
-    // parameters in the bundled specs — so the CLI accepted `300`, sent it,
-    // and let the API refuse it. Everything downstream wants the value as
-    // text anyway: it is going into a URL.
+    // Numbers and booleans count too. Keeping only strings used to
+    // silently drop `tilesize: enum [256, 512]` — the one non-string enum
+    // among the bundled specs' parameters — so the CLI would accept `300`,
+    // send it, and let the API reject it instead. Everything downstream
+    // wants the value as text anyway, since it's going into a URL.
     let enum_values: Vec<String> = schema["enum"]
         .as_sequence()
         .map(|values| values.iter().filter_map(scalar_to_string).collect())
@@ -1464,13 +1449,13 @@ paths:
         );
     }
 
-    /// A listing that is not itself a command must never be named as one.
-    /// This fixture gives a listing-shaped operation an operationId that's
-    /// in `UNSUPPORTED_OPERATIONS` (`getFontCoverage`, `fonts:metadata` —
-    /// no login can carry that scope), so it's filtered out of the surface —
-    /// and a 404 pointed at it would tell the caller to run something that
-    /// does not exist. Which entry the fixture borrows doesn't matter; only
-    /// that one still needs a scope DCR won't grant. `listFonts` served this
+    /// A listing that isn't itself a command must never be named as one.
+    /// This fixture gives a listing-shaped operation an operationId from
+    /// `UNSUPPORTED_OPERATIONS` (`getFontCoverage`, needing a scope no
+    /// login can carry), so it's filtered out of the surface. Pointing a
+    /// 404 at it would otherwise tell the caller to run something that
+    /// doesn't exist. Which entry we borrow doesn't matter, as long as it
+    /// still needs a scope DCR won't grant — `listFonts` served this
     /// purpose until `fonts:list` became registrable.
     #[test]
     fn an_unusable_listing_is_never_named() {
@@ -1746,12 +1731,12 @@ paths:
         entries.iter().map(|entry| entry.name).collect()
     }
 
-    /// The command a merged entry would actually generate, which is the only
-    /// form of "which spec won" that a caller can see.
+    /// The command a merged entry would actually generate — the only
+    /// visible sign of "which spec won".
     ///
-    /// Named apart from the real `command_names` (which computes one
-    /// operation's name and aliases): a glob `use super::*` would otherwise
-    /// let this test-only helper shadow it.
+    /// Named differently from the real `command_names` (which computes one
+    /// operation's name and aliases) so `use super::*` doesn't let this
+    /// test-only helper shadow it.
     fn merged_command_names(entries: &[SpecEntry], name: &str) -> Vec<String> {
         let entry = entries
             .iter()
@@ -1844,13 +1829,13 @@ paths:
         }
 
         // `build_app` registers six hand-written top-level commands
-        // alongside the generated ones — `auth` has no `COMMAND` const to
-        // borrow, the rest do. A spec table claiming any of these names
-        // collides the same way two same-named spec entries would, and
-        // `merge_entries` has no way to catch a clash with a name outside
-        // its own tables. Pulling from each module's `COMMAND` const, rather
-        // than hard-coding the string a second time, means a seventh
-        // hand-written command is covered the day it lands.
+        // alongside the generated ones (`auth` has no `COMMAND` const to
+        // borrow; the rest do). A spec table claiming any of these names
+        // would collide the same way two same-named spec entries would,
+        // and `merge_entries` has no way to catch a clash outside its own
+        // tables. We pull the name from each module's `COMMAND` const
+        // instead of hard-coding the string again, so a seventh
+        // hand-written command is covered automatically once it lands.
         for reserved in [
             "auth",
             crate::generate_skills::COMMAND,
@@ -1868,17 +1853,18 @@ paths:
 
     /// Every [`COMMAND_ALIASES`] row reaches an operation that exists.
     ///
-    /// `alias_for` answers `None` for a row whose `service` or `operationId`
-    /// is misspelled, exactly as it does for the operations no row mentions —
-    /// so the alias silently never appears, the command keeps its generated
-    /// name, and nothing else notices. `tests/api_command_surface.rs` pins
-    /// the surface as it is, which means a row that never worked is pinned
-    /// as working. This is the check that a row does something.
+    /// `alias_for` returns `None` for a row with a misspelled `service` or
+    /// `operationId` — the exact same result as for an operation no row
+    /// mentions at all. So the alias would silently never appear, the
+    /// command would keep its generated name, and nothing would notice.
+    /// Worse, `tests/api_command_surface.rs` would then pin that broken row
+    /// as if it worked. This test exists to catch that: does each row
+    /// actually do something?
     ///
-    /// Against the effective (merged) specs rather than a fixture, because
-    /// the thing that goes wrong is a row pointing at an `operationId` those
-    /// specs do not have — either mistyped, or renamed upstream by a later
-    /// sync.
+    /// Runs against the effective (merged) specs, not a fixture, because
+    /// what actually breaks is a row pointing at an `operationId` those
+    /// specs don't have — either a typo, or a rename upstream that a later
+    /// sync picked up.
     #[test]
     fn every_command_alias_names_a_real_operation() {
         let effective = effective_spec_entries();
@@ -1891,9 +1877,10 @@ paths:
                 });
             let svc = parse_spec(entry.name, entry.yaml).expect("bundled spec parses");
 
-            // The alias arrives as the command's own name or as one it
-            // answers to, depending on the row — either way, exactly one
-            // operation carries it, and none does if the row is dead.
+            // The alias shows up either as the command's real name or as
+            // one it also answers to, depending on the row. Either way,
+            // exactly one operation should carry it — zero if the row is
+            // dead.
             let carriers: Vec<&str> = svc
                 .operations
                 .iter()
@@ -1917,25 +1904,24 @@ paths:
         }
     }
 
-    /// A merge with a literal empty custom table — not `CUSTOM_SPEC_ENTRIES`,
-    /// which now has `search` in it — changes nothing about the mapbox table:
-    /// not order, not content, not which names appear. The general case
-    /// `a_mapbox_service_with_no_override_passes_through_untouched` above
-    /// exercises with a real override; this is its degenerate edge, pinned on
-    /// the shipped table itself.
+    /// Merging against a truly empty custom table (not `CUSTOM_SPEC_ENTRIES`,
+    /// which has `search` in it) should change nothing at all. The test
+    /// above, `a_mapbox_service_with_no_override_passes_through_untouched`,
+    /// covers the general case with a real override; this is the edge case
+    /// with none, pinned against the real shipped table.
     #[test]
     fn merging_an_empty_custom_table_changes_nothing() {
         let merged = merge_entries(MAPBOX_SPEC_ENTRIES, &[]);
         assert_eq!(names(&merged), names(MAPBOX_SPEC_ENTRIES));
     }
 
-    /// The one duplicate shape `merge_entries` used to swallow with no
-    /// trace: two `CUSTOM_SPEC_ENTRIES` entries for a name that also exists
-    /// in `MAPBOX_SPEC_ENTRIES`. Both the first-match `find` and the
+    /// One duplicate shape `merge_entries` used to swallow silently: two
+    /// `CUSTOM_SPEC_ENTRIES` entries with the same name that also exists in
+    /// `MAPBOX_SPEC_ENTRIES`. Both the first-match `find` and the
     /// unmatched-name filter treat this as an ordinary override, so the
-    /// output has no repeated name and every mapbox name is present — the
-    /// merged-list assertions above cannot see it. Only a table-level check
-    /// catches it, which is what this exercises.
+    /// output looks fine — no repeated name, every mapbox name present —
+    /// and the merged-list assertions above can't catch it. Only a
+    /// table-level check like this one can.
     #[test]
     #[should_panic(expected = "CUSTOM_SPEC_ENTRIES lists `search` more than once")]
     fn a_repeated_custom_name_panics_instead_of_silently_dropping_one() {
@@ -1945,9 +1931,9 @@ paths:
         );
     }
 
-    /// Both halves of `show_generated_name`, which no row in the real table
-    /// can cover: every row says `false` today, so the `true` arm would ship
-    /// having never run.
+    /// Both values of `show_generated_name`. No row in the real table
+    /// exercises `true` — they're all `false` today — so this test covers
+    /// it directly.
     #[test]
     fn a_visible_alias_keeps_the_generated_name_and_a_hidden_one_replaces_it() {
         let generated = || "get-v4tilesets-tilequery-lon-lat-json".to_string();

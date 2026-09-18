@@ -18,28 +18,14 @@ servers:
 security:
 - AccessTokenQuery: []
 tags:
-- name: health
-  description: API health check
 - name: fonts
   description: Manage and retrieve custom fonts
-- name: fontstacks
-  description: Retrieve Mapbox fontstack glyphs
-- name: models
-  description: Retrieve 3D model assets
 components:
   securitySchemes:
     AccessTokenQuery:
       type: apiKey
       in: query
       name: access_token
-  parameters:
-    fresh:
-      name: fresh
-      in: query
-      required: false
-      schema:
-        type: boolean
-      description: If true, sets Cache-Control to no-cache.
   schemas:
     Error:
       type: object
@@ -113,7 +99,6 @@ paths:
       security:
       - AccessTokenQuery: []
       parameters:
-      - $ref: '#/components/parameters/fresh'
       - name: owner
         in: path
         required: true

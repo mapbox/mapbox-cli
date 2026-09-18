@@ -1,42 +1,40 @@
 //! Holds `docs/commands.md` to the surface the binary reports.
 //!
-//! The surface itself cannot drift from the specs. The spec tables in
-//! `src/spec.rs` compile them in with `include_str!`, so a spec change
-//! rebuilds the commands, a spec renamed upstream is a broken build, and a
-//! new parameter named after a global fails `no_generated_flag_shadows_a_global`.
-//! `docs/commands.md` is the half with none of that: nothing in this repo
-//! writes it, and its **Parameters** tables were transcribed from the specs
-//! by hand. So the drift that actually happens runs one way — a spec moves,
-//! the CLI follows it for free, and the page goes on describing a CLI that no
-//! longer exists.
+//! The surface itself can't drift from the specs — `src/spec.rs` compiles
+//! them in with `include_str!`, so a spec change rebuilds the commands, a
+//! spec renamed upstream breaks the build, and a new parameter named after
+//! a global fails `no_generated_flag_shadows_a_global`. `docs/commands.md`
+//! has none of that: nothing writes it, and its **Parameters** tables were
+//! transcribed from the specs by hand. So drift only ever runs one way — a
+//! spec moves, the CLI follows for free, and the page keeps describing a
+//! CLI that no longer exists.
 //!
-//! Nothing here reaches the network, and that is the point rather than a
-//! detail. The other way to notice a stale page is a scheduled job that runs
-//! the live API and diffs the captures, which would need a standing secret in
-//! a repo whose workflows hold none, would report days after the change, and
-//! would be monitoring an API this repo does not own. What is checkable
-//! without a token, in `cargo test`, at the moment the change is made, is
-//! whether the page has fallen behind our own binary. That is all this file
-//! claims to check.
+//! Nothing here reaches the network, on purpose. The alternative — a
+//! scheduled job that runs the live API and diffs the captures — would
+//! need a standing secret in a repo whose workflows hold none, would
+//! report days after the change, and would be monitoring an API this repo
+//! doesn't own. What's checkable without a token, in `cargo test`, right
+//! when the change is made, is whether the page has fallen behind our own
+//! binary. That's all this file claims to check.
 //!
-//! Three things it deliberately does not do, written down so the next reader
-//! does not have to re-derive the scope:
+//! Three things it deliberately doesn't do, written down so the next
+//! reader doesn't have to re-derive the scope:
 //!
-//!   * It does not enforce every flag. A flag the page declares page-wide is
-//!     exempted for all 60 commands, not only for the ones that actually
-//!     share it, so 93 of the 176 flag-bearing arguments are enforced and 83
-//!     are not. `--data`, `--file` and `--dry-run` are the page-wide
-//!     declarations that are *not* in `global_options`: the first two are on
-//!     a handful of operations and the third on 24 of them.
-//!   * It does not ask for `--dry-run` section by section, which is what
-//!     would lift that number. Rejected: the page's design is to state a
-//!     page-wide fact once, and 24 near-identical paragraphs is the
-//!     duplication that design exists to avoid. Where a reader needs the
-//!     split spelled out — the four `auth` commands, three of which take the
-//!     flag and one of which does not — the page says so in prose.
-//!   * It does not check the captured **Outputs** blocks. They are the half
-//!     no test can reach: bytes a real account returned once, a dated
-//!     snapshot the page labels as one, re-taken by hand.
+//!   * It doesn't enforce every flag. A page-wide flag is exempted for all
+//!     60 commands, not just the ones that actually share it, so 93 of 176
+//!     flag-bearing arguments are enforced and 83 aren't. `--data`,
+//!     `--file` and `--dry-run` are page-wide but *not* in
+//!     `global_options`: the first two apply to only a handful of
+//!     operations, the third to 24 of them.
+//!   * It doesn't check `--dry-run` section by section, which would raise
+//!     that number. Rejected on purpose: the page states a page-wide fact
+//!     once, and 24 near-identical paragraphs is exactly the duplication
+//!     that design avoids. Where a split needs spelling out — the four
+//!     `auth` commands, three of which take the flag and one of which
+//!     doesn't — the page says so in prose instead.
+//!   * It doesn't check the captured **Outputs** blocks. Those are the
+//!     half no test can reach: bytes a real account returned once, a
+//!     dated snapshot re-taken by hand.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -49,7 +47,7 @@ use serde_json::Value;
 const PAGE: &str = "docs/commands.md";
 
 /// A config directory of this test binary's own. See the same function in
-/// `output_contract.rs` for why `--profile` alone is not isolation.
+/// `output_contract.rs` for why `--profile` alone isn't isolation.
 fn sandbox_home() -> PathBuf {
     let home = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("docs-contract-home");
     std::fs::create_dir_all(&home).expect("create sandbox home");
@@ -58,7 +56,7 @@ fn sandbox_home() -> PathBuf {
 
 /// The whole surface, from the binary that was just built.
 ///
-/// The developer's own environment is cleared for the reason it is cleared in
+/// The developer's environment is cleared for the same reason as in
 /// `schema_contract.rs`: a token in the running shell would let a mistake
 /// here reach the API, and this file has no business touching it.
 fn schema() -> Value {
@@ -83,8 +81,8 @@ fn schema() -> Value {
     serde_json::from_slice(&out.stdout).expect("`mapbox --schema` prints one JSON document")
 }
 
-/// Reached through `CARGO_MANIFEST_DIR` rather than a path relative to the
-/// working directory, which `cargo test` does not promise.
+/// Reached through `CARGO_MANIFEST_DIR` instead of a path relative to the
+/// working directory, which `cargo test` doesn't guarantee.
 fn page() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(PAGE);
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
@@ -100,16 +98,16 @@ fn name(command: &Value) -> &str {
 
 /// Every flag spelling in one line of the page, added to `found`.
 ///
-/// Hand-rolled rather than a regex so the test adds no dependency, but the
-/// character class is the part worth getting right: it has to accept
-/// uppercase. A `[a-z-]+` scanner truncates `--sourceEncoding` to `--source`
-/// and `--mapboxGLVersion` to `--mapbox`, which then read as two flags the
-/// page had failed to mention — drift the scanner invented rather than found.
+/// Hand-rolled instead of a regex to avoid a dependency, but the character
+/// class matters: it has to accept uppercase. A `[a-z-]+` scanner would
+/// truncate `--sourceEncoding` to `--source` and `--mapboxGLVersion` to
+/// `--mapbox`, reading as flags the page failed to mention — drift the
+/// scanner invented, not found.
 ///
-/// Over-matching is safe in the other direction and not worth guarding: this
-/// runs only over the page, and the set it fills is only ever asked whether
-/// it holds a flag some command actually declares. `-rw-r--r--` in a captured
-/// `ls -l` line yields `--r--`, which no command will ever be looking for.
+/// Over-matching is safe and not worth guarding against: this only runs
+/// over the page, and the resulting set is only ever checked against
+/// flags some real command declares. `-rw-r--r--` in a captured `ls -l`
+/// line yields `--r--`, which no command will ever look for.
 fn flags_in(line: &str, found: &mut BTreeSet<String>) {
     let bytes = line.as_bytes();
     for start in 0..bytes.len().saturating_sub(2) {
@@ -126,9 +124,9 @@ fn flags_in(line: &str, found: &mut BTreeSet<String>) {
 
 /// The page's lines, each paired with whether it sits inside a fenced block.
 ///
-/// Both parsers below need the distinction and disagree about what to do with
-/// it, which is why it is answered once here rather than in each. A fence
-/// delimiter counts as inside: it is neither a heading nor a flag.
+/// Both parsers below need this and treat it differently, so it's answered
+/// once here instead of in each. A fence delimiter counts as inside — it's
+/// neither a heading nor a flag.
 fn lines(page: &str) -> impl Iterator<Item = (&str, bool)> {
     let mut fenced = false;
     page.lines().map(move |line| {
@@ -146,12 +144,12 @@ fn heading_depth(line: &str) -> Option<usize> {
     (hashes > 0 && line.as_bytes().get(hashes) == Some(&b' ')).then_some(hashes)
 }
 
-/// The command a `### ` heading is about, if it is about one.
+/// The command a `### ` heading is about, if it's about one.
 ///
 /// The page writes the tileset proxy's forwarded argv into its heading —
-/// ``### `mapbox tilesets-cli <args…>` `` — so a trailing placeholder is
-/// dropped before matching. Cutting at `<` is enough because no command name
-/// holds one.
+/// ``### `mapbox tilesets-cli <args…>` `` — so a trailing placeholder gets
+/// dropped before matching. Cutting at `<` is enough, since no command
+/// name contains one.
 fn command_in_heading(line: &str) -> Option<String> {
     let quoted = line.strip_prefix("### `")?.split('`').next()?;
     let named = quoted.split('<').next().unwrap_or(quoted).trim();
@@ -163,25 +161,24 @@ fn command_in_heading(line: &str) -> Option<String> {
 ///
 /// The whole section counts — table, prose and worked examples alike, not
 /// only the `#### Parameters` table. The page legitimately introduces a flag
-/// in prose (forward's structured input is a paragraph naming nine of
-/// them, and `--fresh` is one sentence) or in an example, and a check that
-/// read only the tables would be enforcing a house style rather than finding
-/// drift.
+/// in prose (forward's structured input is a paragraph naming nine of them)
+/// or in an example, and a check that read only the tables would be
+/// enforcing a house style rather than finding drift.
 ///
-/// A `## ` service heading closes a section as surely as the next `### `
-/// does. Missing that reads a service's whole trailing prose as part of its
-/// last command's section, and then a real gap anywhere after the first
-/// command of a service goes unreported.
+/// A `## ` service heading closes a section, same as the next `### `
+/// does. Missing that would read a service's whole trailing prose as part
+/// of its last command's section, hiding a real gap anywhere after the
+/// service's first command.
 fn sections(page: &str) -> BTreeMap<String, BTreeSet<String>> {
     let mut sections = BTreeMap::new();
     let mut current: Option<String> = None;
 
     for (line, fenced) in lines(page) {
-        // `#### Parameters` and `#### Outputs` are inside a section, so only
-        // the levels above one end it — and a `#`-prefixed line inside a
-        // captured block is output, not a heading. No capture holds one
-        // today; tracking it means the day one does, the section it sits in
-        // does not silently close and take its remaining flags with it.
+        // `#### Parameters` and `#### Outputs` are inside a section, so
+        // only levels above that end it. A `#`-prefixed line inside a
+        // captured block is output, not a heading — no capture holds one
+        // today, but tracking `fenced` means the section won't silently
+        // close if one ever does.
         if !fenced && heading_depth(line).is_some_and(|depth| depth <= 3) {
             current = command_in_heading(line);
             if let Some(command) = &current {
@@ -199,15 +196,15 @@ fn sections(page: &str) -> BTreeMap<String, BTreeSet<String>> {
 
 /// The flags the page declares once, for every command.
 ///
-/// Read out of the page rather than listed here: the table under `### What
-/// every API command takes`, and the prose below it that declares `--data`
-/// and `--file`. Parsing them from the page means promoting a flag to a
-/// global stays one edit, in the place a reader looks for it, and this test
-/// follows that edit instead of having to be told about it.
+/// Read out of the page instead of listed here — the table under `### What
+/// every API command takes`, plus the prose below it declaring `--data`
+/// and `--file`. Parsing them from the page means promoting a flag to
+/// global stays a one-edit change, right where a reader looks for it, and
+/// this test just follows along.
 ///
-/// Fenced blocks in that section are skipped. The two example command lines
-/// there reach for `--q`, and a flag written into an example is being used,
-/// not declared for everything.
+/// Fenced blocks in that section are skipped: the example command lines
+/// there use `--q`, and a flag written into an example is being used, not
+/// declared for everything.
 fn declared_once_for_every_command(page: &str) -> BTreeSet<String> {
     let mut flags = BTreeSet::new();
     let mut inside = false;
@@ -225,9 +222,10 @@ fn declared_once_for_every_command(page: &str) -> BTreeSet<String> {
         }
     }
 
-    // A heading that gets reworded leaves this empty, and an empty exemption
-    // set does not fail loudly — it holds every command to flags the page
-    // does answer for elsewhere, and buries the real report under them.
+    // If the heading gets reworded, this comes back empty — and an empty
+    // exemption set fails quietly, holding every command to flags the
+    // page does answer for elsewhere and burying the real report under
+    // them.
     assert!(
         flags.contains("--data") && flags.contains("--file"),
         "the `### What every API command takes` section parsed to {flags:?}, and \
@@ -239,35 +237,33 @@ fn declared_once_for_every_command(page: &str) -> BTreeSet<String> {
 
 /// Which spec revision the binary was built from, for a failure message.
 ///
-/// Both assertions below compare the page against the *binary*, and the
-/// binary is built from `openapi/` — a vendored copy that only moves when
-/// a maintainer regenerates it. So when they disagree there are two
-/// candidate culprits, and the message used to name only one of them: the
-/// page.
+/// Both assertions below compare the page against the *binary*, which is
+/// built from `openapi/` — a vendored copy that only moves when a
+/// maintainer regenerates it. So when they disagree, there are two
+/// possible culprits, but the message used to name only one: the page.
 ///
-/// That is not a hypothetical. Specs three weeks old reported
-/// `sources get-datasource` as a command the CLI no longer has — the
-/// operation had been briefly absent upstream and was restored days later —
+/// That's not hypothetical. Three-week-old specs once reported
+/// `sources get-datasource` as a command the CLI no longer had — the
+/// operation had briefly disappeared upstream and come back days later —
 /// and the failure read as "delete the section". Two reviewers and a
-/// maintainer took it at face value, while `build.rs` printed a staleness
-/// warning on every one of those builds.
+/// maintainer took that at face value, even though `build.rs` printed a
+/// staleness warning on every one of those builds.
 ///
-/// So this says which revision the binary was built from, and — the half
-/// that matters — *rules the specs out* when they are fresh, leaving the page
-/// as the only remaining explanation.
+/// So this names the revision the binary was built from, and — the part
+/// that matters — *rules out* the specs when they're fresh, leaving the
+/// page as the only remaining explanation.
 ///
-/// The advice changed when the specs moved in-tree: it used to say pull the
-/// sibling checkout, which an external clone has no way to do. Now it says
-/// plainly that `openapi/` is vendored and regenerating it is a
-/// maintainer-only step, rather than pointing at tooling this checkout
-/// doesn't have.
+/// The advice changed once specs moved in-tree: it used to say pull the
+/// sibling checkout, which an external clone can't do. Now it just says
+/// `openapi/` is vendored and regenerating it is a maintainer-only step,
+/// instead of pointing at tooling this checkout doesn't have.
 fn spec_revision_note() -> String {
     let commit = option_env!("MAPBOX_SPEC_COMMIT");
     let age: Option<u64> = option_env!("MAPBOX_SPEC_AGE_DAYS").and_then(|days| days.parse().ok());
 
-    // Matches `STALE_AFTER_DAYS` in build.rs. Duplicated rather than shared
-    // because build.rs cannot export a constant to a test, and a wrong number
-    // here costs a wrong hint rather than a wrong result.
+    // Matches `STALE_AFTER_DAYS` in build.rs. Duplicated, not shared,
+    // because build.rs can't export a constant to a test — a wrong number
+    // here just costs a wrong hint, not a wrong result.
     const STALE_AFTER_DAYS: u64 = 14;
 
     match (commit, age) {
@@ -321,17 +317,17 @@ fn the_page_has_a_section_for_every_command_and_for_nothing_else() {
     );
 }
 
-/// One direction, deliberately: a flag the command declares has to be named
-/// in its section, but a flag named in a section need not belong to that
-/// command.
+/// One direction, deliberately: a flag the command declares must be named
+/// in its section, but a flag named in a section doesn't have to belong to
+/// that command.
 ///
-/// The reverse is noise rather than drift. A section's prose legitimately
-/// reaches for another command's flags — `styles delete` explains itself in
-/// terms of `styles list --deleted`, which is `styles list`'s flag and not
-/// its own — and a captured `ls -l` line reads `-rw-r--r--` as a flag called
-/// `--r--`. A prototype of this check asserted both ways and reported those
-/// as drift; none of them was, and a check whose failures have to be triaged
-/// by hand is one nobody reads.
+/// The reverse is noise, not drift. A section's prose legitimately
+/// reaches for another command's flags — `styles delete` explains itself
+/// via `styles list --deleted`, which belongs to `styles list`, not
+/// itself — and a captured `ls -l` line reads `-rw-r--r--` as a flag
+/// called `--r--`. An earlier version of this check asserted both
+/// directions and reported those as drift; none of them were, and a check
+/// whose failures need manual triage is one nobody reads.
 #[test]
 fn every_flag_a_command_takes_is_named_in_its_own_section() {
     let schema = schema();
@@ -351,8 +347,8 @@ fn every_flag_a_command_takes_is_named_in_its_own_section() {
     let mut unmentioned = Vec::new();
     for command in commands(&schema) {
         let command_name = name(command);
-        // A command with no section at all is the other test's report, not a
-        // flag gap on every one of its arguments.
+        // A command with no section at all is the other test's report to
+        // make, not a flag gap on every one of its arguments.
         let Some(named) = sections.get(command_name) else {
             continue;
         };
@@ -361,7 +357,7 @@ fn every_flag_a_command_takes_is_named_in_its_own_section() {
             .map(Vec::as_slice)
             .unwrap_or_default()
         {
-            // Positionals have no flag; the page describes those in prose.
+            // Positionals have no flag — the page describes those in prose.
             let Some(flag) = argument["flag"].as_str() else {
                 continue;
             };

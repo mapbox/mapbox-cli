@@ -11,9 +11,10 @@ use crate::output::{self, CliError, Mode};
 use crate::remedy::{self, Remedy};
 use crate::spec::{Operation, Parameter, RequestBody, ACCOUNT_PLACEHOLDERS, MULTIPART};
 
-/// The query parameter the access token travels in, and what stands in for it
-/// anywhere the URL is shown. Named once because getting this wrong leaks a
-/// live token: `--debug` and the dry-run plan both render the same URL.
+/// The query parameter the access token travels in, and what stands in for
+/// it anywhere the URL is shown. Named once because getting this wrong
+/// leaks a live token — `--debug` and the dry-run plan both render the
+/// same URL.
 const ACCESS_TOKEN: &str = "access_token";
 const REDACTED: &str = "<redacted>";
 
@@ -21,9 +22,9 @@ const REDACTED: &str = "<redacted>";
 const JSON_CONTENT_TYPE: &str = "application/json";
 
 /// Name of the flag that stops short of sending. Declared per operation
-/// rather than globally: a `GET` has nothing to preview, and a flag offered
-/// where it cannot mean anything is worse than one you have to put after the
-/// operation name. See [`dry_run_arg`].
+/// rather than globally: a `GET` has nothing to preview, and offering a
+/// flag that means nothing is worse than requiring it after the operation
+/// name. See [`dry_run_arg`].
 pub const DRY_RUN_ARG: &str = "dry-run";
 
 /// The wording for a command whose mutation is an API call.
@@ -32,11 +33,11 @@ pub const DRY_RUN_REQUEST_HELP: &str =
 
 /// The `--dry-run` flag, with the sentence that fits what the command does.
 ///
-/// The help text is a parameter because the two kinds of mutating command
-/// change different things: a generated operation would send a request, while
-/// `mapbox auth logout` deletes a file and sends nothing at all. A `--help`
-/// line that describes the wrong one is the small kind of lie that stops a
-/// safety flag from being reached for.
+/// The help text is a parameter because mutating commands change different
+/// things: a generated operation sends a request, while `mapbox auth
+/// logout` deletes a local file and sends nothing at all. A `--help` line
+/// that describes the wrong one is a small lie that makes people trust a
+/// safety flag less.
 pub fn dry_run_arg(help: &'static str) -> clap::Arg {
     clap::Arg::new(DRY_RUN_ARG)
         .long(DRY_RUN_ARG)
@@ -46,8 +47,8 @@ pub fn dry_run_arg(help: &'static str) -> clap::Arg {
 
 /// Whether `--dry-run` was given, for an operation that may not have it.
 ///
-/// `get_flag` panics on an argument that was never registered, and read-only
-/// operations never register this one.
+/// `get_flag` panics on an unregistered argument, and read-only operations
+/// never register this one — hence `try_get_one`.
 pub fn wants_dry_run(matches: &ArgMatches) -> bool {
     matches
         .try_get_one::<bool>(DRY_RUN_ARG)
@@ -58,34 +59,34 @@ pub fn wants_dry_run(matches: &ArgMatches) -> bool {
 }
 
 /// The three switches that change whether and how a request goes out, as
-/// opposed to what is being requested.
+/// opposed to what's being requested.
 ///
-/// Grouped once there were three of them. Clippy's argument limit is the
-/// visible reason; the better one is that a call site handing over three bare
-/// `bool`s in a row is one transposition away from a silent swap — `--debug`
-/// for `--dry-run` would send the request it promised only to describe.
-/// Naming them at the call site makes that impossible.
+/// Grouped into a struct once there were three of them. Clippy's argument
+/// limit is the visible reason; the real one is that three bare `bool`s in
+/// a row at a call site is one transposition away from a silent swap —
+/// mixing up `--debug` and `--dry-run` would send a request that was only
+/// supposed to be described. Naming the fields makes that impossible.
 #[derive(Clone, Copy)]
 pub struct RunFlags {
     pub debug: bool,
     pub assume_yes: bool,
     pub dry_run: bool,
     /// The budget the caller asked for, from `crate::http::requested` —
-    /// `--timeout` or `MAPBOX_TIMEOUT`. `None` does not mean "no timeout": it
-    /// means nobody said, and [`crate::http::budget`] falls back to whichever
-    /// default fits what the request is carrying.
+    /// `--timeout` or `MAPBOX_TIMEOUT`. `None` doesn't mean "no timeout",
+    /// it means "nobody said"; [`crate::http::budget`] then falls back to
+    /// whatever default fits the request.
     pub timeout: Option<Duration>,
 }
 
-/// Runs one generated command — the request it would make, sent or, under
-/// `--dry-run`, described.
+/// Runs one generated command — the request it would make, either sent or
+/// described under `--dry-run`.
 ///
-/// A wrapper, so that every way this can reject an *argument* is pointed at
-/// `--schema` from one place instead of three: the choice between `--data`
-/// and `--file`, a `--data` that will not parse, and the same parse again on
-/// the dry-run path, which reads the body rather than trusting it.
-/// `with_schema_action` answers to a code, so every other failure — an HTTP
-/// status, an unreadable file — passes through untouched.
+/// A thin wrapper so every way this can reject an *argument* points at
+/// `--schema` from one place, not three: choosing between `--data` and
+/// `--file`, a `--data` that won't parse, and re-parsing it on the
+/// dry-run path (which reads the body instead of trusting it).
+/// `with_schema_action` reacts to a specific error code, so everything
+/// else — an HTTP status, an unreadable file — passes through untouched.
 pub fn execute(
     op: &Operation,
     matches: &ArgMatches,
@@ -115,14 +116,12 @@ fn dispatch(
 
     let mut path = op.path_template.clone();
 
-    // Substitute {username}/{owner}/{account} from global --username
     if let Some(u) = username {
         for placeholder in ACCOUNT_PLACEHOLDERS {
             path = path.replace(&format!("{{{placeholder}}}"), u);
         }
     }
 
-    // Substitute other path params from positional args
     for param in &op.path_params {
         if let Some(val) = matches.get_one::<String>(&param.arg_name) {
             let safe = path_segment(&param.name, val)?;
@@ -131,7 +130,6 @@ fn dispatch(
     }
 
     if path.contains('{') {
-        // Extract missing param names for a useful error
         let missing: Vec<&str> = path
             .split('{')
             .skip(1)
@@ -144,8 +142,8 @@ fn dispatch(
                 missing.join(", ")
             ),
         )
-        // The message names the two ways to supply an account; this names
-        // the command that says whether a login would supply it already.
+        // The message above names the two ways to supply an account; this
+        // adds the command that checks whether a login already supplies it.
         .with_remedy(Remedy::default().with_action(Some("mapbox auth whoami".to_string())))
         .into());
     }
@@ -168,12 +166,12 @@ fn dispatch(
         }
     }
 
-    // `--data` and `--file` are declared per-operation, so either may be
-    // absent from this command entirely; `get_one` panics on an argument
-    // that was never registered.
-    // Resolved before anything reads it, `--dry-run` included, so a `@path`
-    // that does not exist fails here rather than being described as a request
-    // and then failing at send time. `resolve_data` says why.
+    // `--data`/`--file` are declared per-operation, so either may not exist
+    // on this command at all — `get_one` would panic on an unregistered
+    // argument, hence `try_get_one`. Resolved here, before `--dry-run` or
+    // anything else reads it, so a `@path` that doesn't exist fails now
+    // instead of after being described as a request that would then fail
+    // to send.
     let data_argument = match matches.try_get_one::<String>("data").ok().flatten() {
         Some(value) => Some(resolve_data(value)?),
         None => None,
@@ -188,19 +186,20 @@ fn dispatch(
         .map(|values| values.map(String::as_str).collect())
         .unwrap_or_default();
 
-    // Resolved ahead of the dry-run branch on purpose: choosing between
+    // Resolved before the dry-run branch on purpose: choosing between
     // `--data` and `--file` is a check the caller can fail, and a dry run
-    // that skipped it would report a request that could not actually be
-    // sent — which is the one thing it exists to rule out.
+    // that skipped it would describe a request that could never actually
+    // be sent.
     let body_source = match &op.body {
         Some(body) => Some(resolve_body_source(body, data, &files)?),
         None => None,
     };
 
     if dry_run {
-        // Worth saying out loud, and only here: a real call answers a missing
-        // token with a 401 the caller cannot miss, while a dry run would
-        // happily print a plausible-looking request that could never succeed.
+        // Worth saying here specifically: a real call would answer a
+        // missing token with an unmissable 401, but a dry run would just
+        // print a plausible-looking request that could never actually
+        // succeed.
         if token.is_none() {
             output::progress(
                 "Note: no access token was resolved, so the real request would be unauthenticated.",
@@ -209,21 +208,17 @@ fn dispatch(
         return describe_request(op, mode, &url, &query, body_source.as_ref());
     }
 
-    // Below the dry-run branch, and that ordering is the point: a dry run
-    // sends nothing, so asking whether to go ahead would be asking about
-    // something that is not going to happen — and it would make the flag that
-    // exists to be safe the one that blocks a script.
+    // Placed after the dry-run branch deliberately: a dry run sends
+    // nothing, so asking "go ahead?" about something that isn't going to
+    // happen would make the safety flag the thing that blocks a script.
     //
-    // `url` is passed rather than the rendered request because it carries no
-    // query string, and the access token is a query parameter. The question is
-    // printed. `redacted_url` above exists for the same reason on the same
-    // string; this call must never be given its output.
+    // `url` here, not the redacted one — the access token is a query
+    // parameter and `url` carries no query string at all, so it's already
+    // safe to print. Never pass `redacted_url`'s output here.
     confirm::destructive_request(&op.method, &url, assume_yes)?;
 
-    // Below the dry-run branch, so a `[debug]` request line always means a
-    // request that went out. The plan renders the same URL itself, and one
-    // that reads as a call having been made is the last thing this flag
-    // should print.
+    // Also after the dry-run branch, so a `[debug]` line always means a
+    // request actually went out — never one that only looks like it did.
     if debug {
         eprintln!("[debug] {} {}", op.method, redacted_url(&url, &query));
     }
@@ -238,13 +233,13 @@ fn dispatch(
         _ => client.get(&url),
     }
     .query(&query)
-    // Named on the request rather than left to the client, because the client
-    // cannot know what any one request is doing: a sprite upload sends a file
-    // and a listing sends nothing, and a single budget that suits both is
-    // either too short for the upload or too long to be a timeout at all.
-    // `reqwest` prefers the request's own over the client's — 0.12.28's
-    // `execute_request` reads `req.timeout().copied().or(self.timeout.0)` —
-    // so this is what actually applies to everything sent from here.
+    // Set per-request, not on the client: the client has no way to know
+    // what a given request is doing, and a sprite upload (needs a long
+    // timeout) and a listing (needs a short one) can't share one budget.
+    // `reqwest` prefers the request's own timeout over the client's —
+    // 0.12.28's `execute_request` reads
+    // `req.timeout().copied().or(self.timeout.0)` — so this is what
+    // actually applies.
     .timeout(http::budget(
         timeout,
         payload_of(
@@ -263,32 +258,32 @@ fn dispatch(
         .send()
         .map_err(|e| transport_failure("Request failed", e))?;
     let status = response.status();
-    // Read the headers before `bytes()` consumes the response — whatever is
-    // not taken here is gone by the next line. `Content-Type` was for a long
-    // time the only one that survived this point, which is what made
-    // pagination and support escalation unreachable; see [`ResponseHeaders`].
+    // Must read headers before `bytes()` consumes the response — anything
+    // not taken here is gone after. For a long time only `Content-Type`
+    // survived this point, which is why pagination and support escalation
+    // used to be unreachable; see [`ResponseHeaders`].
     let headers = ResponseHeaders::read(response.headers());
     let content_type = headers.content_type.clone();
     let body = response
         .bytes()
         .map_err(|e| transport_failure("Failed to read response", e))?;
 
-    // Six of the twelve services answer with bytes, not text — images, vector
-    // tiles, glyph PBFs, style ZIPs. Decoding those as UTF-8 replaces every
-    // invalid sequence with U+FFFD, which silently corrupts the payload: a PNG
-    // arrives with its leading 0x89 rewritten to EF BF BD and no longer opens.
-    // An error response is worth reading whatever the endpoint normally
-    // returns, so failures always take the text path.
+    // Six of the twelve services answer with bytes, not text — images,
+    // vector tiles, glyph PBFs, style ZIPs. Decoding those as UTF-8 would
+    // silently corrupt them (a PNG's leading 0x89 becomes EF BF BD and the
+    // file no longer opens). But an error response is worth reading no
+    // matter what the endpoint normally returns, so failures always take
+    // the text path.
     let as_text = if status.is_success() && is_binary_content_type(&content_type) {
         None
     } else {
         Some(String::from_utf8_lossy(&body))
     };
 
-    // A failure is an error, not a result: it belongs on stderr in whichever
-    // shape the caller asked for, so it never lands in a redirected file
-    // alongside real output. The body is carried into the error rather than
-    // printed here, which keeps every detail the old dump-to-stdout showed.
+    // A failure is an error, not a result, so it belongs on stderr — never
+    // in a redirected file alongside real output. The body goes into the
+    // error object instead of being printed here, keeping every detail the
+    // old approach (dumping to stdout) showed.
     if !status.is_success() {
         let text = as_text
             .as_deref()
@@ -299,11 +294,11 @@ fn dispatch(
             .into());
     }
 
-    // A 204, or a 200 that carries nothing. `serde_json` cannot parse an
-    // empty string, so this fell through to the text-body path and printed a
-    // blank line — or `""` under `json`, a valid document that says nothing.
-    // Every mutation in the CLI that succeeds without a body landed there,
-    // which left a delete indistinguishable from a command that did not run.
+    // A 204, or a 200 with nothing in it. `serde_json` can't parse an empty
+    // string, so this used to fall through to the text-body path and print
+    // a blank line (or `""` under `json` — a valid document that says
+    // nothing). Every no-body mutation ended up there, which made a
+    // successful delete look the same as a command that never ran.
     if as_text
         .as_deref()
         .is_some_and(|text| text.trim().is_empty())
@@ -319,8 +314,7 @@ fn dispatch(
         );
     }
 
-    // `Some` only when the response is one page of several, which is the
-    // listings and nothing else.
+    // `Some` only for a listing that's one page of several.
     let next_page = headers
         .next_page
         .as_deref()
@@ -335,8 +329,8 @@ fn dispatch(
                         .map_err(|err| with_page_context(err, next_page.as_ref()))?,
                     None,
                     Some(&op.service),
-                    // The row asked for is in hand; where the *other* rows
-                    // are is not advice about it.
+                    // The wanted row is already in hand, so no need for a
+                    // pagination tip about the other rows.
                     None,
                 )?,
                 None => output::emit_value(
@@ -349,41 +343,42 @@ fn dispatch(
             },
             Err(_) => output::emit_text_body(mode, &text)?,
         },
-        // Bytes bypass the output contract entirely. A PNG cannot be wrapped
-        // in a JSON envelope without destroying it, and `--output json` on a
-        // tile endpoint is far more likely to be the global flag riding along
-        // than a considered request to mangle the image.
+        // Bytes bypass the output contract entirely. A PNG can't be
+        // wrapped in a JSON envelope without destroying it, and
+        // `--output json` on a tile endpoint is far more likely to be a
+        // global flag riding along than a deliberate request to mangle
+        // the image.
         None => write_binary(&body, &content_type)?,
     }
 
     Ok(())
 }
 
-/// The headers a Mapbox response may identify itself with, in the order they
-/// are preferred.
+/// The headers a Mapbox response may identify itself with, checked in this
+/// order.
 ///
-/// Measured rather than assumed, and the measurement is the reason there are
-/// two. `x-request-id` is the name the convention would predict and is what
-/// this looked for first — but no Mapbox endpoint reachable from here sends
-/// it: styles, tokens, fonts and geocoding v6 all answer without one, on both
-/// success and failure. What every one of them does carry is `x-amz-cf-id`,
-/// the CloudFront request id, because the whole API is fronted by it — and
-/// that is the id support traces a request with.
+/// There are two because we measured, not assumed. `x-request-id` is the
+/// conventional name and what we checked first — but no Mapbox endpoint
+/// reachable from here actually sends it: styles, tokens, fonts, and
+/// geocoding v6 all answer without one, success or failure. What they all
+/// carry instead is `x-amz-cf-id`, the CloudFront request id, since the
+/// whole API sits behind CloudFront — and that's the id support uses to
+/// trace a request.
 ///
-/// `x-request-id` stays first because a service that does send one means it
-/// more specifically than the CDN in front of it does, and it costs a lookup
-/// in a map that is already in memory.
+/// `x-request-id` stays first anyway: a service that does send one is more
+/// specific than the CDN in front of it, and checking costs only a lookup
+/// in a map already in memory.
 const REQUEST_ID_HEADERS: [&str; 2] = ["x-request-id", "x-amz-cf-id"];
 
 /// The request id from a response, for a caller that reads the body itself.
 ///
-/// `text()` and `bytes()` both consume the response, so this has to be called
-/// before the body is read — which is the whole reason it is a named function
-/// rather than a line inlined at each of the three call sites.
+/// `text()` and `bytes()` both consume the response, so this must be
+/// called before reading the body — which is why it's a named function
+/// instead of being inlined at each of the three call sites.
 ///
-/// Mapbox-bound requests only. `agent_skills` talks to GitHub codeload, which
-/// identifies requests with `x-github-request-id` and is not something Mapbox
-/// support can look up, so it deliberately does not call this.
+/// For Mapbox-bound requests only. `agent_skills` talks to GitHub
+/// codeload, which uses `x-github-request-id` instead — something Mapbox
+/// support can't look up — so it deliberately doesn't call this.
 pub fn request_id(headers: &reqwest::header::HeaderMap) -> Option<String> {
     REQUEST_ID_HEADERS.iter().find_map(|name| {
         headers
@@ -397,16 +392,15 @@ pub fn request_id(headers: &reqwest::header::HeaderMap) -> Option<String> {
 
 /// What a response says about itself, past its body.
 ///
-/// A struct rather than three reads at the call site because `bytes()`
-/// consumes the response: whatever is not taken before it is unrecoverable.
-/// Taking only `Content-Type` is what left paginated listings truncating
-/// silently and left a 500 with nothing to quote to support.
+/// A struct instead of three reads at the call site, because `bytes()`
+/// consumes the response — whatever isn't taken before that is gone for
+/// good. Taking only `Content-Type` used to leave paginated listings
+/// truncating silently, and a 500 with nothing to quote to support.
 struct ResponseHeaders {
     /// Decides whether the body is read as text or written as bytes.
     content_type: String,
-    /// The request id — what support needs to find this one request in their
-    /// logs. Carried into the error and never printed on success, because on
-    /// a response that worked it is noise.
+    /// What support needs to find this request in their logs. Carried
+    /// into the error and never printed on success, where it's just noise.
     request_id: Option<String>,
     /// The `rel="next"` target of a `Link` header, when this response is one
     /// page of several.
@@ -415,8 +409,8 @@ struct ResponseHeaders {
 
 impl ResponseHeaders {
     fn read(headers: &reqwest::header::HeaderMap) -> Self {
-        // A header present but empty says nothing, and an empty request id
-        // would print as `Request ID:` with a blank after it.
+        // A present-but-empty header says nothing; treating it as missing
+        // avoids printing "Request ID:" with nothing after it.
         let text = |name: &str| {
             headers
                 .get(name)
@@ -437,31 +431,29 @@ impl ResponseHeaders {
     }
 }
 
-/// A response that is one page of several, and how to ask for the next one.
+/// A response that's one page of several, and how to ask for the next one.
 ///
-/// Holds the flags rather than the URL: following the `Link` target verbatim
-/// would mean re-sending a URL the API built, token and all, while the flags
-/// are something a caller can read, edit and run.
+/// Holds the flags, not the URL: following the `Link` target verbatim would
+/// mean re-sending a URL the API built (token and all), while flags are
+/// something a caller can read, edit, and run.
 struct NextPage(Option<String>);
 
 impl NextPage {
-    /// Derives the flags from the operation rather than hardcoding `--start`.
+    /// Derives the flags from the operation instead of hardcoding `--start`.
     ///
     /// The next URL's query is matched against the parameters this command
     /// declares, so the tip names whatever the spec calls its paging
-    /// parameters, and a service that pages some other way needs no change
-    /// here.
+    /// parameters — a service that pages differently needs no change here.
     ///
-    /// **The access token cannot appear in the result.** It rides in the
-    /// query string of every request, so the API echoes it back in this very
-    /// URL. Two things keep it out, and the second is why the first is not
-    /// enough: `dispatch` adds it directly rather than declaring it in
-    /// `op.query_params`, so matching against the declared parameters
-    /// excludes it today — but a spec is free to declare a parameter by that
-    /// name, and then "by construction" would quietly stop being true, so it
-    /// is also refused explicitly. `the_page_tip_never_names_the_access_token`
-    /// and `a_declared_parameter_named_access_token_is_still_withheld` hold
-    /// both halves.
+    /// **The access token can never appear in the result.** It rides in the
+    /// query string of every request, so the API echoes it back in this
+    /// very URL. Two safeguards, not one: `dispatch` adds the token
+    /// directly rather than declaring it in `op.query_params`, so matching
+    /// against declared parameters already excludes it — but a spec could
+    /// declare a parameter with that same name someday, so it's also
+    /// refused explicitly. `the_page_tip_never_names_the_access_token` and
+    /// `a_declared_parameter_named_access_token_is_still_withheld` test
+    /// both.
     fn of(declared: &[Parameter], next: &str) -> Self {
         let flags: Vec<String> = query_pairs(next)
             .into_iter()
@@ -481,10 +473,10 @@ impl NextPage {
     fn tip(&self) -> String {
         match &self.0 {
             Some(flags) => format!("More results: add `{flags}` for the next page."),
-            // Reachable only if the API pages an operation whose spec
-            // declares no paging parameter — a spec gap, not a user error.
-            // Saying so beats saying nothing, because the result is
-            // incomplete either way and only this knows it.
+            // Only reachable if the API paginates an operation whose spec
+            // declares no paging parameter — a spec gap, not a user
+            // error. Still worth saying, since the result is incomplete
+            // either way.
             None => "More results exist, but this command declares no parameter to reach them."
                 .to_string(),
         }
@@ -504,11 +496,11 @@ impl NextPage {
 
 /// A URL's query, decoded.
 ///
-/// Percent-decoded on purpose: the values go into a tip meant to be copied
-/// onto a command line, and the CLI re-encodes whatever it is given — so
-/// handing back `%2B` would round-trip to `%252B` and ask for the wrong page.
-/// An unparseable URL yields nothing rather than failing: a tip is not worth
-/// turning a successful request into an error.
+/// Percent-decoded on purpose: these values go into a tip meant to be
+/// copied onto a command line, and the CLI re-encodes whatever it's given
+/// — so handing back `%2B` would round-trip to `%252B` and ask for the
+/// wrong page. An unparseable URL yields nothing rather than an error; a
+/// pagination tip isn't worth turning a successful request into a failure.
 fn query_pairs(url: &str) -> Vec<(String, String)> {
     match reqwest::Url::parse(url) {
         Ok(parsed) => parsed
@@ -521,9 +513,9 @@ fn query_pairs(url: &str) -> Vec<(String, String)> {
 
 /// A query value as it would have to be typed into a shell.
 ///
-/// Paging cursors are opaque ids in practice, but the tip is advice a reader
-/// pastes, and an unquoted value with a space in it would silently become
-/// two arguments.
+/// Paging cursors are opaque ids in practice, but this tip gets pasted
+/// verbatim, and an unquoted value with a space in it would silently
+/// become two arguments.
 fn shell_value(value: &str) -> String {
     let safe = |c: char| c.is_ascii_alphanumeric() || "-_.~:@+,".contains(c);
     if !value.is_empty() && value.chars().all(safe) {
@@ -534,17 +526,17 @@ fn shell_value(value: &str) -> String {
 
 /// Adds "there are more pages" to a `--id` that matched nothing.
 ///
-/// `pick_row` searches the rows it was handed and says "No row has the id",
-/// which is true of the page and may well be false of the listing. On a
-/// paginated response that is the most misleading form of the truncation
-/// this whole path exists to stop, so the error says which it means.
+/// `pick_row` says "No row has the id", which is true of this page but
+/// might be false of the whole listing. On a paginated response, that's
+/// the most misleading version of the truncation problem this whole path
+/// exists to prevent — so the error clarifies which one it means.
 fn with_page_context(err: anyhow::Error, next_page: Option<&NextPage>) -> anyhow::Error {
     let Some(next_page) = next_page else {
         return err;
     };
     match err.downcast::<CliError>() {
-        // `not_a_list` is about the shape of the response, which another
-        // page would not change.
+        // `not_a_list` is about the shape of the response — another page
+        // wouldn't change that.
         Ok(cli) if cli.code == "not_found" => cli
             .with_remedy(Remedy::default().with_fix(&next_page.fix()))
             .into(),
@@ -555,10 +547,10 @@ fn with_page_context(err: anyhow::Error, next_page: Option<&NextPage>) -> anyhow
 
 /// The request line a reader may safely see: URL, query, token replaced.
 ///
-/// The access token rides in the query string, so every rendering of this URL
-/// has to strip it. `--debug` has always done so; the dry run needs it more,
-/// because the request *is* its output — the thing most likely to be pasted
-/// into an issue or captured whole by CI.
+/// The access token rides in the query string, so every rendering of this
+/// URL has to strip it. `--debug` has always done this; the dry run needs
+/// it even more, since the request *is* its output — the part most likely
+/// to get pasted into an issue or captured whole by CI.
 fn redacted_url(url: &str, query: &[(String, String)]) -> String {
     let rendered: Vec<String> = query
         .iter()
@@ -621,9 +613,9 @@ fn encode_query_value(value: &str) -> String {
 
 /// One query parameter's value, or the stand-in when it is the token.
 ///
-/// The single place that decides what may be printed. Both renderings of the
-/// query — the URL line and the JSON object — go through it, so the rule
-/// cannot come to differ between the two.
+/// The single place deciding what may be printed. Both renderings of the
+/// query — the URL line and the JSON object — go through this, so the
+/// rule can't drift between the two.
 fn shown_value<'a>(name: &str, value: &'a str) -> &'a str {
     if name == ACCESS_TOKEN {
         REDACTED
@@ -634,11 +626,11 @@ fn shown_value<'a>(name: &str, value: &'a str) -> &'a str {
 
 /// The dry run's answer: what the real call would send, and nothing sent.
 ///
-/// It leaves through `output::emit` like any other result, and it goes to
-/// stdout for the same reason — the command was asked what it would do, and
-/// this is the answer to that question, not a note about it. So `-o json`
-/// gives a script an object to assert on before it lets a delete run for
-/// real, and a terminal gets one readable request line.
+/// Goes through `output::emit` and out to stdout like any other result —
+/// the command was asked what it would do, and this *is* the answer, not
+/// a note about it. So `-o json` gives a script an object to check before
+/// letting a real delete run, and a terminal gets one readable request
+/// line.
 fn describe_request(
     op: &Operation,
     mode: Mode,
@@ -658,9 +650,9 @@ fn describe_request(
         text.push_str(&described.text);
     }
 
-    // An object, not a list of pairs: no query parameter can be repeated
-    // here, since each one comes from an argument clap keeps a single value
-    // for, and `.query.access_token` is worth more to a caller than
+    // An object, not a list of pairs: no query parameter repeats here,
+    // since each comes from an argument clap keeps one value for, and
+    // `.query.access_token` is more useful to a caller than
     // `.query[3].value`.
     let shown_query: serde_json::Map<String, serde_json::Value> = query
         .iter()
@@ -677,9 +669,9 @@ fn describe_request(
             "dry_run": true,
             "command": op.command(),
             "method": method,
-            // Without the query string, which `query` carries broken out.
-            // Rejoining the two would only produce a URL nobody can use, the
-            // token in it being redacted.
+            // No query string here — `query` carries that separately.
+            // Rejoining them would produce a URL nobody can use, since the
+            // token in it is redacted.
             "url": url,
             "query": shown_query,
             "body": described.map(|described| described.json),
@@ -696,12 +688,13 @@ struct DescribedBody {
 
 /// Describes the body — and validates it exactly as sending would.
 ///
-/// Every check [`attach_body`] makes is made here too: the JSON is parsed,
-/// and each `--file` is read rather than stat-ed. Reading is the point. A dry
-/// run answers "would this work?", and a file that exists but cannot be read
-/// passes a metadata check and fails the real call — which is precisely the
-/// surprise the flag exists to rule out. The operations taking `--file` take
-/// sprites and upload chunks, so the read costs nothing worth saving.
+/// Every check [`attach_body`] makes happens here too: the JSON gets
+/// parsed, and each `--file` gets read, not just stat-ed. Reading matters
+/// because a dry run answers "would this work?", and a file that exists
+/// but can't be read would pass a metadata check and then fail the real
+/// call — exactly the surprise `--dry-run` is meant to rule out. The
+/// operations that take `--file` (sprites, upload chunks) are small, so
+/// the read costs nothing worth skipping.
 fn describe_body(source: &BodySource<'_>) -> Result<Option<DescribedBody>> {
     Ok(match source {
         BodySource::Empty => None,
@@ -718,9 +711,9 @@ fn describe_body(source: &BodySource<'_>) -> Result<Option<DescribedBody>> {
                     "source": "--data",
                     "content_type": JSON_CONTENT_TYPE,
                     "bytes": data.len(),
-                    // The parsed document rather than the string it was typed
-                    // as: re-escaping it into a JSON string would make the one
-                    // thing worth checking here the one thing unreadable.
+                    // The parsed document, not the raw string it was typed
+                    // as — re-escaping it into a JSON string would make
+                    // the one thing worth checking here unreadable.
                     "json": json,
                 }),
             })
@@ -758,9 +751,9 @@ fn describe_body(source: &BodySource<'_>) -> Result<Option<DescribedBody>> {
             for path in paths {
                 let bytes = read_body_file(path)?.len();
                 let media_type = part_media_type(path);
-                // The part's filename, spelled out because it is not
-                // cosmetic: `batchUploadSprite` takes the icon name from it,
-                // so this line is what the sprite will be called.
+                // Not just cosmetic: `batchUploadSprite` takes the icon
+                // name from this filename, so it's also what the sprite
+                // gets called.
                 let name = file_name_of(path);
                 total += bytes;
                 text.push_str(&format!(
@@ -790,8 +783,9 @@ fn describe_body(source: &BodySource<'_>) -> Result<Option<DescribedBody>> {
 
 /// What to put in the request body, decided from the spec and the flags.
 ///
-/// Borrows rather than owns so the decision stays free of I/O: choosing is
-/// separable from reading the files, and only the choosing is worth testing.
+/// Borrows instead of owning so this decision stays free of I/O: choosing
+/// what to send is separate from reading the files, and only the choosing
+/// is worth testing on its own.
 #[derive(Debug, PartialEq, Eq)]
 enum BodySource<'a> {
     /// The operation takes a body but the caller supplied none. Still a
@@ -820,11 +814,11 @@ enum BodySource<'a> {
 struct DataArgument<'a> {
     /// The body itself. Borrowed when it was typed, owned when it was read.
     body: std::borrow::Cow<'a, str>,
-    /// Whether it came from a file or stdin rather than from argv.
+    /// Whether it came from a file or stdin rather than argv.
     ///
-    /// Carried because the timeout budget turns on it and on nothing else a
-    /// caller can see: argv caps what can be typed at roughly a megabyte, and
-    /// nothing caps a file. See [`payload_of`].
+    /// Carried because the timeout budget depends on it: argv caps what
+    /// can be typed at roughly a megabyte, but nothing caps a file. See
+    /// [`payload_of`].
     streamed: bool,
 }
 
@@ -838,18 +832,18 @@ const STDIN_PATH: &str = "-";
 /// Resolves a `--data` argument that names a file instead of carrying a body.
 ///
 /// `@path` reads the file, `@-` reads stdin, and anything else is the body
-/// itself — the spelling curl has used for long enough that it is what people
-/// try first.
+/// itself — the spelling curl has used long enough that people try it
+/// first.
 ///
-/// The ambiguity this inherits is curl's: a body whose first character is a
-/// literal `@` cannot be passed this way. It costs nothing here, because every
-/// operation reachable with `--data` today sends JSON, and `@` is not valid
-/// JSON. If a text body that could start with one is ever wired up, `--data-raw`
-/// is the established escape hatch.
+/// Inherits curl's ambiguity: a body whose first character is a literal
+/// `@` can't be passed this way. That costs nothing here, since every
+/// operation reachable with `--data` today sends JSON, and `@` isn't valid
+/// JSON. If a text body that could start with `@` ever gets wired up,
+/// `--data-raw` is the established escape hatch.
 ///
-/// Read here rather than at send time so that a `--dry-run` validates the file
-/// too. A dry run that skipped this would describe a request that could not
-/// actually be sent, which is the one thing it exists to rule out.
+/// Read here, not at send time, so `--dry-run` validates the file too — a
+/// dry run that skipped this could describe a request that would never
+/// actually send.
 fn resolve_data(value: &str) -> Result<DataArgument<'_>> {
     let Some(path) = value.strip_prefix(DATA_FROM_PATH) else {
         return Ok(DataArgument {
@@ -872,11 +866,11 @@ fn resolve_data(value: &str) -> Result<DataArgument<'_>> {
         (read_data_file(path)?, format!("`{path}`"))
     };
 
-    // An empty body reaches `attach_body` as invalid JSON and is reported as
-    // one — "EOF while parsing a value" — which describes the symptom and not
-    // the mistake. The mistake is almost always a pipe that produced nothing
-    // (`cat missing.json | mapbox …`, whose own error went to the same stderr
-    // and scrolled past), and naming the source is what points at it.
+    // An empty body would otherwise reach `attach_body` as invalid JSON —
+    // "EOF while parsing a value" — describing the symptom, not the
+    // mistake. The real mistake is almost always an empty pipe (`cat
+    // missing.json | mapbox …`, whose own error scrolled past on the same
+    // stderr), so naming the source here points at the actual cause.
     if body.trim().is_empty() {
         return Err(CliError::new(
             "invalid_data",
@@ -893,10 +887,10 @@ fn resolve_data(value: &str) -> Result<DataArgument<'_>> {
 
 /// A `--data @path` file, as text.
 ///
-/// Text rather than bytes, and that is a check rather than a convenience: a
-/// JSON body has to be UTF-8, so a file that is not says so here instead of
-/// being lossily converted into a body the API would reject for reasons that
-/// name nothing the caller did.
+/// Text, not bytes — that's a validity check, not just convenience. A
+/// JSON body has to be UTF-8, so a file that isn't gets reported here
+/// instead of silently lossy-converted into a body the API would reject
+/// for reasons that don't point back at the actual mistake.
 fn read_data_file(path: &str) -> Result<String> {
     std::fs::read_to_string(path).map_err(|e| {
         let message = if e.kind() == std::io::ErrorKind::InvalidData {
@@ -928,8 +922,8 @@ fn read_stdin() -> Result<String> {
 
 /// Picks between `--data` and `--file` for an operation that takes a body.
 ///
-/// Pure, and kept that way: every rejection here is a mistake the caller can
-/// fix from the message alone, without a request having been sent.
+/// Kept pure: every rejection here is a mistake the caller can fix from
+/// the message alone, with no request ever sent.
 fn resolve_body_source<'a>(
     body: &'a RequestBody,
     data: Option<&'a str>,
@@ -973,8 +967,9 @@ fn resolve_body_source<'a>(
         });
     }
 
-    // A raw body is one file by definition. clap keeps only the last
-    // occurrence for this operation, so this guards the function, not the CLI.
+    // A raw body is one file by definition. clap already keeps only the
+    // last `--file` for this operation, so this guards the function
+    // itself, not the CLI's parsing.
     if files.len() > 1 {
         return Err(CliError::new(
             "conflicting_body",
@@ -992,21 +987,22 @@ fn resolve_body_source<'a>(
     })
 }
 
-/// How much the request is about to move, which is all the budget turns on.
+/// How much data the request is about to send — all the timeout budget
+/// depends on.
 ///
-/// `--file` is unbounded, and so is a `--data @path` or `--data @-`, which is
-/// why this takes a second argument rather than reading the body alone. A
-/// `--data` body *typed* on a command line is capped by argv at a megabyte or
-/// so and goes out inside the ordinary budget with room to spare — that was
-/// once true of every `--data` body, and the reasoning is the thing `@path`
-/// broke: `BodySource::Json` looks identical whether it was typed or read from
-/// a 200 MB file, and the second would have been given a sixty-second budget
-/// it could not meet.
+/// `--file` is unbounded, and so is `--data @path` or `--data @-`, which is
+/// why this needs a second argument instead of just reading the body. A
+/// `--data` body *typed* on the command line is capped by argv at roughly
+/// a megabyte and fits the ordinary budget with room to spare — that used
+/// to be true of every `--data` body, until `@path` broke it:
+/// `BodySource::Json` looks identical whether it was typed or read from a
+/// 200 MB file, and the second case would get a sixty-second budget it
+/// could never meet.
 ///
-/// The response is not consulted, because nothing here knows it yet: six of
-/// the twelve services answer with bytes, but a tile, a glyph range and a
-/// style ZIP all arrive well inside a minute, so the one shape worth
-/// separating out is the one this CLI is sending.
+/// The response isn't consulted, since nothing here has seen it yet — and
+/// it wouldn't help anyway: even the six of twelve services that answer
+/// with bytes (tiles, glyph ranges, style ZIPs) arrive well inside a
+/// minute. Only what this CLI is *sending* is worth budgeting for.
 fn payload_of(body: Option<&BodySource<'_>>, data_was_read: bool) -> http::Payload {
     match body {
         Some(BodySource::Raw { .. } | BodySource::Multipart { .. }) => http::Payload::File,
@@ -1052,8 +1048,8 @@ fn attach_body(
 
 /// A file named by `--file`, as bytes.
 ///
-/// A path that does not exist is the most likely thing to go wrong with this
-/// flag, and it must read as the caller's typo rather than as a crash.
+/// A missing path is the most likely thing to go wrong here, and it needs
+/// to read as the caller's typo, not as a crash.
 fn read_body_file(path: &str) -> Result<Vec<u8>> {
     std::fs::read(path).map_err(|e| {
         CliError::new(
@@ -1066,8 +1062,8 @@ fn read_body_file(path: &str) -> Result<Vec<u8>> {
 
 /// The last path segment, which is what a multipart part is named by.
 ///
-/// It is not cosmetic for sprites: `batchUploadSprite` takes the icon name
-/// from each part's filename, so `zz-clitest-1.svg` becomes the icon
+/// Not cosmetic for sprites: `batchUploadSprite` takes the icon name from
+/// each part's filename, so `zz-clitest-1.svg` becomes the icon
 /// `zz-clitest-1`.
 fn file_name_of(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
@@ -1075,9 +1071,9 @@ fn file_name_of(path: &str) -> &str {
 
 /// The media type to label one multipart part with.
 ///
-/// The spec describes the parts as `format: binary` and nothing more, so the
-/// extension is the only evidence available. Getting it wrong matters:
-/// `batchUploadSprite` rejects a part that does not claim to be SVG.
+/// The spec only describes these parts as `format: binary`, so the file
+/// extension is the only evidence we have. Getting it wrong matters:
+/// `batchUploadSprite` rejects a part that doesn't claim to be SVG.
 fn part_media_type(path: &str) -> &'static str {
     let extension = file_name_of(path)
         .rsplit_once('.')
@@ -1093,12 +1089,11 @@ fn part_media_type(path: &str) -> &'static str {
 
 /// What to say when a successful response carries no body.
 ///
-/// The HTTP method is all there is to go on: these commands are generated
-/// from the specs and share one code path, so a 204 looks the same whether a
-/// style was deleted or a folder renamed. Naming the resource makes the line
-/// specific enough to be worth reading, and the last path parameter is the
-/// one that identifies it — the earlier ones scope it (`{username}`, then
-/// `{style_id}`, then `{icon_name}`).
+/// The HTTP method is all we have to go on: generated commands share one
+/// code path, so a 204 looks the same whether a style was deleted or a
+/// folder renamed. Naming the resource makes the line worth reading — the
+/// last path parameter identifies it, while the earlier ones just scope it
+/// (`{username}`, then `{style_id}`, then `{icon_name}`).
 fn empty_success_text(op: &Operation, matches: &ArgMatches) -> String {
     let subject = op
         .path_params
@@ -1116,58 +1111,56 @@ fn empty_success_line(method: &str, subject: Option<&str>) -> String {
     match method.to_ascii_uppercase().as_str() {
         "DELETE" => format!("Deleted{subject}."),
         "POST" | "PUT" | "PATCH" => format!("Done{subject}."),
-        // A GET that answers 200 with an empty body: the session endpoints.
-        // Nothing was changed, so nothing is claimed.
+        // A GET answering 200 with an empty body — the session endpoints.
+        // Nothing changed, so nothing is claimed.
         _ => "No content.".to_string(),
     }
 }
 
 /// Put one path parameter's value into the template.
 ///
-/// An optional parameter that occupies a whole segment — `/{overlay}` is
-/// the only one any invocation can now reach — has to take its slash with it
-/// when the value is empty.
-/// Substituting an empty string in place leaves `//`, which the API reads as
-/// a segment that is present and empty and answers 404, so asking for a plain
-/// map image with no overlay would fail while the same URL without the
-/// segment returns it.
+/// An optional parameter that fills a whole segment (`/{overlay}` is the
+/// only one any invocation can reach today) has to take its slash with it
+/// when the value is empty. Substituting an empty string in place would
+/// leave `//`, which the API reads as an empty-but-present segment and
+/// answers 404 to — so a plain map image with no overlay would fail, while
+/// the same URL without the segment succeeds.
 ///
 /// Parameters that are only part of a segment (`{width}x{height}{format}`)
-/// are substituted as they are: an empty value there is the format's default,
-/// which is what the spec means by optional.
-/// The characters that would change the URL's *structure* rather than name a
-/// segment within it.
+/// get substituted as-is: an empty value there is just the format's
+/// default, which is what "optional" means for them.
 ///
-/// `\` is here because WHATWG treats it as a path separator for special
-/// schemes, so `..\..\x` traverses exactly as `../../x` does — verified
-/// against `reqwest::Url`, not assumed.
+/// `\` is included because WHATWG treats it as a path separator for
+/// special schemes, so `..\..\x` traverses exactly like `../../x` —
+/// verified against `reqwest::Url`, not assumed.
 const PATH_STRUCTURAL: [char; 4] = ['/', '?', '#', '\\'];
 
 /// One path parameter's value, safe to splice into the URL's path.
 ///
 /// The path is built by substituting into a template
 /// (`…/{username}/{style_id}/static/{overlay}/…`), so a value carrying URL
-/// syntax used to change which request went out. With the caller's token and
-/// the command's method attached, `styles delete '../../x'` aimed a `DELETE`
-/// at a path nobody asked for, and `'x?fresh=true'` appended a query
-/// parameter — the same shape as mapbox/mcp-server's `directions_tool` fix.
+/// syntax used to be able to change which request went out. With the
+/// caller's token and the command's method attached, `styles delete
+/// '../../x'` aimed a `DELETE` at a path nobody asked for, and
+/// `'x?extra=1'` appended a query parameter — the same shape as
+/// mapbox/mcp-server's `directions_tool` fix.
 ///
-/// **Only the four structural characters are encoded, deliberately.** Path
-/// parameters here carry punctuation on purpose: a static-images overlay is
-/// `pin-s+f74e4e(-122.46,37.77)`, `{highRes}` is `@2x`, `{format}` is `.png`,
-/// and `{lon},{lat},{zoom}` are three placeholders sharing one comma-
-/// separated segment. Percent-encoding everything outside RFC 3986's
-/// unreserved set would rewrite all of that and risk breaking requests that
-/// work today. Encoding only what alters the URL's shape cannot change any
-/// request that does not already contain those four characters.
+/// **Only these four structural characters are encoded, deliberately.**
+/// Path parameters here carry punctuation on purpose: a static-images
+/// overlay is `pin-s+f74e4e(-122.46,37.77)`, `{highRes}` is `@2x`,
+/// `{format}` is `.png`, and `{lon},{lat},{zoom}` share one comma-separated
+/// segment. Percent-encoding everything outside RFC 3986's unreserved set
+/// would rewrite all of that and risk breaking requests that work today.
+/// Encoding only the characters that change the URL's shape can't break
+/// any request that doesn't already contain one of those four.
 ///
-/// Dot segments are refused rather than encoded, because encoding does not
-/// stop them: WHATWG reads `%2e%2e` as a double-dot segment too, so a value
-/// of exactly `..` still climbs a level however it is spelled. Encoding the
-/// separators is what defeats the multi-level `../../x` case — it collapses
-/// to a single segment — and this catches the single-level remainder.
+/// Dot segments are refused, not encoded, because encoding doesn't stop
+/// them — WHATWG reads `%2e%2e` as a double-dot segment too, so a value of
+/// exactly `..` still climbs a level no matter how it's spelled. Encoding
+/// the separators handles the multi-level `../../x` case (it collapses to
+/// one segment); this handles the single-level case that's left over.
 fn path_segment<'a>(name: &str, value: &'a str) -> Result<Cow<'a, str>> {
-    // `%2e` is a dot as far as the URL parser is concerned, in either case.
+    // The URL parser treats `%2e` (either case) as a plain dot.
     let as_dots = value.replace("%2e", ".").replace("%2E", ".");
     if as_dots == "." || as_dots == ".." {
         return Err(CliError::new(
@@ -1208,27 +1201,25 @@ fn substitute_path_param(path: &str, name: &str, value: &str, required: bool) ->
 
 /// A transport failure, with the URL stripped out of it.
 ///
-/// `reqwest::Error`'s `Display` appends " for url (…)", and the access token
-/// travels in the query string — so the default rendering puts a live token
-/// into an error message, which under `--output json` is a field that agents,
-/// CI logs and pasted issue reports all capture verbatim. The `--debug` path
-/// above already redacts the token for exactly this reason.
+/// `reqwest::Error`'s `Display` appends " for url (…)", and the access
+/// token travels in the query string — so the default rendering puts a
+/// live token into an error message that `--output json`, CI logs, and
+/// pasted issue reports would all capture verbatim. The `--debug` path
+/// already redacts the token for this same reason.
 ///
-/// Stripping the URL costs the only detail reqwest's outermost layer carried,
-/// so the source chain is walked to recover what actually went wrong —
-/// otherwise every proxy, DNS, TLS and timeout failure reads "error sending
-/// request" and nothing more.
+/// Stripping the URL loses the only detail reqwest's outermost layer
+/// carried, so we walk the source chain to recover what actually went
+/// wrong — otherwise every proxy, DNS, TLS, and timeout failure would just
+/// read "error sending request" and nothing more.
 ///
-/// A timeout is then told apart from the rest and given its own code, because
-/// it is the one of them a caller can do something about from here: the
-/// budget it ran out of is one `--timeout` moves. Sending that reader to
-/// check their proxy, which is what the generic advice does, points away from
-/// the answer.
+/// A timeout gets its own error code, since it's the one failure here a
+/// caller can actually act on: raise the `--timeout` budget. Generic
+/// "check your proxy" advice would point them the wrong way.
 ///
-/// Shared with `auth`'s `--verify`, which reaches an endpoint that takes the
-/// token as a query parameter too. One redaction, not two.
+/// Shared with `auth`'s `--verify`, which also reaches an endpoint that
+/// takes the token as a query parameter — one redaction covers both.
 pub(crate) fn transport_failure(context: &str, err: reqwest::Error) -> CliError {
-    // Asked before `without_url`, which builds a new error out of this one.
+    // Checked before `without_url`, which builds a new error from this one.
     let ran_out_of_time = err.is_timeout();
     let err = err.without_url();
     let mut message = format!("{context}: {err}");
@@ -1240,10 +1231,10 @@ pub(crate) fn transport_failure(context: &str, err: reqwest::Error) -> CliError 
     }
 
     if ran_out_of_time {
-        // Its own code, not a variant of the message: this is the one
-        // transport failure a script has a sensible thing to do about, which
-        // is to retry it or to raise the budget. Reading prose to find that
-        // out is not a contract.
+        // Its own error code, not just a message variant: this is the one
+        // transport failure a script can sensibly react to (retry, or
+        // raise the budget), and a script shouldn't have to parse prose to
+        // find that out.
         return CliError::new("request_timed_out", message).with_remedy(remedy::for_timeout());
     }
 
@@ -1253,10 +1244,10 @@ pub(crate) fn transport_failure(context: &str, err: reqwest::Error) -> CliError 
 /// Points a rejected argument at `--schema`, which describes what the
 /// command would have accepted.
 ///
-/// Only for the codes it answers, since this sees every failure `execute`
-/// produces: an unreadable `--file` path is a filesystem problem and a 404
-/// is not an argument problem at all, so offering a schema for either would
-/// be advice that does not apply.
+/// Only reacts to the codes listed below, since this sees every failure
+/// `execute` produces: an unreadable `--file` is a filesystem problem, and
+/// a 404 isn't an argument problem at all, so offering a schema for either
+/// would be advice that doesn't apply.
 fn with_schema_action(err: anyhow::Error, op: &Operation) -> anyhow::Error {
     const SCHEMA_ANSWERS: [&str; 3] = ["invalid_data", "conflicting_body", "unsupported_body"];
 
@@ -1272,9 +1263,9 @@ fn with_schema_action(err: anyhow::Error, op: &Operation) -> anyhow::Error {
 /// "To see one of these, run …", when the spec describes such a command.
 ///
 /// Built from the operation the caller actually ran, so it can only ever
-/// name a command that exists — `accounts list-tokens` gets nothing, because
-/// the Tokens API has no way to fetch one token by id, and inventing a
-/// plausible-looking suggestion is worse than staying quiet.
+/// name a command that exists. `accounts list-tokens` gets nothing, since
+/// the Tokens API has no way to fetch one token by id — inventing a
+/// plausible-looking suggestion here would be worse than staying quiet.
 fn detail_hint(op: &Operation) -> Option<String> {
     let detail = op.detail.as_ref()?;
     Some(format!("mapbox {} <{}>", detail.command, detail.parameter))
@@ -1311,11 +1302,11 @@ fn is_binary_content_type(content_type: &str) -> bool {
     )
 }
 
-/// The file extension to suggest for a response we are refusing to print.
+/// The file extension to suggest for a response we're refusing to print.
 ///
-/// Guessing from the content type rather than always saying `.png`: telling
-/// someone to redirect a glyph range into `out.png` is advice that produces
-/// a mislabeled file, and it reads as though the command misunderstood what
+/// Guessed from the content type instead of always saying `.png` — telling
+/// someone to redirect a glyph range into `out.png` produces a
+/// mislabeled file and makes it look like the command misunderstood what
 /// it fetched.
 fn suggested_extension(content_type: &str) -> &'static str {
     let essence = content_type
@@ -1347,9 +1338,9 @@ fn suggested_extension(content_type: &str) -> &'static str {
     }
 }
 
-/// Writes raw bytes to stdout, refusing to do so when that is a terminal —
-/// `curl`'s behavior, and for the same reason: a few hundred KB of PNG will
-/// otherwise scramble the user's shell.
+/// Writes raw bytes to stdout, refusing to do so when that's a terminal —
+/// same as `curl`, and for the same reason: a few hundred KB of PNG would
+/// otherwise scramble the shell.
 fn write_binary(body: &[u8], content_type: &str) -> Result<()> {
     use std::io::{IsTerminal, Write};
 
@@ -1392,16 +1383,16 @@ mod tests {
     use crate::output::CliError;
     use crate::spec::{Parameter, RequestBody};
 
-    /// The `CliError` inside a refusal, so a test can name the code the
-    /// caller would see rather than match on prose.
+    /// The `CliError` inside a refusal, so a test can check the error code
+    /// instead of matching on prose.
     fn refusal(err: anyhow::Error) -> CliError {
         err.downcast::<CliError>().expect("refused with a CliError")
     }
 
     fn body(content_types: &[&str], multipart_field: Option<&str>) -> RequestBody {
         RequestBody {
-            // Nothing here reads it: `resolve_body_source` decides from the
-            // flags it was given, not from whether the spec insists on one.
+            // `resolve_body_source` decides from the flags, not from
+            // whether the spec insists on a body — so this doesn't matter.
             required: false,
             content_types: content_types.iter().map(|s| s.to_string()).collect(),
             multipart_field: multipart_field.map(|s| s.to_string()),
@@ -1417,8 +1408,6 @@ mod tests {
             ("application/vnd.mapbox-vector-tile", ".mvt"),
             ("application/zip", ".zip"),
             ("font/woff2", ".woff2"),
-            // Parameters and casing must not change the answer, and an
-            // unknown type still has to name something.
             ("IMAGE/PNG; charset=binary", ".png"),
             ("application/octet-stream", ".bin"),
             ("", ".bin"),
@@ -1485,8 +1474,8 @@ mod tests {
 
     #[test]
     fn an_empty_value_inside_a_segment_stays_empty() {
-        // `{highRes}` and `{format}` are the segment's optional tail: empty
-        // means the default, not a segment to remove.
+        // `{highRes}`/`{format}` are part of a segment, not a whole one —
+        // empty means the format's default, not something to remove.
         let template = "/styles/v1/user/s/tiles/512/1/2/3{highRes}{format}";
         assert_eq!(
             substitute_path_param(template, "highRes", "", false),
@@ -1496,8 +1485,8 @@ mod tests {
 
     #[test]
     fn a_required_segment_is_left_empty_rather_than_dropped() {
-        // Dropping it would send a URL that means something else. The empty
-        // segment reaches the API and it says what is wrong.
+        // Dropping it would send a URL that means something else; leaving
+        // it empty reaches the API, which can say what's actually wrong.
         let template = "/v4/{tilesets}/1/2/3.png";
         assert_eq!(
             substitute_path_param(template, "tilesets", "", true),
@@ -1505,9 +1494,9 @@ mod tests {
         );
     }
 
-    /// `starFile`'s body is the word `true`, under `text/plain`. It goes
-    /// out as typed: parsing it as JSON and re-encoding would be a
-    /// round trip through a format the endpoint rejects.
+    /// `starFile`'s body is the literal word `true`, under `text/plain`.
+    /// It's sent as typed — parsing it as JSON and re-encoding would round
+    /// it through a format the endpoint rejects.
     #[test]
     fn a_text_body_is_sent_as_typed() {
         let plain = body(&["text/plain"], None);
@@ -1520,7 +1509,6 @@ mod tests {
         );
     }
 
-    /// The JSON operations are untouched by that.
     #[test]
     fn a_json_body_still_goes_through_data() {
         let json = body(&["application/json"], None);
@@ -1530,8 +1518,8 @@ mod tests {
         );
     }
 
-    /// A 204 says only that it worked. The method is what makes the line
-    /// specific, and an empty body must never read as an empty result.
+    /// A 204 only says that it worked; the HTTP method is what makes the
+    /// line specific.
     #[test]
     fn an_empty_success_says_what_happened() {
         assert_eq!(
@@ -1550,17 +1538,17 @@ mod tests {
         assert_eq!(empty_success_line("PUT", None), "Done.");
     }
 
-    /// The session endpoints answer 200 with nothing in the body. They change
-    /// no state, so the line must not claim they did.
+    /// The session endpoints answer 200 with an empty body but change no
+    /// state, so the line must not claim they did.
     #[test]
     fn an_empty_get_claims_nothing() {
         assert_eq!(empty_success_line("GET", None), "No content.");
         assert_eq!(empty_success_line("GET", Some("ignored")), "No content.");
     }
 
-    /// The spec's media type has to reach the wire verbatim. Sending SVG as
-    /// `application/json` is exactly the bug that made `upload-sprite-image`
-    /// unusable, and it looked like a working command the whole time.
+    /// The spec's media type must reach the wire verbatim. Sending SVG as
+    /// `application/json` is exactly the bug that made
+    /// `upload-sprite-image` unusable while still looking like it worked.
     #[test]
     fn a_raw_body_is_sent_as_the_type_the_spec_declared() {
         let svg = body(&["image/svg+xml"], None);
@@ -1582,8 +1570,6 @@ mod tests {
         );
     }
 
-    /// The field name comes from the spec, so a spec that renames it does not
-    /// need this code changed.
     #[test]
     fn multipart_files_go_under_the_field_the_spec_names() {
         let form = body(&["multipart/form-data"], Some("images"));
@@ -1605,8 +1591,9 @@ mod tests {
         );
     }
 
-    /// An operation that takes a body but was given nothing still sends the
-    /// request: whether the body was required is the API's answer to give.
+    /// An operation that takes a body but got none still sends the
+    /// request — whether the body was actually required is the API's
+    /// answer to give, not ours.
     #[test]
     fn no_flag_at_all_sends_an_empty_body() {
         let json = body(&["application/json"], None);
@@ -1616,8 +1603,8 @@ mod tests {
         );
     }
 
-    /// Both flags set one body between them, so taking either silently would
-    /// discard what the caller asked for.
+    /// Picking one flag silently would discard what the caller asked for
+    /// with the other.
     #[test]
     fn data_and_file_together_are_refused() {
         let both = body(&["application/octet-stream", "application/json"], None);
@@ -1627,8 +1614,8 @@ mod tests {
         assert!(err.message.contains("--file"), "{}", err.message);
     }
 
-    /// `--file` is never offered on a JSON-only operation, but the resolver
-    /// must not depend on clap having enforced that.
+    /// `--file` is never offered on a JSON-only operation, but the
+    /// resolver still shouldn't depend on clap having enforced that.
     #[test]
     fn a_file_for_a_json_only_body_names_the_flag_that_works() {
         let json = body(&["application/json"], None);
@@ -1644,8 +1631,8 @@ mod tests {
         assert_eq!(err.code, "conflicting_body");
     }
 
-    /// `initUpload` declares octet-stream *and* JSON. The first non-JSON type
-    /// is what `--file` means; `--data` keeps the JSON half.
+    /// `initUpload` declares octet-stream *and* JSON: the non-JSON type is
+    /// what `--file` sends, and `--data` still sends the JSON half.
     #[test]
     fn a_body_declaring_both_supports_each_flag_on_its_own() {
         let both = body(&["application/octet-stream", "application/json"], None);
@@ -1663,7 +1650,7 @@ mod tests {
     }
 
     /// The sprite API names each icon after its part's filename, so the
-    /// directories in front of it must not travel with it.
+    /// leading directories can't come along.
     #[test]
     fn a_part_is_named_by_the_file_not_its_path() {
         assert_eq!(
@@ -1674,9 +1661,6 @@ mod tests {
         assert_eq!(file_name_of("./a/b/c.svg"), "c.svg");
     }
 
-    /// The spec calls every part `format: binary` and stops there, so the
-    /// extension is the only evidence — and `batchUploadSprite` rejects a
-    /// part that does not claim to be SVG.
     #[test]
     fn a_parts_media_type_comes_from_its_extension() {
         assert_eq!(part_media_type("icon.svg"), "image/svg+xml");
@@ -1689,9 +1673,9 @@ mod tests {
         );
     }
 
-    /// The token travels in the query string, so the one function that
-    /// renders this URL is the one thing standing between a live credential
-    /// and `--debug`'s stderr or a dry run's stdout.
+    /// The token travels in the query string, so this rendering function
+    /// is all that stands between a live credential and `--debug`'s
+    /// stderr or a dry run's stdout.
     #[test]
     fn the_rendered_url_never_carries_the_token() {
         let query = [
@@ -1785,8 +1769,8 @@ mod tests {
         assert_eq!(value, "coffee&limit=99&access_token=sk.theirs");
     }
 
-    /// An unauthenticated call has no query at all, and a URL ending in `?`
-    /// is not the request that would be sent.
+    /// An unauthenticated call has no query at all, so a trailing `?`
+    /// would misrepresent the request.
     #[test]
     fn a_url_with_no_query_keeps_no_question_mark() {
         assert_eq!(
@@ -1795,19 +1779,17 @@ mod tests {
         );
     }
 
-    /// The dry run's whole promise is that what it accepts, the real call
-    /// would send. A body it declined to parse breaks that in the direction
-    /// that costs the most: a `--dry-run` that passes and a `create` that
-    /// then fails on the same argument.
+    /// A dry run promises that what it accepts, a real call would send —
+    /// so it must reject the same invalid JSON the real send would, not
+    /// let it pass and fail later.
     #[test]
     fn a_dry_run_rejects_the_json_that_sending_would_reject() {
         let err = describe_body(&BodySource::Json("{oops")).expect_err("invalid JSON is refused");
         assert_eq!(refusal(err).code, "invalid_data");
     }
 
-    /// And a `--file` that is not there. Reading rather than stat-ing is what
-    /// makes this catch an unreadable file too, which a metadata check would
-    /// wave through.
+    /// Reading the file (not just stat-ing it) is what catches this —
+    /// a metadata check would wave an unreadable file through.
     #[test]
     fn a_dry_run_rejects_a_file_that_cannot_be_read() {
         let err = describe_body(&BodySource::Raw {
@@ -1818,8 +1800,7 @@ mod tests {
         assert_eq!(refusal(err).code, "invalid_file");
     }
 
-    /// An operation whose body the caller left out has nothing to describe,
-    /// and a "Body:" line saying so would be noise on every `delete`.
+    /// A "Body:" line on every `delete` would just be noise.
     #[test]
     fn a_body_that_was_never_given_is_not_described() {
         assert!(describe_body(&BodySource::Empty)
@@ -1827,14 +1808,13 @@ mod tests {
             .is_none());
     }
 
-    /// `batchUploadSprite` takes each icon's name from its part's filename,
-    /// so the plan has to name the icons the upload would create — the path
-    /// alone leaves the reader to work out that `icons/foo.svg` becomes
-    /// `foo.svg`.
+    /// `batchUploadSprite` takes each icon's name from its filename, so
+    /// the plan should spell that out rather than leave the reader to
+    /// work out that `icons/foo.svg` becomes `foo.svg`.
     #[test]
     fn a_multipart_plan_names_each_part() {
-        // `CARGO_TARGET_TMPDIR` is an integration-test variable and does not
-        // exist here; the pid keeps two concurrent runs on one CI box apart.
+        // `CARGO_TARGET_TMPDIR` isn't set here (it's an integration-test
+        // variable); the pid keeps concurrent runs on one CI box apart.
         let dir = std::env::temp_dir().join(format!("mapbox-cli-dry-run-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let icon = dir.join("zz-clitest-1.svg");
@@ -1861,18 +1841,14 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("clean up temp dir");
     }
 
-    /// A budget that runs out is reported as that, not as a network to go and
-    /// check.
-    ///
-    /// Built from a real `reqwest` timeout rather than a hand-made error,
-    /// because what is being pinned is that `is_timeout()` still answers true
-    /// after the whole `transport_failure` path has taken the URL out of the
-    /// error — the token rides in that URL, so the stripping is not optional
-    /// and the classification has to survive it.
+    /// Uses a real `reqwest` timeout instead of a hand-made error, because
+    /// what's being tested is that `is_timeout()` still answers true after
+    /// `transport_failure` strips the URL out — the token rides in that
+    /// URL, so the stripping must not break the classification.
     #[test]
     fn a_budget_that_runs_out_says_so_rather_than_blaming_the_network() {
-        // Accepts and never answers, and is held open: dropped, the port
-        // closes and the client gets a refusal instead of a silence.
+        // Accepts and never answers, and stays held open — dropped, the
+        // port closes and the client gets a refusal instead of a hang.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
         let addr = listener.local_addr().expect("the bound address");
 
@@ -1897,12 +1873,9 @@ mod tests {
         );
     }
 
-    /// Which requests get the longer budget, and — the half that is easy to
-    /// get wrong — which do not.
-    ///
     /// A `--data` body is bounded by what a command line can carry, so
-    /// putting fifteen minutes in front of a `create-style` would only mean
-    /// waiting a quarter of an hour to be told the API is down.
+    /// giving `create-style` a fifteen-minute budget would only mean
+    /// waiting that long to find out the API is down.
     #[test]
     fn only_a_file_is_treated_as_a_transfer() {
         let raw = BodySource::Raw {
@@ -1932,10 +1905,10 @@ mod tests {
         assert_eq!(payload_of(Some(&text), false), Payload::Bounded);
     }
 
-    /// A body read from `@path` or `@-` is indistinguishable from a typed one
-    /// by the time it reaches `BodySource::Json`, and nothing bounds its size.
-    /// Given the sixty-second budget, a large one would fail on a timeout that
-    /// described the network rather than the choice of flag.
+    /// A body read from `@path`/`@-` looks identical to a typed one by the
+    /// time it reaches `BodySource::Json`, and nothing bounds its size. On
+    /// the ordinary sixty-second budget, a large one would time out in a
+    /// way that blames the network instead of the choice of flag.
     #[test]
     fn a_data_body_that_was_read_gets_the_transfer_budget() {
         assert_eq!(
@@ -1968,9 +1941,9 @@ mod tests {
         assert!(resolved.streamed, "nothing bounds a file");
     }
 
-    /// The trailing newline a text editor leaves is *not* stripped. It is
-    /// insignificant to every JSON parser, and trimming a body the caller
-    /// supplied would be this CLI quietly editing what it was asked to send.
+    /// A trailing newline a text editor leaves is *not* stripped — every
+    /// JSON parser ignores it anyway, and trimming it would mean this CLI
+    /// quietly editing what the caller asked to send.
     #[test]
     fn a_read_body_is_sent_byte_for_byte() {
         let dir = tempdir();
@@ -1993,9 +1966,9 @@ mod tests {
         );
     }
 
-    /// A JSON body has to be UTF-8, so this is a check rather than a
-    /// convenience — the alternative is a lossy conversion the API rejects for
-    /// reasons that name nothing the caller did.
+    /// A JSON body has to be UTF-8, so this is a validity check, not just
+    /// a convenience — the alternative is a lossy conversion the API
+    /// would then reject for reasons that don't point back at the mistake.
     #[test]
     fn a_non_utf8_file_says_so_rather_than_being_mangled() {
         let dir = tempdir();
@@ -2008,9 +1981,9 @@ mod tests {
         assert!(cli.message.contains("not valid UTF-8"), "{}", cli.message);
     }
 
-    /// The mistake is almost always a pipe that produced nothing, and the
-    /// symptom without this is "EOF while parsing a value", which names the
-    /// parser rather than the pipe.
+    /// Without this, the symptom is "EOF while parsing a value" — naming
+    /// the parser instead of the empty pipe that's almost always the real
+    /// cause.
     #[test]
     fn an_empty_file_says_which_source_was_empty() {
         let dir = tempdir();
@@ -2032,8 +2005,8 @@ mod tests {
         assert!(cli.message.contains("@-"), "{}", cli.message);
     }
 
-    /// A body that merely *contains* an `@` is not a path. Only the first
-    /// character decides, which is what makes `--data '{"a":"b@c"}'` safe.
+    /// Only the first character decides whether this is a path — which is
+    /// what makes `--data '{"a":"b@c"}'` safe.
     #[test]
     fn an_at_sign_inside_the_body_is_not_a_path() {
         let resolved = resolve_data(r#"{"email":"a@b.example"}"#).expect("a literal body");
@@ -2041,8 +2014,8 @@ mod tests {
         assert_eq!(resolved.body, r#"{"email":"a@b.example"}"#);
     }
 
-    /// A scratch directory that cleans itself up, so these tests leave
-    /// nothing behind and cannot collide with each other.
+    /// A scratch directory that cleans itself up, so tests leave nothing
+    /// behind and can't collide with each other.
     fn tempdir() -> TempDir {
         let base = std::env::temp_dir().join(format!(
             "mapbox-cli-data-{}-{:?}",
@@ -2091,26 +2064,26 @@ mod tests {
         assert!(tip.contains("--limit 10"), "{tip}");
     }
 
-    /// A parameter the API sent back but this command does not declare has no
-    /// flag to name, so it is left out rather than invented.
+    /// A parameter the API sent back but this command doesn't declare has
+    /// no flag to name, so it's left out instead of invented.
     #[test]
     fn an_undeclared_query_parameter_is_not_named() {
         let declared = [param("start")];
-        let next = "https://api.mapbox.com/a?start=7&fresh=true";
+        let next = "https://api.mapbox.com/a?start=7&extra=1";
 
         let tip = NextPage::of(&declared, next).tip();
         assert!(tip.contains("--start 7"), "{tip}");
-        assert!(!tip.contains("fresh"), "{tip}");
+        assert!(!tip.contains("extra"), "{tip}");
     }
 
     /// **The security property of this whole path.**
     ///
-    /// The access token rides in the query string, so the URL the API echoes
-    /// back in `Link` contains a live token. It is excluded by construction —
-    /// `dispatch` adds it to the query directly rather than declaring it in
-    /// `op.query_params`, and only declared parameters become flags — but
-    /// "by construction" is worth a test, because the cost of being wrong is
-    /// printing a credential to a terminal and into whatever captured it.
+    /// The access token rides in the query string, so the `Link` URL the
+    /// API echoes back contains a live token. It's excluded by
+    /// construction — `dispatch` adds it directly rather than declaring it
+    /// in `op.query_params`, and only declared parameters become flags —
+    /// but that's worth testing directly, since being wrong here means
+    /// printing a credential to a terminal (and to whatever captured it).
     #[test]
     fn the_page_tip_never_names_the_access_token() {
         let secret = "pk.eyJ1IjoibWFwYm94IiwiYSI6ImNqa2xpdmV0b2tlbiJ9.aaaaaaaaaaaaaaaaaaaaaa";
@@ -2126,9 +2099,9 @@ mod tests {
         }
     }
 
-    /// Even if someone later declares a parameter by that name, which is the
-    /// way the guarantee above could be undone from a spec rather than from
-    /// this file.
+    /// Even if a spec later declares a parameter literally named
+    /// `access_token` — the way the guarantee above could be undone from
+    /// the spec side instead of this file.
     #[test]
     fn a_declared_parameter_named_access_token_is_still_withheld() {
         let declared = [param(ACCESS_TOKEN), param("start")];
@@ -2139,9 +2112,8 @@ mod tests {
         assert!(tip.contains("--start 3"), "{tip}");
     }
 
-    /// The values are decoded, because the CLI re-encodes whatever it is
-    /// given: handing back `%2B` would round-trip to `%252B` and fetch the
-    /// wrong page.
+    /// Decoded because the CLI re-encodes whatever it's given: handing
+    /// back `%2B` would round-trip to `%252B` and fetch the wrong page.
     #[test]
     fn the_page_tip_decodes_percent_escapes() {
         let declared = [param("start")];
@@ -2151,8 +2123,8 @@ mod tests {
         assert!(tip.contains("--start a+b"), "{tip}");
     }
 
-    /// A value with a space in it would silently become two arguments if the
-    /// tip were pasted unquoted.
+    /// A value with a space in it would silently become two arguments if
+    /// pasted unquoted.
     #[test]
     fn a_value_needing_a_shell_quote_gets_one() {
         assert_eq!(shell_value("cjk2ab"), "cjk2ab");
@@ -2162,9 +2134,8 @@ mod tests {
         assert_eq!(shell_value("it's"), r"'it'\''s'");
     }
 
-    /// An operation the API pages but whose spec declares no paging
-    /// parameter. The result is incomplete either way, so saying so beats
-    /// saying nothing — but it must not claim a flag that does not exist.
+    /// The result is incomplete either way, so this should still say so —
+    /// without claiming a flag that doesn't exist.
     #[test]
     fn no_declared_paging_parameter_still_says_the_result_is_partial() {
         let tip = NextPage::of(&[param("unrelated")], "https://api.mapbox.com/a?start=3").tip();
@@ -2172,8 +2143,8 @@ mod tests {
         assert!(!tip.contains("--"), "{tip}");
     }
 
-    /// An unparseable `Link` target costs nothing: the request succeeded, and
-    /// a tip is not worth turning that into a failure.
+    /// An unparseable `Link` target costs nothing — the request succeeded,
+    /// and a tip isn't worth turning that into a failure.
     #[test]
     fn an_unparseable_next_url_yields_no_flags() {
         assert!(query_pairs("not a url").is_empty());
@@ -2204,12 +2175,12 @@ mod tests {
 
     /// The header that actually arrives in practice.
     ///
-    /// No Mapbox endpoint reachable from here sends `x-request-id` — styles,
-    /// tokens, fonts and geocoding v6 were all checked, on success and on a
-    /// 404. Every one of them sends `x-amz-cf-id`, because the API is fronted
-    /// by CloudFront. Looking for the conventional name alone would have made
-    /// this feature inert, which is what this test exists to stop happening
-    /// again.
+    /// No Mapbox endpoint reachable from here sends `x-request-id` —
+    /// styles, tokens, fonts, and geocoding v6 were all checked, on
+    /// success and on a 404. All of them send `x-amz-cf-id` instead, since
+    /// the API sits behind CloudFront. Checking only the conventional name
+    /// would make this whole feature inert, which is what this test guards
+    /// against.
     #[test]
     fn the_cloudfront_id_is_read_when_there_is_no_request_id() {
         let mut map = reqwest::header::HeaderMap::new();
@@ -2224,8 +2195,8 @@ mod tests {
         );
     }
 
-    /// A service that sends its own id means it more specifically than the
-    /// CDN in front of it does.
+    /// A service that sends its own id is more specific than the CDN in
+    /// front of it.
     #[test]
     fn an_explicit_request_id_outranks_the_cloudfront_one() {
         let mut map = reqwest::header::HeaderMap::new();
@@ -2246,7 +2217,7 @@ mod tests {
         assert_eq!(request_id(&map), None);
     }
 
-    /// A header present but blank says nothing, and an empty request id would
+    /// A present-but-blank header says nothing; an empty request id would
     /// print as `Request ID:` with nothing after it.
     #[test]
     fn a_blank_header_reads_as_absent() {
@@ -2272,10 +2243,9 @@ mod tests {
         assert_eq!(ResponseHeaders::read(&map).next_page, None);
     }
 
-    /// `--id` searches the page it was handed. On a paginated response
-    /// "No row has the id" is true of the page and may be false of the
-    /// listing, which is the most misleading form of the truncation this
-    /// path exists to stop.
+    /// On a paginated response, "No row has the id" is true of this page
+    /// but may be false of the whole listing — the most misleading form
+    /// of truncation this path exists to prevent.
     #[test]
     fn an_id_miss_on_a_paginated_listing_says_the_row_may_be_later() {
         let page = NextPage::of(&[param("start")], "https://api.mapbox.com/a?start=3");
@@ -2312,20 +2282,20 @@ mod tests {
         assert_eq!(err.downcast_ref::<CliError>().unwrap().fix, None);
     }
 
-    /// The shape mapbox/mcp-server fixed in `directions_tool`: a value spliced
-    /// into the path used to append query parameters the caller never asked
-    /// for. Verified against `reqwest::Url` at the time — `x?fresh=true` gave
-    /// `query = fresh=true&access_token=…`.
+    /// The shape mapbox/mcp-server fixed in `directions_tool`: a spliced-in
+    /// value used to append query parameters the caller never asked for.
+    /// Verified against `reqwest::Url`: `x?extra=1` gave
+    /// `query = extra=1&access_token=…`.
     #[test]
     fn a_path_parameter_cannot_inject_a_query_string() {
-        let safe = path_segment("style_id", "x?fresh=true").expect("encoded, not refused");
-        assert_eq!(safe, "x%3Ffresh=true");
+        let safe = path_segment("style_id", "x?extra=1").expect("encoded, not refused");
+        assert_eq!(safe, "x%3Fextra=1");
     }
 
-    /// With the caller's token and the command's method attached, this aimed a
+    /// With the caller's token and method attached, this used to aim a
     /// `DELETE` at whatever path the value resolved to. The host was never
-    /// reachable — `//evil`, `https://evil` and `x@evil` all stay on
-    /// `api.mapbox.com` — but the path was.
+    /// reachable this way (`//evil`, `https://evil`, `x@evil` all stay on
+    /// `api.mapbox.com`), but the path was.
     #[test]
     fn a_path_parameter_cannot_retarget_the_path() {
         let safe = path_segment("style_id", "../../tokens/v2/victim").expect("encoded");
@@ -2333,18 +2303,18 @@ mod tests {
         assert!(!safe.contains('/'), "one segment, not four: {safe}");
     }
 
-    /// `\` is a path separator too, for a special scheme — WHATWG says so and
-    /// `reqwest::Url` agrees: `..\..\tokens` resolved just as `../../tokens`
-    /// did. Encoding `/` alone would have left this open.
+    /// `\` is also a path separator for special schemes — WHATWG says so,
+    /// and `reqwest::Url` agrees: `..\..\tokens` resolves just like
+    /// `../../tokens`. Encoding `/` alone would leave this open.
     #[test]
     fn a_backslash_cannot_retarget_the_path_either() {
         let safe = path_segment("style_id", r"..\..\tokens").expect("encoded");
         assert_eq!(safe, "..%5C..%5Ctokens");
     }
 
-    /// A fragment is not sent to the server, so this silently truncated the
-    /// path rather than redirecting it — a request to somewhere the caller
-    /// could not see in what they typed.
+    /// A fragment is never sent to the server, so this used to silently
+    /// truncate the path instead of redirecting it — a request to
+    /// somewhere the caller couldn't see from what they typed.
     #[test]
     fn a_fragment_cannot_truncate_the_path() {
         assert_eq!(
@@ -2353,11 +2323,11 @@ mod tests {
         );
     }
 
-    /// **Refused, not encoded, and that distinction is the point.** Encoding
-    /// does not stop a dot segment: WHATWG reads `%2e%2e` as one too, so a
-    /// value of exactly `..` climbs a level however it is spelled. Encoding
-    /// the separators handles the multi-level case by collapsing it into one
-    /// segment; this handles what is left.
+    /// **Refused, not encoded — that distinction is the point.** Encoding
+    /// doesn't stop a dot segment: WHATWG reads `%2e%2e` as one too, so a
+    /// value of exactly `..` climbs a level no matter how it's spelled.
+    /// Encoding the separators handles the multi-level case (it collapses
+    /// into one segment); this handles what's left over.
     #[test]
     fn a_dot_segment_is_refused_however_it_is_spelled() {
         for value in ["..", ".", "%2e%2e", "%2E%2E", "%2e", ".%2e", "%2e."] {
@@ -2366,19 +2336,19 @@ mod tests {
         }
     }
 
-    /// Encoded dots *and* encoded slashes together, which is the shape that
-    /// looks like traversal and is not.
+    /// Encoded dots *and* encoded slashes together — looks like traversal,
+    /// isn't.
     ///
-    /// `%2f` is never decoded into a separator by the URL parser, so this
-    /// stays one segment on the wire — unlike encoded dots with *raw* slashes
-    /// (`%2e%2e/%2e%2e/x`), which the parser does resolve and which the
-    /// encoding above is what stops. It is left alone on purpose: percent-
-    /// encoded values are a documented Mapbox feature, not an attack
-    /// signature. A custom marker overlay is
+    /// `%2f` is never decoded into a real separator by the URL parser, so
+    /// this stays one segment on the wire — unlike encoded dots with
+    /// *raw* slashes (`%2e%2e/%2e%2e/x`), which the parser does resolve,
+    /// and which the encoding above already stops. Left alone on purpose:
+    /// percent-encoded values are a documented Mapbox feature, not an
+    /// attack signature. A custom marker overlay is
     /// `url-https%3A%2F%2Fexample.com%2Fmarker.png(…)`, `geojson(…)` takes
-    /// URI-encoded GeoJSON, and the spec says a bbox's brackets "may be sent
-    /// literally or percent-encoded as `%5B`". Refusing these would break all
-    /// three.
+    /// URI-encoded GeoJSON, and the spec says a bbox's brackets "may be
+    /// sent literally or percent-encoded as `%5B`". Refusing these would
+    /// break all three.
     #[test]
     fn a_percent_encoded_separator_stays_one_segment() {
         let value = "%2e%2e%2fvictim";
@@ -2399,10 +2369,10 @@ mod tests {
         );
     }
 
-    /// **The reason this encodes four characters and not everything outside
-    /// RFC 3986's unreserved set.** These values carry punctuation on purpose,
-    /// and percent-encoding it would rewrite requests that work today —
-    /// `static get-image`'s template alone is
+    /// **Why this encodes only four characters, not everything outside
+    /// RFC 3986's unreserved set.** These values carry punctuation on
+    /// purpose, and percent-encoding it would rewrite requests that work
+    /// today — `static get-image`'s template alone is
     /// `…/static/{overlay}/{lon},{lat},{zoom},{bearing},{pitch}/{width}x{height}{highRes}{format}`.
     #[test]
     fn punctuation_a_path_parameter_legitimately_carries_is_untouched() {
@@ -2422,8 +2392,8 @@ mod tests {
         }
     }
 
-    /// An empty optional parameter still drops its whole segment, which
-    /// several operations rely on — encoding must not have taken that away.
+    /// Several operations rely on an empty optional parameter still
+    /// dropping its whole segment — encoding must not break that.
     #[test]
     fn an_empty_optional_parameter_still_drops_its_segment() {
         let safe = path_segment("draft", "").expect("empty is not a dot segment");

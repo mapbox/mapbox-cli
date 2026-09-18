@@ -19,6 +19,8 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- Clean up.
+
 ### Added
 
 - The README now documents installing without the install script: the

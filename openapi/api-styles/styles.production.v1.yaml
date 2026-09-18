@@ -34,10 +34,6 @@ tags:
   description: Create, read, update, and delete map styles
 - name: Sprites
   description: Manage SVG images within a style's sprite
-- name: Folders
-  description: Organize styles, tilesets, and datasets into folders
-- name: Sessions
-  description: Billing session tracking endpoints
 paths:
   /styles/v1/{username}:
     get:

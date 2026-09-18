@@ -1,6 +1,6 @@
 # Implemented commands
 
-Every command the CLI ships: four auth commands, 34 API operations across 11
+Every command the CLI ships: four auth commands, 33 API operations across 10
 command groups, the tilesets-cli proxy, `completion` and `generate-skills`. Each is
 shown in both of its renderings. Which one you get is decided by `--output`, whose default
 (`auto`) reads stdout: a terminal gets the left column, a pipe or redirect
@@ -10,7 +10,7 @@ gets the right one. See
 Account names, style ids and tokens in the examples are replaced; everything
 else is as the API sent it.
 
-**29 of the 34 were run against the live API and show what came back:** 26
+**29 of the 33 were run against the live API and show what came back:** 26
 on 2026-09-01, and `fonts list`, `fonts upload` and `fonts delete` on
 2026-09-08, once `fonts:list`/`fonts:write` became
 registrable. The write operations were exercised as round trips on
@@ -29,12 +29,10 @@ commands and the flags they take — is held to `mapbox --schema` on every
 `cargo test` run by `tests/docs_contract.rs`, so the half of this page that
 can be checked cannot fall behind the binary.
 
-The remaining 5 give the response shape from the spec or the docs instead
-of a live capture, for two different reasons. `rasterarrays get-mrt-tile`
-needs a raster-array job this account does not have. The other four are
-`search`'s: read-only and safe to run, but the credentials used to write
-this page have no Search Box API access, so every call answers 401 rather
-than a result.
+The remaining 4 give the response shape from the spec or the docs instead
+of a live capture: they're all `search`'s — read-only and safe to run, but
+the credentials used to write this page have no Search Box API access, so
+every call answers 401 rather than a result.
 
 Each **Parameters** section lists only what is specific to its command. The
 globals every API command takes are
@@ -102,7 +100,6 @@ nests, and is typed `mapbox styles draft get`.
 **[Tilesets](#tilesets)** —
 [tilesets.get-tile](#mapbox-tilesets-get-tile) ·
 [tilesets.get-mvt](#mapbox-tilesets-get-mvt) ·
-[tilesets.get-mrt](#mapbox-tilesets-get-mrt) ·
 [tilesets.query](#mapbox-tilesets-query)
 
 **[Tilesets CLI](#tilesets-cli)** — [tilesets-cli](#mapbox-tilesets-cli-args)
@@ -349,7 +346,7 @@ Docs: https://docs.mapbox.com/api/accounts/tokens/
 
 ## API command groups
 
-34 operations across 11 command groups. Ten are generated from the OpenAPI specs
+33 operations across 10 command groups. Nine are generated from the OpenAPI specs
 vendored in `openapi/`; `search` is the one exception — a hand-authored
 spec versioned in this repo's own `custom-openapi/`, see
 `custom-openapi/README.md`.
@@ -367,7 +364,6 @@ operation moved to `tilesets`.
 | [`accounts`](#accounts) | **3** |
 | [`fonts`](#fonts) | **3** |
 | [`geocoder`](#geocoder) | **3** |
-| [`rasterarrays`](#raster-arrays) | **1** |
 | [`search`](#search) | **4** |
 | [`sprites`](#sprites) | **5** |
 | [`static-images`](#static-images) | **3** |
@@ -376,7 +372,7 @@ operation moved to `tilesets`.
 | [`tilequery`](#tilequery) | **1** |
 | [`tilesets`](#tilesets) | **2** |
 
-The [Contents](#contents) list above names every one of the 34.
+The [Contents](#contents) list above names every one of the 33.
 
 **Everything else the Mapbox specs describe is not here at all.** Not
 hidden, not shipped as a command that refuses: absent from the spec content
@@ -487,7 +483,7 @@ Three things worth knowing about the read forms:
 A command that changes something takes `--dry-run`, which prints the request
 it would send, on stdout, and sends nothing. Which commands those are is not
 a list anyone keeps: it is every `POST`, `PUT`, `PATCH` and `DELETE` — 12 of
-the 34 operations — plus `auth login`, `auth logout`, `auth refresh` and
+the 33 operations — plus `auth login`, `auth logout`, `auth refresh` and
 `generate-skills`. A read-only `GET` does not take it, so `mapbox styles
 list --dry-run` is a usage error rather than a no-op. It rehearses
 rather than describes: `--data` is parsed and every `--file` is read, so a
@@ -568,8 +564,8 @@ properties directly. A conforming response never reaches that case:
 `geocoder` requires `name`/`feature_type` on every feature, `tilequery`
 requires `tilequery.layer`.
 
-Four of the eleven command groups can answer with bytes — `rasterarrays`,
-`static-images`, `static-tiles` and `tilesets`. Those bypass `--output` in
+Three of the ten command groups can answer with bytes — `static-images`,
+`static-tiles` and `tilesets`. Those bypass `--output` in
 both modes:
 
 <table>
@@ -817,14 +813,8 @@ afterward.
 
 ### `mapbox fonts list`
 
-The font faces an account owns.
-
-#### Parameters
-
-`--fresh` skips the cache. Worth knowing even outside a script: a font
-just uploaded does not appear without it — the API's own `Cache-Control`
-otherwise serves a listing from before the upload for some window
-afterward.
+The font faces an account owns. Cached: a font just uploaded may not appear
+for some window afterward, per the API's own `Cache-Control`.
 
 #### Examples
 
@@ -1915,8 +1905,7 @@ mapbox styles get ckstyle00000000000000001a --username user -o json > style.json
 — is served through CloudFront with `max-age=900`, so a `styles get` right
 after an `styles update` may still show the old document. The mutation
 commands return the new state themselves, from the origin; trust that rather
-than reading back. `list-files --fresh true` is the one read that rebuilds
-instead of being served from cache.
+than reading back.
 
 A style document is a nested tree of layers and sources, not rows, so it
 stays JSON in both modes — indented under `text`, one line under `json`.
@@ -2247,18 +2236,17 @@ beforehand.
 
 ## Tilesets
 
-Tiles by tileset id, plus the raster-array and vector-tile lookups that key
-off one: raster from the Raster Tiles API, vector from the Vector Tiles
-API, MRT tiles from a raster-array job, and `query` from the Tilequery
-API. Four operations, out of four different specs, under one command
-group (#116) — a caller asking about a tileset is asking the same kind of
-question regardless of which API answers it.
+Tiles by tileset id, plus the vector-tile lookup that keys off one: raster
+from the Raster Tiles API, vector from the Vector Tiles API, and `query`
+from the Tilequery API. Three operations, out of three different specs,
+under one command group (#116) — a caller asking about a tileset is asking
+the same kind of question regardless of which API answers it.
 
 Not to be confused with [`mapbox tilesets-cli`](#tilesets-cli), which
 forwards to the separately installed Python Tilesets CLI and shares
 nothing with this but the word.
 
-The three tile commands return bytes, so `--output` does not apply on
+The two tile commands return bytes, so `--output` does not apply on
 them — redirect to a file. `query` returns GeoJSON.
 
 ### `mapbox tilesets get-tile`
@@ -2350,44 +2338,6 @@ redirect it to a file, e.g. `... > out.mvt`.
 $ mapbox tilesets get-mvt … > tile.mvt
 $ ls -l tile.mvt
 -rw-r--r--  80741  tile.mvt
-```
-
-</td></tr>
-</table>
-
-### `mapbox tilesets get-mrt`
-
-One MRT tile from a raster-array job.
-
-#### Parameters
-
-`--jobid <jobid>` is required and comes from the raster-array job that
-produced the tiles.
-
-#### Examples
-
-```sh
-mapbox tilesets get-mrt --jobid <jobid> <tileset-id> 12 2048 1361 > tile.mrt
-```
-
-#### Outputs
-
-Not exercised: this account has no raster-array job. A `--jobid` that does
-not exist gets a 500 rather than a 404, so the error says nothing useful
-about what was wrong:
-
-<table>
-<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
-<tr><td>
-
-```
-Error: Internal Server Error (HTTP 500)
-```
-
-</td><td>
-
-```json
-{"code":"http_500","message":"Internal Server Error","status":500}
 ```
 
 </td></tr>

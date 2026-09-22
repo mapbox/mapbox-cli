@@ -23,6 +23,14 @@ that may never merge. They are not releases and are not listed here.
 
 ### Added
 
+- A native `aarch64-pc-windows-msvc` build. Windows on Arm ran the x64 build
+  under emulation before this — including inside a VM on Apple Silicon, the
+  larger of the two populations this serves — which `install.ps1` already
+  said out loud and now no longer has reason to. `install.ps1` already asked
+  the manifest for this target before falling back to the x64 one, and
+  `.cargo/config.toml` already named it, so publishing the artifact was the
+  whole client-side change.
+
 - The README now documents installing without the install script: the
   archives are plain HTTP downloads, `manifest.json` lists every target with
   its checksum, and the commands to verify and extract one are written out.

@@ -23,6 +23,14 @@ that may never merge. They are not releases and are not listed here.
 
 ### Added
 
+- `install.sh`/`install.ps1` now document a convention for `MAPBOX_CLI_INSTALL_SOURCE`
+  when a coding agent invokes the installer on someone's behalf: `agent-<name>`
+  (`agent-claude-code`, `agent-cursor`), so an access-log query can tell those
+  installs apart from a human or CI one. A dash rather than the slash an
+  earlier proposal used — `/` is stripped by the installers' own sanitizer,
+  which would have collapsed `agent/claude-code` into `agentclaude-code` and
+  lost the separator. Comment-only: neither installer's behavior changed.
+
 - The README now documents installing without the install script: the
   archives are plain HTTP downloads, `manifest.json` lists every target with
   its checksum, and the commands to verify and extract one are written out.

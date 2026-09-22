@@ -96,6 +96,22 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).to_string()
 }
 
+/// Writes the persisted opt-out through the real `mapbox config set`, rather
+/// than hand-writing `config.json` the way [`seed_cache`] hand-writes the
+/// cache — proving the two commands agree on the file, not just that this
+/// test's idea of its shape does.
+fn set_update_check(home: &Path, value: &str) {
+    let out = command(home)
+        .args(["config", "set", "update-check", value])
+        .output()
+        .expect("run mapbox config set");
+    assert!(
+        out.status.success(),
+        "mapbox config set update-check {value} failed: {}",
+        stderr(&out)
+    );
+}
+
 /// A loopback stand-in for `<channel>/latest/manifest.json`.
 ///
 /// Serves one request and reports the request head it saw, so a test can
@@ -296,6 +312,30 @@ fn the_switches_stop_the_child_too() {
         );
         drop(server);
     }
+}
+
+/// The same proof as [`the_switches_stop_the_child_too`], for the persisted
+/// setting rather than an environment variable — and written through the
+/// CLI's own `config set` instead of a hand-seeded file, so this is really
+/// two commands agreeing rather than one test's assumption about both.
+#[test]
+fn the_persisted_opt_out_stops_the_child_too() {
+    let home = scratch("child-config");
+    set_update_check(&home, "off");
+    let (server, url) = manifest_server(manifest(NEWER));
+
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_UPDATE_REFRESH", "1")
+        .env("MAPBOX_INTERNAL_UPDATE_URL", &url)
+        .output()
+        .expect("run mapbox");
+
+    assert!(out.status.success());
+    assert!(
+        read_cache(&home).is_none(),
+        "a persisted `update-check off` did not stop the child from fetching"
+    );
+    drop(server);
 }
 
 // --------------------------------------------------------------- no terminal
@@ -520,6 +560,31 @@ fn either_switch_silences_the_notice() {
             "{name}={value} did not silence the notice: {session}"
         );
     }
+}
+
+/// The persisted opt-out silences the notice at a terminal too, the same as
+/// either environment switch does above.
+#[cfg(unix)]
+#[test]
+fn the_persisted_opt_out_silences_the_notice() {
+    let home = scratch("pty-config");
+    let out_path = home.join("stdout");
+    seed_cache(&home, NEWER, now(), 0);
+    set_update_check(&home, "off");
+
+    let (session, _) = under_a_pty(
+        &home,
+        &out_path,
+        "--version",
+        &[("MAPBOX_INTERNAL_UPDATE_URL", &closed_port_url())],
+        "mapbox ",
+    )
+    .expect("neither `script` form ran the command");
+
+    assert!(
+        !session.contains(NOTICE_MARK),
+        "a persisted `update-check off` did not silence the notice: {session}"
+    );
 }
 
 /// The whole loop, as a person would meet it: a run with a cold cache

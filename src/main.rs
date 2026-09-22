@@ -17,6 +17,7 @@ mod agent_skills;
 mod api_command_surface;
 mod auth;
 mod completion;
+mod config;
 mod confirm;
 mod deprecation;
 mod executor;
@@ -591,6 +592,10 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
 
     app = app.subcommand(uninstall::command());
 
+    // Beside `uninstall`: the other command that only ever touches this
+    // machine, never the network.
+    app = app.subcommand(config::command());
+
     app = app.subcommand(account_usage::command());
 
     app.subcommand(tilesets_cli::command())
@@ -1041,6 +1046,14 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                 uninstall::run(assume_yes, mode)?
             }
         }
+        // Also ahead of the generic service arm, and for the same reason as
+        // `uninstall`: this reads and writes a file on this machine and
+        // makes no request.
+        Some((config::COMMAND, config_matches)) => match config_matches.subcommand() {
+            Some(("get", get_matches)) => config::get(get_matches, mode)?,
+            Some(("set", set_matches)) => config::set(set_matches, mode)?,
+            _ => unreachable!("`config` sets subcommand_required(true)"),
+        },
         // Token resolution mirrors the service arm below, minus path
         // placeholders, a request body, and `--dry-run` — this GET always refreshes.
         Some((account_usage::COMMAND, usage_matches)) => {

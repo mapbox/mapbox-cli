@@ -19,16 +19,28 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox isochrone`, how far you can get from a point in a given time or
+  distance, for driving (with or without live traffic), walking, or
+  cycling, returned as GeoJSON polygons or linestrings. No subcommand:
+  like `mapbox directions` below, this API has one operation, so there's
+  nothing a second word would disambiguate; see `spec::FLATTENED_SERVICES`.
+  Hand-authored into `custom-openapi/` for the same reason `mapbox
+  directions` was: no upstream spec exists yet. Reuses `directions`'s fix
+  for a spec parameter named `profile` colliding with the global
+  `--profile` flag (`ARG_NAME_OVERRIDES` already covered the mechanism,
+  this is just a second row, not a second fix) and its free-form (not
+  `enum`) routing profile, for the same OEM-account reason.
+
 - `mapbox directions`, routes between 2-25 waypoints for driving (with
   or without live traffic), walking, or cycling. No subcommand: this API
-  has one operation, so — like `mapbox usage` — there's nothing a second
+  has one operation, so, like `mapbox usage`, there's nothing a second
   word would disambiguate; see `spec::FLATTENED_SERVICES`. Hand-authored
-  into `custom-openapi/` rather than waiting on an upstream spec — the whole
-  Navigation API category had no CLI coverage before this; excludes the
-  ~30 electric-vehicle-routing parameters (`engine=electric` and everything
-  under it), which describe one vehicle's charge/discharge curve down to
-  the watt and are a poor fit for a hand-typed CLI flag — left for a
-  follow-up.
+  into `custom-openapi/` rather than waiting on an upstream spec. The
+  whole Navigation API category had no CLI coverage before this; excludes
+  the ~30 electric-vehicle-routing parameters (`engine=electric` and
+  everything under it), which describe one vehicle's charge/discharge
+  curve down to the watt and are a poor fit for a hand-typed CLI flag.
+  Left for a follow-up.
 
   The routing profile (`mapbox/driving` etc.) is a free-form value, not a
   fixed set of four: an early version rejected anything else client-side,
@@ -43,8 +55,8 @@ that may never merge. They are not releases and are not listed here.
   outright; and a path parameter whose every legitimate value contains a
   literal `/` (`mapbox/driving`) was being percent-encoded to `%2F` by the
   same escaping that stops a free-text value from smuggling in extra path
-  segments — safe to skip for a parameter named in a small table
-  (`UNESCAPED_PATH_PARAMS`) as one whose values are trusted to carry that
+  segments. That's safe to skip for a parameter named in a small table
+  (`UNESCAPED_PATH_PARAMS`) whose values are trusted to carry that
   character on purpose.
 
 - `MAPBOX_CLI_EXTRA_QUERY` appends raw query parameters to every request, in

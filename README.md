@@ -170,6 +170,7 @@ Each API is a top-level subcommand, one sub-subcommand per operation:
 mapbox accounts *
 mapbox fonts *
 mapbox geocoder *
+mapbox isochrone *
 mapbox search *
 mapbox sprites *
 mapbox static *

@@ -249,7 +249,7 @@ fn verify_reports_an_unreachable_host() {
 }
 
 #[test]
-fn a_lowercase_proxy_variable_is_named_too() {
+fn a_lowercase_proxy_variable_is_reported_under_its_uppercase_name() {
     let home = scratch("proxy-lowercase");
 
     let out = command(&home)
@@ -259,8 +259,13 @@ fn a_lowercase_proxy_variable_is_named_too() {
         .expect("run mapbox doctor");
     assert!(out.status.success());
 
+    // Reported as `HTTPS_PROXY`, not `https_proxy`: Windows environment
+    // variables are case-insensitive, so the two spellings are the same
+    // variable there, and reporting under whichever was literally set would
+    // print `HTTPS_PROXY` on Windows for this exact test regardless — the
+    // canonical name is what both platforms agree on.
     let active = stdout(&out)["proxy"]["active"].clone();
-    assert_eq!(active, serde_json::json!(["https_proxy"]));
+    assert_eq!(active, serde_json::json!(["HTTPS_PROXY"]));
 }
 
 /// The bug this pins: the text line used to read only

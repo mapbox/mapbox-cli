@@ -63,13 +63,22 @@ fn api_host() -> String {
 /// as it does everywhere else — see [`http::requested`].
 const DEFAULT_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The proxy variables `reqwest` reads, upper- and lowercase both — curl's
-/// convention, which is also `libcurl`-derived `getenv` logic's, and reqwest
-/// follows it. Listing both spellings explicitly rather than comparing
-/// case-insensitively means a reader can see exactly what is checked without
-/// having to know that convention exists. Named here, once, so a variable
-/// added or removed from that behavior is at least this file's problem to
-/// notice, not only `tests/proxy.rs`'s.
+/// The proxy variables `reqwest` reads, paired with the lowercase spelling
+/// it also honors — curl's convention, which is also `libcurl`-derived
+/// `getenv` logic's. Checked as a pair rather than as four independent
+/// names because Windows environment variables are case-insensitive:
+/// `HTTPS_PROXY` and `https_proxy` are the same variable there, so checking
+/// both spellings as separate entries reported it twice on Windows the
+/// first time this shipped, once under each spelling, for a value set only
+/// once. Reporting under the uppercase name when either is set avoids that
+/// without pretending Unix's two independently-settable variables don't
+/// exist — it just means this asks "is *a* proxy configured for this
+/// concern", not "list every spelling that happens to be set", which is the
+/// question a person actually has.
+///
+/// Named here, once, so a variable added or removed from `reqwest`'s
+/// behavior is at least this file's problem to notice, not only
+/// `tests/proxy.rs`'s.
 ///
 /// This still only answers "is a proxy variable set", not "would this
 /// request actually use one" — `NO_PROXY` can exempt a specific host, and a
@@ -78,15 +87,11 @@ const DEFAULT_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
 /// answers "was a proxy applied to this request" for a caller to read back;
 /// closing them means asking upstream for one, not maintaining a longer list
 /// here.
-const PROXY_VARS: &[&str] = &[
-    "HTTPS_PROXY",
-    "https_proxy",
-    "HTTP_PROXY",
-    "http_proxy",
-    "ALL_PROXY",
-    "all_proxy",
-    "NO_PROXY",
-    "no_proxy",
+const PROXY_VARS: &[(&str, &str)] = &[
+    ("HTTPS_PROXY", "https_proxy"),
+    ("HTTP_PROXY", "http_proxy"),
+    ("ALL_PROXY", "all_proxy"),
+    ("NO_PROXY", "no_proxy"),
 ];
 
 pub fn command() -> Command {
@@ -201,10 +206,11 @@ struct ProxyReport {
 
 impl ProxyReport {
     fn current() -> Self {
+        let set = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty());
         let active = PROXY_VARS
             .iter()
-            .copied()
-            .filter(|name| std::env::var_os(name).is_some_and(|v| !v.is_empty()))
+            .filter(|(upper, lower)| set(upper) || set(lower))
+            .map(|(upper, _)| *upper)
             .collect();
         ProxyReport { active }
     }

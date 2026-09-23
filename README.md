@@ -342,6 +342,13 @@ not before. A read-only command rejects it.
 `--timeout <SECONDS>` overrides either, `MAPBOX_TIMEOUT` sets it for a
 whole shell.
 
+### Extra query parameters
+
+`MAPBOX_CLI_EXTRA_QUERY` appends raw query parameters to every request this
+process sends, in the same `k1=v1&k2=v2` shape as a URL's own query string —
+for an API parameter this CLI's specs don't declare a flag for. `--debug`
+and `--dry-run` show it alongside everything else on the request.
+
 ### Proxies
 
 `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` are all honored, so
@@ -420,11 +427,15 @@ kept narrow:
 | What it sends | A `GET` for the channel's `latest/manifest.json`, with no token, no account, no command, and nothing about you or your machine beyond `User-Agent: mapbox-cli/<version>` |
 | When | At most once a day, and only when stderr is a terminal, so CI and piped runs never check and never print |
 | Where | A detached background process. Your command never waits on it: offline, the timing is unchanged and nothing is printed |
-| Off | `MAPBOX_NO_UPDATE_CHECK=1`, or `MAPBOX_CLI_NO_TELEMETRY=1`, which silences this too |
+| Off | `MAPBOX_NO_UPDATE_CHECK=1`, or `MAPBOX_CLI_NO_TELEMETRY=1`, which silences this too, for the shell session it's set in |
 
 `~/.mapbox/update-check.json` (or `$MAPBOX_CONFIG_DIR`) holds the answer
 between runs. A build that names no release channel never checks at all, and
 `cargo build` produces one.
+
+`mapbox config set update-check off` turns it off for good, in every shell —
+see [Config](docs/commands.md#config) — rather than just the session an
+environment variable happens to be set in.
 
 ### Privacy
 

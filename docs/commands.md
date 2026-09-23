@@ -60,6 +60,9 @@ nests, and is typed `mapbox styles draft get`.
 
 **[Uninstall](#uninstall)** — [uninstall](#mapbox-uninstall)
 
+**[Config](#config)** — [config.get](#mapbox-config-get) ·
+[config.set](#mapbox-config-set)
+
 **[Usage](#usage)** — [usage](#mapbox-usage)
 
 **[Accounts](#accounts)** —
@@ -3180,6 +3183,98 @@ Removed /home/user/.local/bin/mapbox.
 
 `--dry-run` prints `Dry run — nothing was changed.\nWould delete …` and
 `{ "dry_run": true, "path": … }` instead.
+
+---
+
+## Config
+
+Settings that persist across shells and sessions — `~/.mapbox/config.json`
+(or `$MAPBOX_CONFIG_DIR`), written the same way credentials are. One setting
+today, `update-check`, which mirrors `MAPBOX_NO_UPDATE_CHECK` (see [Update
+notices](../README.md#update-notices)) but stays off in every future shell
+rather than only the one the environment variable was set in.
+
+### `mapbox config get`
+
+Prints a setting's current value: `on` in `text` mode, `true`/`false` in
+`json`. Reading an unset `update-check` reports `on` — its default — rather
+than failing, the same forgiving read the update-check cache itself uses.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `<key>` | Which setting to read. Only `update-check` exists today. |
+
+#### Examples
+
+```sh
+mapbox config get update-check
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+on
+```
+
+</td><td>
+
+```json
+{
+  "key": "update-check",
+  "value": true
+}
+```
+
+</td></tr>
+</table>
+
+### `mapbox config set`
+
+Persists a setting to `~/.mapbox/config.json`, so it survives across shells
+without an environment variable.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `<key>` | Which setting to change. Only `update-check` exists today. |
+| `<value>` | `on` or `off`. |
+
+#### Examples
+
+```sh
+mapbox config set update-check off
+
+mapbox config set update-check on
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+update-check set to off.
+```
+
+</td><td>
+
+```json
+{
+  "key": "update-check",
+  "value": false
+}
+```
+
+</td></tr>
+</table>
 
 ---
 

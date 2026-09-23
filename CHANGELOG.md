@@ -19,7 +19,11 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
-- Clean up.
+- `MAPBOX_CLI_EXTRA_QUERY` appends raw query parameters to every request, in
+  the same `k1=v1&k2=v2` shape as a URL's own query string — for an API
+  parameter this CLI's specs don't declare a flag for.
+
+## 0.3.0 - 2026-09-22
 
 ### Added
 
@@ -99,6 +103,8 @@ that may never merge. They are not releases and are not listed here.
   reader whether they were moving junk or a working credential; it now says
   the token still works and gives the `MAPBOX_ACCESS_TOKEN` line that keeps
   using it. The token itself is never printed, and a test holds that.
+
+- Code & Command Clean up.
 
 ### Fixed
 

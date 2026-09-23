@@ -420,6 +420,12 @@ fn api_command(app: &Command, svc: &ServiceSpec, op: &Operation) -> CommandEntry
             required: true,
             location: Some("path"),
             omit_with_empty: omits_with_empty(param, &op.path_template),
+            // Named as well as filled, the same reason `username_argument`
+            // is: `ARG_NAME_OVERRIDES` (`directions.yaml`'s `profile`, kept
+            // apart from the global `--profile`) means an argument's own
+            // name can differ from the `{placeholder}` it fills, and an
+            // agent matching one against the other would find nothing.
+            fills: (param.arg_name != param.name).then(|| format!("{{{}}}", param.name)),
             ..parameter(param, ArgKind::Positional)
         })
         .collect();

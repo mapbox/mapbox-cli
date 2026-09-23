@@ -151,7 +151,7 @@ fn dispatch(
 
     for param in &op.path_params {
         if let Some(val) = matches.get_one::<String>(&param.arg_name) {
-            let safe = path_segment(&param.name, val)?;
+            let safe = path_segment_for(param, val)?;
             path = substitute_path_param(&path, &param.name, &safe, param.required);
         }
     }
@@ -1219,6 +1219,27 @@ fn path_segment<'a>(name: &str, value: &'a str) -> Result<Cow<'a, str>> {
     Ok(Cow::Owned(encoded))
 }
 
+/// [`path_segment`], skipped for a parameter clap has already constrained to
+/// one of a fixed set of literal strings.
+///
+/// `path_segment`'s escaping exists for a value nobody has constrained — see
+/// its own doc comment. An enum-valued parameter is different: clap's
+/// `PossibleValuesParser` has already limited it to one of the spec's own
+/// literal strings before this runs, so there is nothing left for a caller
+/// to smuggle in. That distinction matters here specifically:
+/// `directions.yaml`'s `profile` enum is `mapbox/driving`, `mapbox/walking`,
+/// etc. — one path parameter whose only valid values contain a literal `/`,
+/// which the API's own routing depends on reaching it unescaped. Encoding it
+/// to `%2F` is exactly the request-redirection fix `path_segment` exists
+/// for, misapplied to a value that was never free text.
+fn path_segment_for<'a>(param: &Parameter, value: &'a str) -> Result<Cow<'a, str>> {
+    if param.enum_values.is_empty() {
+        path_segment(&param.name, value)
+    } else {
+        Ok(Cow::Borrowed(value))
+    }
+}
+
 fn substitute_path_param(path: &str, name: &str, value: &str, required: bool) -> String {
     let placeholder = format!("{{{name}}}");
     let segment = format!("/{placeholder}");
@@ -1402,8 +1423,8 @@ fn write_binary(body: &[u8], content_type: &str) -> Result<()> {
 mod tests {
     use super::{
         describe_body, empty_success_line, extra_query_from_env, file_name_of,
-        is_binary_content_type, part_media_type, path_segment, payload_of, query_pairs,
-        redacted_url, request_id, resolve_body_source, resolve_data, shell_value,
+        is_binary_content_type, part_media_type, path_segment, path_segment_for, payload_of,
+        query_pairs, redacted_url, request_id, resolve_body_source, resolve_data, shell_value,
         substitute_path_param, with_page_context, BodySource, NextPage, ResponseHeaders,
         ACCESS_TOKEN, EXTRA_QUERY_ENV, REQUEST_ID_HEADERS,
     };
@@ -2526,5 +2547,28 @@ mod tests {
             substitute_path_param("/styles/v1/{u}/{id}/{draft}", "draft", &safe, false),
             "/styles/v1/{u}/{id}"
         );
+    }
+
+    /// `directions.yaml`'s `profile` is exactly this shape: a path parameter
+    /// whose only valid values, `mapbox/driving` and friends, carry a
+    /// literal `/` the API's routing depends on. Plain `path_segment` would
+    /// encode it to `%2F` and 404 — this is why `path_segment_for` exists.
+    #[test]
+    fn an_enum_valued_path_parameter_keeps_its_slash() {
+        let mut profile = param("profile");
+        profile.enum_values = vec!["mapbox/driving".to_string(), "mapbox/walking".to_string()];
+
+        let safe = path_segment_for(&profile, "mapbox/driving").expect("not refused");
+        assert_eq!(safe, "mapbox/driving", "the slash must survive, unencoded");
+    }
+
+    /// The bypass is keyed on the parameter carrying an enum, not on its
+    /// name or its value's shape — a non-enum parameter goes through the
+    /// same escaping as ever, `/` included.
+    #[test]
+    fn a_non_enum_path_parameter_is_still_escaped() {
+        let style_id = param("style_id");
+        let safe = path_segment_for(&style_id, "../../tokens/v2/victim").expect("encoded");
+        assert_eq!(safe, "..%2F..%2Ftokens%2Fv2%2Fvictim");
     }
 }

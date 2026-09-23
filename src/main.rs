@@ -116,9 +116,14 @@ fn help_text(param: &spec::Parameter) -> String {
 /// `allow_negative_numbers`, set on every generated command, only recognizes
 /// a value that is *itself* a number — `-74.0`, not `-121.9,37.4`. A
 /// comma-joined pair still reads as a cluster of short flags, which is what
-/// made `--proximity -121.9,37.4` unusable west of Greenwich. These four are
-/// every parameter across the twelve specs that takes one.
-const HYPHEN_LEADING_VALUE_PARAMS: &[&str] = &["proximity", "bbox", "near", "origin"];
+/// made `--proximity -121.9,37.4` unusable west of Greenwich. These five are
+/// every parameter across the specs that takes one — `coordinates` is a
+/// positional rather than a flag (`directions.yaml`'s path parameter), but
+/// the same shape and the same failure: `mapbox directions route
+/// mapbox/driving -122.42,37.78` read `-122.42,37.78` as an unrecognized
+/// flag before this was added.
+const HYPHEN_LEADING_VALUE_PARAMS: &[&str] =
+    &["proximity", "bbox", "near", "origin", "coordinates"];
 
 /// Whether clap should accept a `-`-leading value for this parameter.
 ///

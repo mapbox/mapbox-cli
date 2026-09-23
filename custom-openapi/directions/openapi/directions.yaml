@@ -1,0 +1,400 @@
+openapi: "3.0.0"
+# `parse_spec` turns `info.description` below into this service's clap
+# `long_about`, so it also reaches `mapbox directions --help`, `--schema` and
+# `generate-skills` output. Keep it to API prose only — the provenance below
+# is for whoever edits this file, not for a CLI user:
+#
+# Hand-authored down to the parameters documented at
+# docs.mapbox.com/api/navigation/directions: routes between 2-25 waypoints
+# for driving (with or without live traffic), walking, and cycling. Excludes
+# the ~30 electric-vehicle-routing parameters (`engine=electric` and
+# everything under it) — those describe a vehicle's charging curve down to
+# the watt, which is data an integration passes in from a vehicle profile,
+# not something to hand-type as CLI flags. The EV Charge Finder API is
+# Mapbox's dedicated per-vehicle routing product and the better fit for that
+# case; this file can grow the EV parameters later if that changes. Also
+# excludes POST — every other
+# operation this CLI wires up is one HTTP method per operation, and the spec
+# format here has no way to say "GET or POST, caller's choice" for the same
+# operationId. GET's 2-25 waypoint limit covers the CLI's own use (typed or
+# scripted, not machine-generated route requests with hundreds of stops), so
+# this is a real gap in the corner case, not a design flaw — noted for
+# whoever picks up POST as a follow-up. See `custom-openapi/README.md` for
+# how a file like this is wired in.
+info:
+  title: "Mapbox Directions API"
+  description: >-
+    Turn-by-turn routes between 2-25 waypoints, for driving (with or without
+    live traffic), walking, or cycling.
+  version: "0.0.0"
+servers:
+  - url: https://api.mapbox.com
+    description: Directions API
+paths:
+  /directions/v5/{profile}/{coordinates}:
+    get:
+      operationId: route
+      summary: A route between 2-25 waypoints.
+      description: >-
+        Returns one or more routes (`alternatives=true` for more than one)
+        between the given waypoints, in the order given. Coordinates are
+        always `{longitude},{latitude}`, and the route follows them in the
+        order listed — this is a route through fixed stops, not a
+        traveling-salesman solve; see the Optimization API for that.
+      parameters:
+        - name: "profile"
+          in: path
+          required: true
+          description: >-
+            The routing profile. `mapbox/driving-traffic` accounts for live
+            traffic conditions; `mapbox/driving` does not.
+          schema:
+            type: string
+            enum:
+              [
+                "mapbox/driving-traffic",
+                "mapbox/driving",
+                "mapbox/walking",
+                "mapbox/cycling",
+              ]
+          example: "mapbox/driving"
+        - name: "coordinates"
+          in: path
+          required: true
+          description: >-
+            2-25 waypoints, semicolon-separated, each `{longitude},{latitude}`
+            — the route visits them in this order.
+          schema:
+            type: string
+            minLength: 1
+          example: "-122.42,37.78;-122.45,37.91"
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+        - name: "alternatives"
+          in: query
+          required: false
+          description: >-
+            Return up to 2 alternative routes alongside the primary one.
+          schema:
+            type: boolean
+        # Prose rather than an `enum`: this is a comma-separated list, and
+        # the command builder turns a spec `enum` into a clap
+        # `PossibleValuesParser`, which accepts one value and would refuse
+        # `distance,duration`. Same reasoning as `search.yaml`'s `types`.
+        - name: "annotations"
+          in: query
+          required: false
+          description: >-
+            Segment-level metadata to add to each leg, comma-separated.
+            Requires `overview=full`. Options are `distance`, `duration`,
+            `speed`, `congestion`, `congestion_numeric`, `maxspeed`,
+            `closure`, `state_of_charge`.
+          schema:
+            type: string
+          example: "duration,distance"
+        - name: "avoid_maneuver_radius"
+          in: query
+          required: false
+          description: >-
+            Radius in meters, 1-1000, around the start point within which to
+            avoid a significant maneuver.
+          schema:
+            type: number
+            minimum: 1
+            maximum: 1000
+        - name: "bearings"
+          in: query
+          required: false
+          description: >-
+            `{angle},{degrees}` per waypoint, semicolon-separated, filtering
+            the road segments considered by direction of travel. One entry
+            per coordinate, or empty (`;;`) to skip a waypoint.
+          schema:
+            type: string
+        - name: "layers"
+          in: query
+          required: false
+          description: >-
+            A signed integer per waypoint, semicolon-separated, selecting a
+            road layer (Z-order) at that point on a multi-level road.
+          schema:
+            type: string
+        - name: "continue_straight"
+          in: query
+          required: false
+          description: >-
+            Whether to keep going straight at an intermediate waypoint
+            rather than u-turning back to it, even if that is faster.
+          schema:
+            type: boolean
+        # Prose rather than an `enum`, for the reason given on `annotations`
+        # above — this also accepts freeform `point(lon lat)` values a fixed
+        # enum couldn't represent at all.
+        - name: "exclude"
+          in: query
+          required: false
+          description: >-
+            Road types or specific points to route around, comma-separated.
+            Options are `motorway`, `toll`, `ferry`, `unpaved`,
+            `cash_only_tolls`, `country_border`, `state_border`, `tunnel`,
+            or one or more `point(lon lat)` values.
+          schema:
+            type: string
+          example: "motorway,toll"
+        - name: "geometries"
+          in: query
+          required: false
+          description: "The route geometry's format. Defaults to `polyline`."
+          schema:
+            type: string
+            enum: ["geojson", "polyline", "polyline6"]
+        # Prose rather than an `enum`, for the reason given on `annotations`
+        # above.
+        - name: "include"
+          in: query
+          required: false
+          description: >-
+            Special road types to allow, comma-separated. Options are
+            `hov2`, `hov3`, `hot`.
+          schema:
+            type: string
+        - name: "overview"
+          in: query
+          required: false
+          description: >-
+            How much geometry detail the response carries. Defaults to
+            `simplified`.
+          schema:
+            type: string
+            enum: ["full", "simplified", "false"]
+        - name: "radiuses"
+          in: query
+          required: false
+          description: >-
+            Maximum distance in meters a coordinate may snap to the road
+            network, semicolon-separated, one per coordinate — a number or
+            `unlimited`.
+          schema:
+            type: string
+        - name: "approaches"
+          in: query
+          required: false
+          description: >-
+            Which side of the road each waypoint should be approached from,
+            semicolon-separated — `unrestricted` or `curb` per coordinate.
+          schema:
+            type: string
+        - name: "steps"
+          in: query
+          required: false
+          description: >-
+            Return turn-by-turn instructions. Several other parameters
+            (`banner_instructions`, `language`, `roundabout_exits`,
+            `voice_instructions`, `waypoints`, `waypoint_names`,
+            `waypoint_targets`) only take effect when this is set.
+          schema:
+            type: boolean
+        - name: "banner_instructions"
+          in: query
+          required: false
+          description: "Return banner objects for display. Requires `steps=true`."
+          schema:
+            type: boolean
+        - name: "language"
+          in: query
+          required: false
+          description: >-
+            The language turn-by-turn instructions are written in. Defaults
+            to `en`. Requires `steps=true`.
+          schema:
+            type: string
+          example: "en"
+        - name: "roundabout_exits"
+          in: query
+          required: false
+          description: >-
+            Emit a separate instruction for entering and exiting a
+            roundabout, rather than one instruction for the whole
+            maneuver. Requires `steps=true`.
+          schema:
+            type: boolean
+        - name: "voice_instructions"
+          in: query
+          required: false
+          description: >-
+            Return SSML-marked-up voice guidance text. Requires
+            `steps=true`.
+          schema:
+            type: boolean
+        - name: "voice_units"
+          in: query
+          required: false
+          description: >-
+            Units for voice instructions. Requires `steps=true` and
+            `voice_instructions=true`.
+          schema:
+            type: string
+            enum: ["imperial", "british_imperial", "metric"]
+        - name: "waypoints"
+          in: query
+          required: false
+          description: >-
+            Zero-based indices into `coordinates` marking which ones get
+            their own arrival instruction — must include `0` and the last
+            index. Requires `steps=true`.
+          schema:
+            type: string
+          example: "0,2"
+        - name: "waypoints_per_route"
+          in: query
+          required: false
+          description: >-
+            Nest each route's waypoints under that route object instead of
+            once at the top level.
+          schema:
+            type: boolean
+        - name: "waypoint_names"
+          in: query
+          required: false
+          description: >-
+            A name per waypoint, semicolon-separated, used in that
+            waypoint's arrival instruction instead of the road name.
+            Requires `steps=true`.
+          schema:
+            type: string
+        - name: "waypoint_targets"
+          in: query
+          required: false
+          description: >-
+            A `{longitude},{latitude}` drop-off point per waypoint,
+            semicolon-separated, when it differs from the routed-to
+            coordinate. Requires `steps=true`.
+          schema:
+            type: string
+        - name: "notifications"
+          in: query
+          required: false
+          description: "Whether to return route notification/warning metadata."
+          schema:
+            type: string
+            enum: ["all", "none"]
+        - name: "alley_bias"
+          in: query
+          required: false
+          description: >-
+            `mapbox/driving` only. -1 to 1: bias the route against (negative)
+            or toward (positive) alleys.
+          schema:
+            type: number
+            minimum: -1
+            maximum: 1
+        - name: "arrive_by"
+          in: query
+          required: false
+          description: >-
+            `mapbox/driving` only. Desired arrival time, ISO 8601, for
+            time-dependent routing.
+          schema:
+            type: string
+        - name: "depart_at"
+          in: query
+          required: false
+          description: >-
+            `mapbox/driving` and `mapbox/driving-traffic`. Departure time,
+            ISO 8601 — for `mapbox/driving` this drives time-dependent
+            routing; for `mapbox/driving-traffic` it selects which live
+            traffic conditions to route against.
+          schema:
+            type: string
+        - name: "max_height"
+          in: query
+          required: false
+          description: >-
+            `mapbox/driving` and `mapbox/driving-traffic`. Vehicle height in
+            meters, 0-10. Defaults to 1.6.
+          schema:
+            type: number
+            minimum: 0
+            maximum: 10
+        - name: "max_width"
+          in: query
+          required: false
+          description: >-
+            `mapbox/driving` and `mapbox/driving-traffic`. Vehicle width in
+            meters, 0-10. Defaults to 1.9.
+          schema:
+            type: number
+            minimum: 0
+            maximum: 10
+        - name: "max_weight"
+          in: query
+          required: false
+          description: >-
+            `mapbox/driving` and `mapbox/driving-traffic`. Vehicle weight in
+            metric tons, 0-100. Defaults to 2.5.
+          schema:
+            type: number
+            minimum: 0
+            maximum: 100
+        - name: "snapping_include_closures"
+          in: query
+          required: false
+          description: >-
+            `mapbox/driving-traffic` only. Allow snapping to roads carrying
+            a live-traffic closure.
+          schema:
+            type: boolean
+        - name: "snapping_include_static_closures"
+          in: query
+          required: false
+          description: >-
+            `mapbox/driving-traffic` only. Allow snapping to roads carrying
+            a long-term closure.
+          schema:
+            type: boolean
+        - name: "walking_speed"
+          in: query
+          required: false
+          description: >-
+            `mapbox/walking` only. Walking speed in meters/second,
+            0.14-6.94. Defaults to 1.42.
+          schema:
+            type: number
+            minimum: 0.14
+            maximum: 6.94
+        - name: "walkway_bias"
+          in: query
+          required: false
+          description: >-
+            `mapbox/walking` only. -1 to 1: bias the route against
+            (negative) or toward (positive) walkways/footpaths.
+          schema:
+            type: number
+            minimum: -1
+            maximum: 1
+      responses:
+        "200":
+          description: >-
+            A JSON object with a `code`, a `routes` array (each with
+            `duration`, `distance`, `geometry`, `legs`, and — when
+            `steps=true` — turn-by-turn `steps`), and a `waypoints` array.
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Not Found
+        "422":
+          description: >-
+            Unprocessable Entity — a well-formed request `code` can still
+            report as `NoRoute`, `NoSegment`, `ProfileNotFound` or
+            `InvalidInput` in its JSON body rather than as an HTTP error;
+            this status covers a request rejected outright, e.g. more than
+            25 coordinates.

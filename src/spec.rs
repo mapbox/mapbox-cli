@@ -81,6 +81,42 @@ pub struct Operation {
 /// deleting a row.
 const BODY_CONTENT_TYPE_OVERRIDES: &[(&str, &str, &str)] = &[("styles", "starFile", "text/plain")];
 
+/// (service, parameter name, the `arg_name` to use instead) for a parameter
+/// whose spec name is also a global argument's id — `--profile`, `--token`,
+/// `--username`, `--id`, `--output`, `--schema`, `--dry-run`, `--yes`,
+/// `--timeout`, `--use-login`, `--debug`.
+///
+/// `directions.yaml`'s path parameter is genuinely named `profile` — that is
+/// the API's own name for it, and the path template substitutes on
+/// [`Parameter::name`], not `arg_name`, so the spec can't just rename it.
+/// But every `clap::Arg` is built from `arg_name`
+/// (`build_operation_command`), and clap has one namespace of ids per
+/// command: a second `Arg::new("profile")` on the same command silently
+/// replaces the global one instead of erring, so the routing profile this
+/// parameter means and the credentials profile the global flag means become
+/// one and the same id, whichever definition happened to be added last winning
+/// the help text while the *other* one's reader (`main.rs`, reading
+/// `matches.get_one::<String>("profile")` to pick a credentials file) still
+/// runs — `mapbox directions route mapbox/driving …` failed with
+/// `Invalid profile name "mapbox/driving"` this way before this table
+/// existed. `tests/source_guards.rs`'s `no_generated_flag_shadows_a_global`
+/// catches the `--flag`/`-short` half of this; it can't catch a positional,
+/// since a positional has neither.
+///
+/// Kept as a table rather than a branch, for the same reason
+/// [`BODY_CONTENT_TYPE_OVERRIDES`] is: the fix sits next to the operation
+/// it's for, and outgrowing a global name later is just deleting a row.
+const ARG_NAME_OVERRIDES: &[(&str, &str, &str)] = &[("directions", "profile", "routing-profile")];
+
+/// The `arg_name` a parameter should present as, when its spec name collides
+/// with a global argument's id. See [`ARG_NAME_OVERRIDES`].
+fn arg_name_override(service_name: &str, param_name: &str) -> Option<&'static str> {
+    ARG_NAME_OVERRIDES
+        .iter()
+        .find(|(svc, name, _)| *svc == service_name && *name == param_name)
+        .map(|(_, _, arg_name)| *arg_name)
+}
+
 /// The media types an operation's request body may be sent as.
 ///
 /// This used to be a plain `has_body: bool`, which forced the executor to
@@ -608,10 +644,16 @@ pub const MAPBOX_SPEC_ENTRIES: &[SpecEntry] = &[
 /// name here wins over the same name in [`MAPBOX_SPEC_ENTRIES`]. Delete the
 /// override once upstream ships the service — a drift check flags a name
 /// wired on both sides, for exactly this reason.
-pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[SpecEntry {
-    name: "search",
-    yaml: include_str!("../custom-openapi/search/openapi/search.yaml"),
-}];
+pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
+    SpecEntry {
+        name: "search",
+        yaml: include_str!("../custom-openapi/search/openapi/search.yaml"),
+    },
+    SpecEntry {
+        name: "directions",
+        yaml: include_str!("../custom-openapi/directions/openapi/directions.yaml"),
+    },
+];
 
 /// The list the CLI actually generates commands from: [`MAPBOX_SPEC_ENTRIES`],
 /// with each [`CUSTOM_SPEC_ENTRIES`] override swapped in and the
@@ -905,11 +947,14 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
             let mut path_params = vec![];
             let mut query_params = vec![];
 
-            for p in op_params {
+            for mut p in op_params {
                 // Auto-filled from the global `--username`; see
                 // ACCOUNT_PLACEHOLDERS.
                 if ACCOUNT_PLACEHOLDERS.contains(&p.name.as_str()) {
                     continue;
+                }
+                if let Some(arg_name) = arg_name_override(service_name, &p.name) {
+                    p.arg_name = arg_name.to_string();
                 }
                 if path_str.contains(&format!("{{{}}}", p.name)) {
                     path_params.push(p);
@@ -1952,5 +1997,59 @@ paths:
         assert_eq!(name, generated());
         assert!(aliases.is_empty());
         assert!(hidden.is_empty());
+    }
+
+    /// `directions.yaml`'s `profile` path parameter is a real collision with
+    /// the global `--profile` (credentials profile) argument's id — clap has
+    /// one namespace of ids per command, and the generated positional would
+    /// otherwise silently replace the global one. This is the regression
+    /// test for `mapbox directions route mapbox/driving …` failing with
+    /// `Invalid profile name "mapbox/driving"` before [`ARG_NAME_OVERRIDES`]
+    /// existed: the parsed parameter's `arg_name` must differ from the
+    /// global's id, while `name` stays `profile` so the path template's
+    /// `{profile}` placeholder still resolves.
+    #[test]
+    fn the_directions_profile_parameter_does_not_collide_with_the_global_flag() {
+        let spec = parse_spec(
+            "directions",
+            include_str!("../custom-openapi/directions/openapi/directions.yaml"),
+        )
+        .expect("directions.yaml parses");
+
+        let route = spec
+            .operations
+            .iter()
+            .find(|op| op.command_path == ["route"])
+            .expect("the route operation exists");
+
+        let profile = route
+            .path_params
+            .iter()
+            .find(|p| p.name == "profile")
+            .expect("a path parameter named profile");
+
+        assert_ne!(
+            profile.arg_name, "profile",
+            "must not collide with the global --profile id"
+        );
+        assert_eq!(
+            profile.enum_values,
+            [
+                "mapbox/driving-traffic",
+                "mapbox/driving",
+                "mapbox/walking",
+                "mapbox/cycling"
+            ]
+        );
+    }
+
+    #[test]
+    fn arg_name_override_only_fires_for_the_row_it_names() {
+        assert_eq!(
+            arg_name_override("directions", "profile"),
+            Some("routing-profile")
+        );
+        assert_eq!(arg_name_override("directions", "coordinates"), None);
+        assert_eq!(arg_name_override("styles", "profile"), None);
     }
 }

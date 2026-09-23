@@ -168,15 +168,13 @@ Each API is a top-level subcommand, one sub-subcommand per operation:
 
 ```sh
 mapbox accounts *
+mapbox directions *
 mapbox fonts *
 mapbox geocoder *
-mapbox rasterarrays *
 mapbox search *
 mapbox sprites *
-mapbox static-images *
-mapbox static-tiles *
+mapbox static *
 mapbox styles *
-mapbox tilequery *
 mapbox tilesets *
 ```
 

@@ -282,8 +282,9 @@ fn telemetry_off_alone_is_enough_to_turn_the_reported_update_check_off() {
 
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     assert!(
-        text.lines().any(|line| line.trim_start() == "Update check:  off"
-            || line.starts_with("Update check:  off")),
+        text.lines()
+            .any(|line| line.trim_start() == "Update check:  off"
+                || line.starts_with("Update check:  off")),
         "{text}"
     );
 }

@@ -74,6 +74,15 @@ USER_AGENT='mapbox-cli-install/1'
 # as `src/<value>`. Everything but letters, digits, dot, dash and underscore is
 # dropped, because this value comes from the environment and ends up in a
 # header.
+#
+# **Convention for a coding agent invoking this script on someone's behalf:**
+# `agent-<name>` — `agent-claude-code`, `agent-cursor` — so an access-log query
+# can tell an agent-driven install from a human or CI one without a second
+# reporting mechanism. A dash, not a slash: `/` is one of the characters the
+# sanitizer above strips, so `agent/claude-code` would silently become
+# `agentclaude-code` and lose the separator that makes the convention legible.
+# Freeform otherwise, the same as every other value here — no fixed list of
+# agent names to keep in sync.
 INSTALL_SOURCE="${MAPBOX_CLI_INSTALL_SOURCE:-}"
 
 # The switch `src/telemetry.rs` honors for the CLI's own User-Agent, read here

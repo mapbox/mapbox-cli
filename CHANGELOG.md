@@ -27,6 +27,12 @@ that may never merge. They are not releases and are not listed here.
 
 ### Added
 
+- `mapbox config` — `get`/`set` for settings that persist across shells and
+  sessions, written to `~/.mapbox/config.json` (or `$MAPBOX_CONFIG_DIR`)
+  rather than an environment variable that only lasts for the session it was
+  set in. One setting today: `update-check`, which `mapbox config set
+  update-check off` turns off for good, mirroring `MAPBOX_NO_UPDATE_CHECK`.
+
 - The README now documents installing without the install script: the
   archives are plain HTTP downloads, `manifest.json` lists every target with
   its checksum, and the commands to verify and extract one are written out.

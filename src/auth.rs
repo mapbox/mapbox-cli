@@ -457,6 +457,61 @@ fn credentials_path(profile: Option<&str>) -> Result<PathBuf> {
     Ok(config_dir()?.join(credentials_filename(profile)?))
 }
 
+/// The reverse of [`credentials_filename`]: the profile name a credentials
+/// filename would have been written under, or `None` for anything else in
+/// the config directory — `credentials-<name>.json.lock`, `config.json`,
+/// `update-check.json`. Pure, and tested against `credentials_filename`'s own
+/// output rather than only against hand-written examples, so the two cannot
+/// quietly drift apart.
+fn profile_name_from_filename(filename: &str) -> Option<String> {
+    if filename == "credentials.json" {
+        return Some("default".to_string());
+    }
+    let name = filename
+        .strip_prefix("credentials-")?
+        .strip_suffix(".json")?;
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// Every profile with a credentials file on disk, sorted with `default`
+/// first and everything else alphabetically after it.
+///
+/// Reads rather than creates: [`config_dir_path`], not [`config_dir`], so
+/// asking what is stored is not itself the reason a directory starts to
+/// exist. An absent directory reads the same as an empty one.
+fn list_profile_names() -> Result<Vec<String>> {
+    let Some(dir) = config_dir_path() else {
+        return Ok(vec![]);
+    };
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => {
+            return Err(e).with_context(|| format!("Failed to read {}", dir.display()));
+        }
+    };
+
+    let mut names = vec![];
+    for entry in entries {
+        let entry =
+            entry.with_context(|| format!("Failed to read an entry in {}", dir.display()))?;
+        if let Some(name) = entry
+            .file_name()
+            .to_str()
+            .and_then(profile_name_from_filename)
+        {
+            names.push(name);
+        }
+    }
+    names.sort_unstable_by(|a, b| match (a.as_str(), b.as_str()) {
+        ("default", "default") => std::cmp::Ordering::Equal,
+        ("default", _) => std::cmp::Ordering::Less,
+        (_, "default") => std::cmp::Ordering::Greater,
+        _ => a.cmp(b),
+    });
+    Ok(names)
+}
+
 /// One lock file per profile, so refreshing profile A never blocks profile B.
 fn lock_filename(profile: Option<&str>) -> Result<String> {
     Ok(format!("{}.lock", credentials_filename(profile)?))
@@ -1299,6 +1354,81 @@ pub fn whoami(
 /// naming the implicit one keeps the JSON shape the same either way.
 fn profile_name(profile: Option<&str>) -> &str {
     profile.unwrap_or("default")
+}
+
+/// One stored profile's summary, for [`profiles`].
+struct ProfileEntry {
+    name: String,
+    /// The credentials' own `username` field when `login` recorded one,
+    /// falling back to the token's `u` claim — the same fallback `whoami`
+    /// draws on, for a token this crate wrote before that field existed.
+    account: Option<String>,
+    expires_at: Option<u64>,
+}
+
+impl ProfileEntry {
+    fn text(&self, now: u64) -> String {
+        let account = self.account.as_deref().unwrap_or("unknown");
+        match self.expires_at {
+            Some(exp) => format!("{}\t{account}\texpires {}", self.name, time_until(exp, now)),
+            None => format!("{}\t{account}", self.name),
+        }
+    }
+
+    fn json(&self) -> Value {
+        json!({
+            "profile": self.name,
+            "account": self.account,
+            "expires_at": self.expires_at,
+        })
+    }
+}
+
+/// `mapbox auth profiles` — every credentials file on disk, not just the one
+/// `--profile` would select.
+///
+/// Read-only, like `whoami`: it never refreshes, so listing profiles cannot
+/// itself spend a single-use refresh token. Unlike `whoami`, it does not
+/// resolve `--token` or the environment at all — those answer "what will the
+/// next command use", and this answers "what is stored", which is a
+/// different question with a different audience: someone who has forgotten
+/// which named profiles they have logged into.
+pub fn profiles(mode: Mode) -> Result<()> {
+    let names = list_profile_names()?;
+
+    let entries: Vec<ProfileEntry> = names
+        .into_iter()
+        .map(|name| {
+            let selector = (name != "default").then(|| name.clone());
+            let stored = load_credentials(selector.as_deref());
+            let account = stored
+                .as_ref()
+                .and_then(|c| c.username.clone())
+                .or_else(|| stored.as_ref().and_then(|c| token_account(&c.access_token)));
+            let expires_at = stored
+                .as_ref()
+                .and_then(|c| token_expires_at(&c.access_token));
+            ProfileEntry {
+                name,
+                account,
+                expires_at,
+            }
+        })
+        .collect();
+
+    let now = now();
+    let text = if entries.is_empty() {
+        "No stored profiles. Run `mapbox auth login` to create one.".to_string()
+    } else {
+        entries
+            .iter()
+            .map(|entry| entry.text(now))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let json = Value::Array(entries.iter().map(ProfileEntry::json).collect());
+
+    output::emit(mode, &text, json)
 }
 
 /// What an `auth` command would do, for `--dry-run`.
@@ -2928,6 +3058,42 @@ mod tests {
             lock_filename(Some("a")).unwrap(),
             lock_filename(Some("b")).unwrap()
         );
+    }
+
+    /// The reverse of the two tests above: every filename `credentials_filename`
+    /// can produce reads back to the profile that produced it, rather than
+    /// only checked against hand-written examples that could quietly drift
+    /// from what the forward direction actually writes.
+    #[test]
+    fn profile_name_from_filename_reverses_credentials_filename() {
+        for profile in [None, Some("default"), Some("android_app"), Some("a")] {
+            let filename = credentials_filename(profile).unwrap();
+            assert_eq!(
+                profile_name_from_filename(&filename).as_deref(),
+                Some(profile_name(profile)),
+                "{filename:?} did not reverse to {:?}",
+                profile_name(profile)
+            );
+        }
+    }
+
+    #[test]
+    fn profile_name_from_filename_ignores_everything_else_in_the_directory() {
+        for other in [
+            "credentials-android_app.json.lock",
+            "config.json",
+            "update-check.json",
+            "credentials.json.lock",
+            "credentials-.json",
+            "credentials-",
+            "not-credentials-at-all.json",
+        ] {
+            assert_eq!(
+                profile_name_from_filename(other),
+                None,
+                "{other:?} should not read as a profile"
+            );
+        }
     }
 
     /// Proves the create-time mode, not a chmod applied afterwards: the mode is

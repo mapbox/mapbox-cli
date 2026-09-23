@@ -45,7 +45,7 @@ nests, and is typed `mapbox styles draft get`.
 
 **[Auth](#auth)** — [auth.login](#mapbox-auth-login) ·
 [auth.logout](#mapbox-auth-logout) · [auth.refresh](#mapbox-auth-refresh) ·
-[auth.whoami](#mapbox-auth-whoami)
+[auth.whoami](#mapbox-auth-whoami) · [auth.profiles](#mapbox-auth-profiles)
 
 **[Agent skills](#agent-skills)** —
 [agent-skills.list](#mapbox-agent-skills-list) ·
@@ -337,6 +337,68 @@ Docs: https://docs.mapbox.com/api/accounts/tokens/
 
 ```json
 {"code":"not_authenticated","docs":["https://docs.mapbox.com/api/accounts/tokens/"],"fix":"Run `mapbox auth login`, export MAPBOX_ACCESS_TOKEN, or pass `--token`.","message":"No Mapbox token available.","next_actions":["mapbox auth login"]}
+```
+
+</td></tr>
+</table>
+
+### `mapbox auth profiles`
+
+Lists every profile with credentials stored on disk — not just the one
+`--profile` would select. `whoami` answers which token the *next* command
+will use; this answers what is stored at all, for someone who has forgotten
+which named profiles they have logged into.
+
+Read-only, like `whoami`: it reads the stored credentials without
+refreshing, so listing profiles cannot spend a single-use refresh token.
+Unlike `whoami`, it never resolves `--token` or the environment — a typed
+flag or `MAPBOX_ACCESS_TOKEN` would outrank every stored profile for the
+*next* command, but neither has anything to do with what is on disk.
+
+#### Parameters
+
+None. There is no `--dry-run`: the command only reads the store.
+
+#### Examples
+
+```sh
+mapbox auth profiles
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```
+default	user	expires in 59 minutes
+work	work-user
+```
+
+</td><td>
+
+```json
+[{"account":"user","expires_at":1788276540,"profile":"default"},{"account":"work-user","expires_at":null,"profile":"work"}]
+```
+
+</td></tr>
+</table>
+
+With nothing stored:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```
+No stored profiles. Run `mapbox auth login` to create one.
+```
+
+</td><td>
+
+```json
+[]
 ```
 
 </td></tr>

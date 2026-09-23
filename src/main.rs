@@ -567,6 +567,17 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                                  cannot: a revoked token still looks perfectly valid",
                             ),
                     ),
+            )
+            .subcommand(
+                // No `--dry-run`: read-only, like `whoami`.
+                Command::new("profiles")
+                    .about("List every stored credential profile")
+                    .long_about(
+                        "List every profile with credentials stored on disk — not just the \
+                         one `--profile` would select. `whoami` answers which token the next \
+                         command will use; this answers what is stored at all, for someone \
+                         who has forgotten which named profiles they have logged into.",
+                    ),
             ),
     );
 
@@ -1088,6 +1099,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                 profile,
                 mode,
             )?,
+            Some(("profiles", _)) => auth::profiles(mode)?,
             _ => unreachable!("`auth` sets subcommand_required(true)"),
         },
         Some((svc_name, svc_matches)) => {
@@ -1789,7 +1801,7 @@ mod tests {
     #[test]
     fn the_auth_subcommands_that_write_offer_dry_run() {
         const WRITES: [&str; 3] = ["login", "logout", "refresh"];
-        const READS: [&str; 1] = ["whoami"];
+        const READS: [&str; 2] = ["whoami", "profiles"];
 
         let specs = bundled_specs();
         let app = build_app(&specs);

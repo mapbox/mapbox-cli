@@ -23,6 +23,12 @@ that may never merge. They are not releases and are not listed here.
 
 ### Added
 
+- `mapbox auth profiles` — lists every credential profile stored on disk,
+  not just the one `--profile` would select. Read-only, like `whoami`, and
+  answers a different question than it does: `whoami` reports which token
+  the *next* command will use, this reports what's stored at all, for
+  someone who has forgotten which named profiles they've logged into.
+
 - The README now documents installing without the install script: the
   archives are plain HTTP downloads, `manifest.json` lists every target with
   its checksum, and the commands to verify and extract one are written out.

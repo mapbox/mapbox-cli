@@ -244,6 +244,7 @@ mapbox accounts <operation>
 mapbox feedback <operation>
 mapbox fonts <operation>
 mapbox geocoder <operation>
+mapbox isochrone <operation>
 mapbox search <operation>
 mapbox sprites <operation>
 mapbox static <operation>

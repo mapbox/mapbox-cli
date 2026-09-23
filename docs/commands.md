@@ -64,6 +64,8 @@ nests, and is typed `mapbox styles draft get`.
 [config.set](#mapbox-config-set) · [config.list](#mapbox-config-list) ·
 [config.unset](#mapbox-config-unset)
 
+**[Doctor](#doctor)** — [doctor](#mapbox-doctor)
+
 **[Usage](#usage)** — [usage](#mapbox-usage)
 
 **[Accounts](#accounts)** —
@@ -3277,6 +3279,80 @@ update-check cleared, now on (default).
 
 </td></tr>
 </table>
+
+---
+
+## Doctor
+
+### `mapbox doctor`
+
+A read-only snapshot of what the next command would see: which token wins
+and its state, which proxy variables are in effect, and where the
+update-check and telemetry switches currently stand. `auth whoami` answers
+which token the next command will use; this answers the rest of what
+commonly goes wrong before a real command finds out the hard way — a proxy
+variable that silently isn't doing what someone thinks, or a switch
+resolving to something other than what was intended.
+
+Nothing here is sent unless `--verify` asks for the one check that needs a
+request — the same precedent `auth whoami --verify` sets.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `--verify` | Also check that `api.mapbox.com` is reachable, through the same client and proxy handling every other request uses. |
+
+#### Examples
+
+```sh
+mapbox doctor
+
+mapbox doctor --verify
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+mapbox 0.3.0 (production)
+Token:         available, from login (sk)
+Proxy:         none set
+Update check:  on
+Telemetry:     on
+```
+
+</td><td>
+
+```json
+{
+  "build": { "version": "0.3.0", "channel": "production" },
+  "proxy": { "active": [] },
+  "switches": {
+    "telemetry_allowed": true,
+    "update_check_env_opt_out": false,
+    "update_check_persisted": true
+  },
+  "token": {
+    "available": true,
+    "source": "login",
+    "account": "user",
+    "usage": "sk",
+    "expires_at": 1788276540
+  }
+}
+```
+
+</td></tr>
+</table>
+
+With `--verify`, a `connectivity` object joins the JSON and a `Reachable:`
+line joins the text — `{ "reachable": true, "status": 200 }`, or `{
+"reachable": false }` (plus an `error` field under `--debug`) when the
+request itself failed rather than answered.
 
 ---
 

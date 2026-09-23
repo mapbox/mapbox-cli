@@ -23,6 +23,13 @@ that may never merge. They are not releases and are not listed here.
 
 ### Added
 
+- `mapbox doctor` — a read-only snapshot of what the next command would
+  see: which token wins and its state, which proxy variables are in effect,
+  and where the update-check and telemetry switches currently stand.
+  `--verify` additionally checks that `api.mapbox.com` is reachable, the
+  only part of this that makes a request — the same precedent
+  `auth whoami --verify` sets.
+
 - `mapbox config` — `get`/`set` for settings that persist across shells and
   sessions, written to `~/.mapbox/config.json` (or `$MAPBOX_CONFIG_DIR`)
   rather than an environment variable that only lasts for the session it was

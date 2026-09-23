@@ -6,9 +6,13 @@
 //! file beside the credentials, written through the same
 //! [`crate::auth::write_private`] so it gets the same `0600` treatment.
 //!
-//! One setting today — `update-check` — with room for more: `get`/`set` take
-//! a `key`, restricted by clap to [`KEYS`], so adding a second setting is a
-//! new key and a new match arm rather than a new pair of subcommands.
+//! One setting today — `update-check` — with room for more: `get`/`set`/
+//! `unset` take a `key`, restricted by clap to [`KEYS`], so adding a second
+//! setting is a new key and a new match arm rather than a new subcommand.
+//! `list` needs no key at all: it walks [`KEYS`] and reports every setting's
+//! current value in one call, which `get` cannot — the whole reason it
+//! exists alongside `get`/`set` rather than waiting for a second setting to
+//! make the gap visible.
 
 use std::path::PathBuf;
 
@@ -16,7 +20,7 @@ use anyhow::{Context, Result};
 use clap::builder::PossibleValuesParser;
 use clap::{Arg, ArgMatches, Command};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::auth;
 use crate::output::{self, Mode};
@@ -87,6 +91,28 @@ fn on_off(enabled: bool) -> &'static str {
     }
 }
 
+/// `key`'s current value in `config`, resolved to its default the same way
+/// every getter here does. Shared by [`get`] and [`list`] so the two cannot
+/// answer a key differently.
+fn resolve(config: &Config, key: &str) -> bool {
+    match key {
+        UPDATE_CHECK_KEY => update_check_setting(config),
+        _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
+    }
+}
+
+/// Clears `key` back to "never set" in `config`, in place. The counterpart
+/// to `set`'s `Some(enabled)` — distinct from setting a key to its default
+/// value, which [`resolve`] would read identically but which
+/// `serde(skip_serializing_if)` would not write identically: a later default
+/// change reaches only a key that was actually cleared.
+fn clear(config: &mut Config, key: &str) {
+    match key {
+        UPDATE_CHECK_KEY => config.update_check = None,
+        _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
+    }
+}
+
 pub fn command() -> Command {
     let key_arg = || {
         Arg::new("key")
@@ -113,23 +139,30 @@ pub fn command() -> Command {
                 .arg(key_arg())
                 .arg(Arg::new("value").required(true).value_parser([ON, OFF])),
         )
+        .subcommand(Command::new("list").about("List every setting and its current value"))
+        .subcommand(
+            Command::new("unset")
+                .about("Clear a setting back to its default")
+                .long_about(
+                    "Clear a setting back to its default, rather than setting it to that \
+                     default value explicitly — the difference matters the next time this \
+                     CLI changes what the default is: a cleared key picks up the new default, \
+                     a key explicitly set to the old default value does not.",
+                )
+                .arg(key_arg()),
+        )
 }
 
 pub fn get(matches: &ArgMatches, mode: Mode) -> Result<()> {
     let key = matches.get_one::<String>("key").expect("required");
     let config = read_config();
+    let enabled = resolve(&config, key);
 
-    match key.as_str() {
-        UPDATE_CHECK_KEY => {
-            let enabled = update_check_setting(&config);
-            output::emit(
-                mode,
-                on_off(enabled),
-                json!({ "key": key, "value": enabled }),
-            )
-        }
-        _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
-    }
+    output::emit(
+        mode,
+        on_off(enabled),
+        json!({ "key": key, "value": enabled }),
+    )
 }
 
 pub fn set(matches: &ArgMatches, mode: Mode) -> Result<()> {
@@ -147,6 +180,37 @@ pub fn set(matches: &ArgMatches, mode: Mode) -> Result<()> {
     output::emit(
         mode,
         &format!("{key} set to {}.", on_off(enabled)),
+        json!({ "key": key, "value": enabled }),
+    )
+}
+
+pub fn list(mode: Mode) -> Result<()> {
+    let config = read_config();
+    let entries: Vec<Value> = KEYS
+        .iter()
+        .map(|key| json!({ "key": key, "value": resolve(&config, key) }))
+        .collect();
+
+    let text = KEYS
+        .iter()
+        .map(|key| format!("{key}\t{}", on_off(resolve(&config, key))))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    output::emit(mode, &text, Value::Array(entries))
+}
+
+pub fn unset(matches: &ArgMatches, mode: Mode) -> Result<()> {
+    let key = matches.get_one::<String>("key").expect("required");
+
+    let mut config = read_config();
+    clear(&mut config, key);
+    write_config(&config)?;
+
+    let enabled = resolve(&config, key);
+    output::emit(
+        mode,
+        &format!("{key} cleared, now {} (default).", on_off(enabled)),
         json!({ "key": key, "value": enabled }),
     )
 }
@@ -180,5 +244,36 @@ mod tests {
     fn on_and_off_round_trip_through_on_off() {
         assert_eq!(on_off(true), ON);
         assert_eq!(on_off(false), OFF);
+    }
+
+    #[test]
+    fn resolve_matches_update_check_setting_at_every_state() {
+        for update_check in [None, Some(true), Some(false)] {
+            let config = Config { update_check };
+            assert_eq!(
+                resolve(&config, UPDATE_CHECK_KEY),
+                update_check_setting(&config)
+            );
+        }
+    }
+
+    /// `clear` and `set` leave different bytes on disk even when they leave
+    /// the same *value*: this is the difference `unset` exists to offer, so
+    /// it is worth pinning rather than only exercising through `resolve`,
+    /// which cannot tell the two states apart by design.
+    #[test]
+    fn clear_removes_the_key_rather_than_writing_the_default() {
+        let mut explicit_default = Config {
+            update_check: Some(true),
+        };
+        clear(&mut explicit_default, UPDATE_CHECK_KEY);
+        assert_eq!(explicit_default, Config::default());
+        assert_eq!(explicit_default.update_check, None);
+
+        let mut explicit_off = Config {
+            update_check: Some(false),
+        };
+        clear(&mut explicit_off, UPDATE_CHECK_KEY);
+        assert_eq!(explicit_off.update_check, None);
     }
 }

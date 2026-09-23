@@ -61,7 +61,8 @@ nests, and is typed `mapbox styles draft get`.
 **[Uninstall](#uninstall)** — [uninstall](#mapbox-uninstall)
 
 **[Config](#config)** — [config.get](#mapbox-config-get) ·
-[config.set](#mapbox-config-set)
+[config.set](#mapbox-config-set) · [config.list](#mapbox-config-list) ·
+[config.unset](#mapbox-config-unset)
 
 **[Usage](#usage)** — [usage](#mapbox-usage)
 
@@ -3270,6 +3271,87 @@ update-check set to off.
 {
   "key": "update-check",
   "value": false
+}
+```
+
+</td></tr>
+</table>
+
+### `mapbox config list`
+
+Lists every setting and its current value — `get` answers one key at a
+time, this answers all of them in one call, falling back to each one's
+default the same way `get` does.
+
+#### Parameters
+
+None.
+
+#### Examples
+
+```sh
+mapbox config list
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+update-check	on
+```
+
+</td><td>
+
+```json
+[
+  {
+    "key": "update-check",
+    "value": true
+  }
+]
+```
+
+</td></tr>
+</table>
+
+### `mapbox config unset`
+
+Clears a setting back to its default, rather than setting it to that
+default value explicitly. The difference matters the next time this CLI
+changes what a setting's default is: a cleared key picks up the new
+default, a key explicitly set to the old default value does not.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `<key>` | Which setting to clear. Only `update-check` exists today. |
+
+#### Examples
+
+```sh
+mapbox config unset update-check
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+update-check cleared, now on (default).
+```
+
+</td><td>
+
+```json
+{
+  "key": "update-check",
+  "value": true
 }
 ```
 

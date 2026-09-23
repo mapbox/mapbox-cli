@@ -29,6 +29,14 @@ that may never merge. They are not releases and are not listed here.
   the *next* command will use, this reports what's stored at all, for
   someone who has forgotten which named profiles they've logged into.
 
+- A native `aarch64-pc-windows-msvc` build. Windows on Arm ran the x64 build
+  under emulation before this — including inside a VM on Apple Silicon, the
+  larger of the two populations this serves — which `install.ps1` already
+  said out loud and now no longer has reason to. `install.ps1` already asked
+  the manifest for this target before falling back to the x64 one, and
+  `.cargo/config.toml` already named it, so publishing the artifact was the
+  whole client-side change.
+
 - `install.sh`/`install.ps1` now document a convention for `MAPBOX_CLI_INSTALL_SOURCE`
   when a coding agent invokes the installer on someone's behalf: `agent-<name>`
   (`agent-claude-code`, `agent-cursor`), so an access-log query can tell those
@@ -46,6 +54,12 @@ that may never merge. They are not releases and are not listed here.
   rather than an environment variable that only lasts for the session it was
   set in. One setting today: `update-check`, which `mapbox config set
   update-check off` turns off for good, mirroring `MAPBOX_NO_UPDATE_CHECK`.
+
+- `mapbox config list`/`unset`, alongside `get`/`set`. `list` reports every
+  setting in one call rather than one key at a time; `unset` clears a
+  setting back to "never set" rather than writing its current default value
+  explicitly — the difference that lets a later default change reach a
+  cleared key but not one a caller pinned to the old default on purpose.
 
 - The README now documents installing without the install script: the
   archives are plain HTTP downloads, `manifest.json` lists every target with

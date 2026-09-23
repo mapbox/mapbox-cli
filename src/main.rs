@@ -1063,6 +1063,8 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
         Some((config::COMMAND, config_matches)) => match config_matches.subcommand() {
             Some(("get", get_matches)) => config::get(get_matches, mode)?,
             Some(("set", set_matches)) => config::set(set_matches, mode)?,
+            Some(("list", _)) => config::list(mode)?,
+            Some(("unset", unset_matches)) => config::unset(unset_matches, mode)?,
             _ => unreachable!("`config` sets subcommand_required(true)"),
         },
         // Token resolution mirrors the service arm below, minus path

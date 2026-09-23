@@ -340,6 +340,13 @@ not before. A read-only command rejects it.
 `--timeout <SECONDS>` overrides either, `MAPBOX_TIMEOUT` sets it for a
 whole shell.
 
+### Extra query parameters
+
+`MAPBOX_CLI_EXTRA_QUERY` appends raw query parameters to every request this
+process sends, in the same `k1=v1&k2=v2` shape as a URL's own query string —
+for an API parameter this CLI's specs don't declare a flag for. `--debug`
+and `--dry-run` show it alongside everything else on the request.
+
 ### Proxies
 
 `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` are all honored, so

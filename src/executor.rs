@@ -21,6 +21,33 @@ const REDACTED: &str = "<redacted>";
 /// The media type a `--data` body is sent as, unless the spec named a text one.
 const JSON_CONTENT_TYPE: &str = "application/json";
 
+/// An escape hatch for a query parameter this CLI's specs don't declare —
+/// intentionally generic, so no particular API's undocumented parameter
+/// gets named here. Same shape as a URL's own query string
+/// (`k1=v1&k2=v2`), appended after every operation's declared parameters on
+/// every request this process sends. Not a flag: an env var doesn't show up
+/// in `--help`, matching the other advanced knobs (`MAPBOX_DEBUG`,
+/// `MAPBOX_TIMEOUT`) that also skip it.
+const EXTRA_QUERY_ENV: &str = "MAPBOX_CLI_EXTRA_QUERY";
+
+/// Parses [`EXTRA_QUERY_ENV`] the same permissive way [`query_pairs`] reads
+/// a `Link` target — a URL's query component accepts nearly anything, so
+/// there is no realistic malformed value to reject; unset or empty yields
+/// nothing.
+fn extra_query_from_env() -> Vec<(String, String)> {
+    let raw = match std::env::var(EXTRA_QUERY_ENV) {
+        Ok(raw) if !raw.is_empty() => raw,
+        _ => return vec![],
+    };
+    match reqwest::Url::parse(&format!("https://x/?{raw}")) {
+        Ok(parsed) => parsed
+            .query_pairs()
+            .map(|(name, value)| (name.into_owned(), value.into_owned()))
+            .collect(),
+        Err(_) => vec![],
+    }
+}
+
 /// Name of the flag that stops short of sending. Declared per operation
 /// rather than globally: a `GET` has nothing to preview, and offering a
 /// flag that means nothing is worse than requiring it after the operation
@@ -165,6 +192,8 @@ fn dispatch(
             query.push((param.name.clone(), val.clone()));
         }
     }
+
+    query.extend(extra_query_from_env());
 
     // `--data`/`--file` are declared per-operation, so either may not exist
     // on this command at all — `get_one` would panic on an unregistered
@@ -1372,10 +1401,11 @@ fn write_binary(body: &[u8], content_type: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        describe_body, empty_success_line, file_name_of, is_binary_content_type, part_media_type,
-        path_segment, payload_of, query_pairs, redacted_url, request_id, resolve_body_source,
-        resolve_data, shell_value, substitute_path_param, with_page_context, BodySource, NextPage,
-        ResponseHeaders, ACCESS_TOKEN, REQUEST_ID_HEADERS,
+        describe_body, empty_success_line, extra_query_from_env, file_name_of,
+        is_binary_content_type, part_media_type, path_segment, payload_of, query_pairs,
+        redacted_url, request_id, resolve_body_source, resolve_data, shell_value,
+        substitute_path_param, with_page_context, BodySource, NextPage, ResponseHeaders,
+        ACCESS_TOKEN, EXTRA_QUERY_ENV, REQUEST_ID_HEADERS,
     };
     use std::borrow::Cow;
 
@@ -2149,6 +2179,96 @@ mod tests {
     fn an_unparseable_next_url_yields_no_flags() {
         assert!(query_pairs("not a url").is_empty());
         assert!(query_pairs("").is_empty());
+    }
+
+    /// One test, not two, and every case run in sequence within it: this
+    /// mutates a process-wide env var, and a second `#[test]] doing the same
+    /// would race it under the default parallel test runner — one test
+    /// setting `""` right as another reads what it just set to `"a=1"` is
+    /// exactly the kind of flake that doesn't reproduce the same way twice.
+    /// Restored to whatever it was on the way in either way.
+    ///
+    /// The URL-shaped cases matter because a value that itself looks like a
+    /// URL — a callback, a `next` link — is exactly the shape
+    /// [`EXTRA_QUERY_ENV`] exists to carry, so it must survive `:`, `/` and
+    /// even its own `?` untouched. `&` and `=` inside that inner URL are the
+    /// one real limit: they still delimit the outer `k=v&k=v` string, since
+    /// this parses the same query-string shape a browser address bar does.
+    /// Pinned here so that limit is a documented fact instead of a surprise
+    /// the first time someone's URL has a query string of its own.
+    #[test]
+    fn extra_query_reads_the_env_var() {
+        let previous = std::env::var_os(EXTRA_QUERY_ENV);
+
+        std::env::remove_var(EXTRA_QUERY_ENV);
+        let unset = extra_query_from_env();
+
+        std::env::set_var(EXTRA_QUERY_ENV, "");
+        let empty = extra_query_from_env();
+
+        std::env::set_var(EXTRA_QUERY_ENV, "a=1&b=2");
+        let pairs = extra_query_from_env();
+
+        let cases: [(&str, &[(&str, &str)]); 4] = [
+            // A bare host, no query of its own: nothing in it is a `k=v`
+            // delimiter, so it survives whole as one value.
+            (
+                "callback=http://a.b.com/",
+                &[("callback", "http://a.b.com/")],
+            ),
+            // The inner `?` is not a delimiter — only the one
+            // `extra_query_from_env` itself adds ahead of `raw` starts a
+            // query — so it reads as ordinary value text, same as `:` and
+            // `/` do.
+            ("next=https://a.b.c?a=1", &[("next", "https://a.b.c?a=1")]),
+            // The inner URL's own `&` is not so lucky: this format has no
+            // way to escape it, so `x=1&y=2` still splits into two pairs of
+            // the *outer* string, truncating the value at `x=1` and
+            // surfacing `y=2` as if it had been written there directly.
+            // Anyone wiring in a URL with its own query string needs to
+            // know their `&` is claimed by this format, not theirs.
+            (
+                "a=1&next=https://a.b.c?x=1&y=2",
+                &[("a", "1"), ("next", "https://a.b.c?x=1"), ("y", "2")],
+            ),
+            // Written with no leading `key=` at all — someone assuming the
+            // whole variable is a single opaque value rather than a query
+            // string. The first `=` anywhere still wins, splitting an
+            // unrelated `a` off the end as its own key rather than
+            // rejecting the value: `MAPBOX_CLI_EXTRA_QUERY` is a query
+            // string, not a single value, and this is what happens to one
+            // that forgets that.
+            ("https://a.b.c?a=1", &[("https://a.b.c?a", "1")]),
+        ];
+        let url_shaped: Vec<(&str, Vec<(String, String)>)> = cases
+            .iter()
+            .map(|(raw, _)| {
+                std::env::set_var(EXTRA_QUERY_ENV, raw);
+                (*raw, extra_query_from_env())
+            })
+            .collect();
+
+        match previous {
+            Some(value) => std::env::set_var(EXTRA_QUERY_ENV, value),
+            None => std::env::remove_var(EXTRA_QUERY_ENV),
+        }
+
+        assert!(unset.is_empty());
+        assert!(empty.is_empty());
+        assert_eq!(
+            pairs,
+            vec![
+                ("a".to_string(), "1".to_string()),
+                ("b".to_string(), "2".to_string())
+            ]
+        );
+        for ((raw, expected), (_, actual)) in cases.iter().zip(&url_shaped) {
+            let expected: Vec<(String, String)> = expected
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            assert_eq!(actual, &expected, "{EXTRA_QUERY_ENV}={raw:?}");
+        }
     }
 
     #[test]

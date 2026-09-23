@@ -3298,11 +3298,13 @@ Nothing here is sent unless `--verify` asks for the one check that needs a
 request — the same precedent `auth whoami --verify` sets.
 
 `Proxy:` names which of `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`/`NO_PROXY` are
-set, upper- or lowercase (`reqwest` reads both, curl's convention). It
-answers "is a proxy variable set", not "would this request actually use
-one" — `NO_PROXY` can exempt `api.mapbox.com` specifically, and a
-scheme-specific variable only ever applied to that scheme in the first
-place.
+set — upper- or lowercase, exactly those two spellings each, which is what
+`reqwest` itself reads. It answers "is a proxy variable set", not "would
+this request actually use one" — `NO_PROXY` can exempt `api.mapbox.com`
+specifically, a scheme-specific variable only ever applied to that scheme
+in the first place, and on macOS a proxy configured only through system
+Network settings (rather than an environment variable) is invisible here
+even though `reqwest` would still use it.
 
 #### Parameters
 

@@ -64,9 +64,15 @@ fn api_host() -> String {
 const DEFAULT_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The proxy variables `reqwest` reads, paired with the lowercase spelling
-/// it also honors — curl's convention, which is also `libcurl`-derived
-/// `getenv` logic's. Checked as a pair rather than as four independent
-/// names because Windows environment variables are case-insensitive:
+/// it also honors — exactly these two spellings and no others, confirmed by
+/// reading `hyper-util`'s own `get_first_env(&["HTTPS_PROXY",
+/// "https_proxy"])` (`hyper-util/src/client/proxy/matcher.rs`) rather than
+/// assumed from curl's reputation for case-insensitivity: a value under
+/// `Https_Proxy` or any other mixed case would not be honored by this
+/// client either, on a case-sensitive OS, so not checking for it here is
+/// reporting the client's real behavior rather than a gap in this list.
+/// Checked as a pair rather than as four independent names because Windows
+/// environment variables are case-insensitive:
 /// `HTTPS_PROXY` and `https_proxy` are the same variable there, so checking
 /// both spellings as separate entries reported it twice on Windows the
 /// first time this shipped, once under each spelling, for a value set only
@@ -82,7 +88,11 @@ const DEFAULT_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// This still only answers "is a proxy variable set", not "would this
 /// request actually use one" — `NO_PROXY` can exempt a specific host, and a
-/// scheme-specific variable only applies to that scheme. Both are real gaps
+/// scheme-specific variable only applies to that scheme. On macOS there is
+/// a fourth gap the same shape: `hyper-util` falls back to the system's
+/// Dynamic Store proxy settings (Network settings → Proxies) when no env
+/// var is set at all, and a proxy configured only that way is invisible
+/// here — this reads the environment, not that store. All are real gaps
 /// against the true question, kept because reqwest has no public API that
 /// answers "was a proxy applied to this request" for a caller to read back;
 /// closing them means asking upstream for one, not maintaining a longer list

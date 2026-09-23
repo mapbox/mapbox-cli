@@ -19,9 +19,9 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
-- Clean up.
-
-### Added
+- `MAPBOX_CLI_EXTRA_QUERY` appends raw query parameters to every request, in
+  the same `k1=v1&k2=v2` shape as a URL's own query string — for an API
+  parameter this CLI's specs don't declare a flag for.
 
 - A native `aarch64-pc-windows-msvc` build. Windows on Arm ran the x64 build
   under emulation before this — including inside a VM on Apple Silicon, the
@@ -30,6 +30,16 @@ that may never merge. They are not releases and are not listed here.
   the manifest for this target before falling back to the x64 one, and
   `.cargo/config.toml` already named it, so publishing the artifact was the
   whole client-side change.
+
+## 0.3.0 - 2026-09-22
+
+### Added
+
+- `mapbox config` — `get`/`set` for settings that persist across shells and
+  sessions, written to `~/.mapbox/config.json` (or `$MAPBOX_CONFIG_DIR`)
+  rather than an environment variable that only lasts for the session it was
+  set in. One setting today: `update-check`, which `mapbox config set
+  update-check off` turns off for good, mirroring `MAPBOX_NO_UPDATE_CHECK`.
 
 - The README now documents installing without the install script: the
   archives are plain HTTP downloads, `manifest.json` lists every target with
@@ -88,6 +98,8 @@ that may never merge. They are not releases and are not listed here.
   reader whether they were moving junk or a working credential; it now says
   the token still works and gives the `MAPBOX_ACCESS_TOKEN` line that keeps
   using it. The token itself is never printed, and a test holds that.
+
+- Code & Command Clean up.
 
 ### Fixed
 

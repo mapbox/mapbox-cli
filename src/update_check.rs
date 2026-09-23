@@ -25,7 +25,7 @@
 //! that is not a cost worth adding a network round-trip to the hot path to
 //! avoid.
 //!
-//! # What has to be true, all four
+//! # What has to be true, all five
 //!
 //! [`enabled`] is the single predicate, and it is pure so every branch is
 //! testable:
@@ -42,7 +42,7 @@
 //!   is noise in a CI log, and the request behind it is the one a scripted
 //!   environment has the least reason to make. This is what keeps the check
 //!   off build machines without anyone having to configure it.
-//! - **`MAPBOX_NO_UPDATE_CHECK` unset.** The dedicated switch.
+//! - **`MAPBOX_NO_UPDATE_CHECK` unset.** The dedicated switch, for a session.
 //! - **`MAPBOX_CLI_NO_TELEMETRY` unset.** It silences this too, deliberately. The
 //!   request carries nothing about the user — no token, no account, no
 //!   command — but it does reveal that a machine is running this CLI, and
@@ -50,6 +50,9 @@
 //!   already. The two are still separate switches, because wanting the
 //!   notice while opting out of markers is a coherent position and
 //!   `MAPBOX_NO_UPDATE_CHECK` is how you take the opposite one.
+//! - **`mapbox config get update-check` reads `on`.** The persisted
+//!   equivalent of `MAPBOX_NO_UPDATE_CHECK`, for someone who wants it off in
+//!   every shell rather than the one it was set in — see [`crate::config`].
 //!
 //! # Where the state lives
 //!
@@ -154,14 +157,22 @@ fn from_environment(name: &str) -> Option<String> {
 ///
 /// Pure, and takes every input as an argument, because the interesting cases
 /// are exactly the ones a test process cannot be: a production build, a
-/// terminal on stderr. See the module docs for why each of the four is here.
+/// terminal on stderr. See the module docs for why each of the five is here.
+/// The fifth, `config_allows`, is [`crate::config::update_check_enabled`] —
+/// `MAPBOX_NO_UPDATE_CHECK` and `mapbox config set update-check off` are two
+/// ways to say the same thing, and either saying it is enough.
 fn enabled(
     manifest_url: Option<&str>,
     stderr_is_terminal: bool,
     no_update_check: Option<&str>,
     telemetry_allowed: bool,
+    config_allows: bool,
 ) -> bool {
-    manifest_url.is_some() && stderr_is_terminal && no_update_check.is_none() && telemetry_allowed
+    manifest_url.is_some()
+        && stderr_is_terminal
+        && no_update_check.is_none()
+        && telemetry_allowed
+        && config_allows
 }
 
 /// The manifest this build would ask, or `None` for a build with no public
@@ -353,7 +364,10 @@ pub fn is_refresh_child() -> bool {
 /// it. Belt and braces: this is the process that makes the request, and the
 /// switch that says "make no request" should be read by it.
 pub fn run_refresh_child() -> ExitCode {
-    if from_environment(NO_UPDATE_CHECK_ENV).is_some() || !crate::telemetry::telemetry_allowed() {
+    if from_environment(NO_UPDATE_CHECK_ENV).is_some()
+        || !crate::telemetry::telemetry_allowed()
+        || !crate::config::update_check_enabled()
+    {
         return ExitCode::SUCCESS;
     }
     if let Some(url) = manifest_url() {
@@ -405,6 +419,7 @@ pub fn notify() {
         std::io::stderr().is_terminal(),
         from_environment(NO_UPDATE_CHECK_ENV).as_deref(),
         crate::telemetry::telemetry_allowed(),
+        crate::config::update_check_enabled(),
     ) {
         return;
     }
@@ -520,23 +535,30 @@ mod tests {
         assert!(!is_newer("v0.1.5", "v0.1.5"));
     }
 
-    /// Every one of the four has to hold, and each one alone has to be able
+    /// Every one of the five has to hold, and each one alone has to be able
     /// to stop it. Written as a loop over which condition is broken so a
-    /// fifth condition added later cannot be silently untested.
+    /// sixth condition added later cannot be silently untested.
     #[test]
     fn every_gate_alone_is_enough_to_stop_it() {
         let url = Some("https://cli.mapbox.com/latest/manifest.json");
-        assert!(enabled(url, true, None, true), "all four hold");
+        assert!(enabled(url, true, None, true, true), "all five hold");
 
-        assert!(!enabled(None, true, None, true), "no public channel");
-        assert!(!enabled(url, false, None, true), "stderr is not a terminal");
+        assert!(!enabled(None, true, None, true, true), "no public channel");
         assert!(
-            !enabled(url, true, Some("1"), true),
+            !enabled(url, false, None, true, true),
+            "stderr is not a terminal"
+        );
+        assert!(
+            !enabled(url, true, Some("1"), true, true),
             "MAPBOX_NO_UPDATE_CHECK is set"
         );
         assert!(
-            !enabled(url, true, None, false),
+            !enabled(url, true, None, false, true),
             "MAPBOX_CLI_NO_TELEMETRY is set"
+        );
+        assert!(
+            !enabled(url, true, None, true, false),
+            "mapbox config set update-check off"
         );
     }
 
@@ -549,7 +571,7 @@ mod tests {
         let url = Some("https://cli.mapbox.com/latest/manifest.json");
         for value in ["1", "true", "0", "no", "please-stop"] {
             assert!(
-                !enabled(url, true, Some(value), true),
+                !enabled(url, true, Some(value), true, true),
                 "{value:?} did not opt out"
             );
         }

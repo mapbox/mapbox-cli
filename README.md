@@ -86,9 +86,10 @@ not allowed where you work, the archives are ordinary HTTP downloads, and
 curl -fsSL https://cli.mapbox.com/latest/manifest.json
 ```
 
-Five targets are published: `aarch64-apple-darwin`, `x86_64-apple-darwin`,
-`aarch64-unknown-linux-musl`, `x86_64-unknown-linux-musl` and
-`x86_64-pc-windows-msvc`. Pick yours, check it, then extract:
+Six targets are published: `aarch64-apple-darwin`, `x86_64-apple-darwin`,
+`aarch64-unknown-linux-musl`, `x86_64-unknown-linux-musl`,
+`x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`. Pick yours, check it,
+then extract:
 
 ```sh
 version=v0.2.1

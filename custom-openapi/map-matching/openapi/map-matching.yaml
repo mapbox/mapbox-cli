@@ -1,0 +1,274 @@
+openapi: "3.0.0"
+# `parse_spec` turns `info.description` below into this service's clap
+# `long_about`, so it also reaches `mapbox map-matching --help`, `--schema`
+# and `generate-skills` output. Keep it to API prose only — the provenance
+# below is for whoever edits this file, not for a CLI user:
+#
+# Hand-authored down to the parameters documented at
+# docs.mapbox.com/api/navigation/map-matching. See `custom-openapi/README.md`
+# for how a file like this is wired in, and `directions.yaml`'s header for
+# why `profile` needs `ARG_NAME_OVERRIDES` in `src/spec.rs` — the same
+# reason applies here. Excludes POST, for the same reason `directions.yaml`
+# does: this spec format has no way to say "GET or POST, caller's choice"
+# for one operationId. The API's own POST is for a request too long for a
+# URL (~8100 bytes) — a real gap for a very long trace, not a design choice.
+info:
+  title: "Mapbox Map Matching API"
+  description: >-
+    Snaps a noisy GPS trace to the road network and returns the route it
+    most likely followed, for driving (with or without live traffic),
+    walking, or cycling.
+  version: "0.0.0"
+servers:
+  - url: https://api.mapbox.com
+    description: Map Matching API
+paths:
+  /matching/v5/{profile}/{coordinates}.json:
+    get:
+      operationId: match
+      summary: Match a GPS trace to the road network.
+      description: >-
+        Returns one or more matched routes (more than one where the trace is
+        ambiguous enough to split), each with a `confidence` the API assigns
+        itself, plus one tracepoint per input coordinate — `null` for a
+        coordinate too far from any candidate to match at all.
+      parameters:
+        - name: "profile"
+          in: path
+          required: true
+          # Not an `enum`: the four documented values are what's public, but
+          # not what's exhaustive — some customers (OEM agreements, mainly)
+          # have additional profiles never published to docs.mapbox.com.
+          # An `enum` here becomes a clap `PossibleValuesParser` that
+          # rejects anything else client-side, which would break this CLI
+          # for exactly the accounts that most need a routing profile
+          # named beyond `driving`/`walking`/`cycling`. Same fix as
+          # `directions.yaml`'s `profile`.
+          description: >-
+            The routing profile — `mapbox/driving-traffic` (accounts for
+            live traffic), `mapbox/driving`, `mapbox/walking`, or
+            `mapbox/cycling` are documented, but not necessarily
+            exhaustive: some accounts have additional profiles of their
+            own. Sent exactly as typed; the API is the authority on
+            whether a value is valid, not this description.
+          schema:
+            type: string
+            minLength: 1
+          example: "mapbox/driving"
+        - name: "coordinates"
+          in: path
+          required: true
+          description: >-
+            2-100 trace points, semicolon-separated, each
+            `{longitude},{latitude}` — or an OpenLR-encoded string of up to
+            50 points, in which case use `--openlr-spec`/`--openlr-format`
+            to say which flavor.
+          schema:
+            type: string
+            minLength: 1
+          example: "-122.42,37.78;-122.421,37.781;-122.422,37.782"
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+        # Prose rather than an `enum`: this is a comma-separated list, and
+        # the command builder turns a spec `enum` into a clap
+        # `PossibleValuesParser`, which accepts one value and would refuse
+        # `distance,duration`. Same reasoning as `directions.yaml`'s
+        # `annotations`.
+        - name: "annotations"
+          in: query
+          required: false
+          description: >-
+            Segment-level metadata to add to each leg, comma-separated.
+            Requires `--overview full`. Options are `distance`, `duration`,
+            `speed`, `congestion`, `congestion_numeric`, `maxspeed`.
+          schema:
+            type: string
+          example: "duration,distance"
+        - name: "approaches"
+          in: query
+          required: false
+          description: >-
+            Which side of the road to approach each waypoint from,
+            semicolon-separated — `unrestricted` or `curb` per coordinate.
+            Requires `--steps`.
+          schema:
+            type: string
+        - name: "geometries"
+          in: query
+          required: false
+          description: "The route geometry's format. Defaults to `polyline`."
+          schema:
+            type: string
+            enum: ["geojson", "polyline", "polyline6"]
+        - name: "overview"
+          in: query
+          required: false
+          description: >-
+            How much geometry detail the response carries. Defaults to
+            `simplified`.
+          schema:
+            type: string
+            enum: ["full", "simplified", "false"]
+        - name: "radiuses"
+          in: query
+          required: false
+          description: >-
+            Maximum distance in meters, 0-50, a coordinate may snap to the
+            road network, semicolon-separated, one per coordinate. Defaults
+            to 5.
+          schema:
+            type: string
+        - name: "steps"
+          in: query
+          required: false
+          description: >-
+            Return turn-by-turn instructions. Several other parameters
+            (`approaches`, `banner_instructions`, `language`,
+            `roundabout_exits`, `voice_instructions`) only take effect when
+            this is set.
+          schema:
+            type: boolean
+        - name: "banner_instructions"
+          in: query
+          required: false
+          description: "Return banner objects for display. Requires `--steps`."
+          schema:
+            type: boolean
+        - name: "language"
+          in: query
+          required: false
+          description: >-
+            The language turn-by-turn instructions are written in. Defaults
+            to `en`. Requires `--steps`.
+          schema:
+            type: string
+          example: "en"
+        - name: "roundabout_exits"
+          in: query
+          required: false
+          description: >-
+            Emit a separate instruction for entering and exiting a
+            roundabout, rather than one instruction for the whole
+            maneuver. Requires `--steps`.
+          schema:
+            type: boolean
+        - name: "voice_instructions"
+          in: query
+          required: false
+          description: >-
+            Return SSML-marked-up voice guidance text. Requires `--steps`.
+          schema:
+            type: boolean
+        - name: "voice_units"
+          in: query
+          required: false
+          description: >-
+            Units for voice instructions. Requires `--steps` and
+            `--voice-instructions`.
+          schema:
+            type: string
+            enum: ["imperial", "british_imperial", "metric"]
+        - name: "tidy"
+          in: query
+          required: false
+          description: >-
+            Remove clusters and resample the trace before matching — useful
+            for a trace recorded at an inconsistent sample rate.
+          schema:
+            type: boolean
+        - name: "timestamps"
+          in: query
+          required: false
+          description: >-
+            A Unix timestamp per coordinate, semicolon-separated and
+            ascending — when the trace was actually recorded, rather than
+            assumed from even spacing.
+          schema:
+            type: string
+        - name: "waypoint_names"
+          in: query
+          required: false
+          description: >-
+            A name per waypoint, semicolon-separated, used in that
+            waypoint's arrival instruction instead of the road name. Up to
+            500 characters total. Requires `--steps`.
+          schema:
+            type: string
+        - name: "waypoints"
+          in: query
+          required: false
+          description: >-
+            Zero-based indices into `coordinates` marking which ones get
+            their own arrival instruction — must include `0` and the last
+            index. Requires `--steps`.
+          schema:
+            type: string
+          example: "0,2"
+        # Prose rather than an `enum`, for the reason given on `annotations`
+        # above.
+        - name: "ignore"
+          in: query
+          required: false
+          description: >-
+            Restrictions to ignore while matching, comma-separated.
+            Options are `access`, `oneways`, `restrictions`.
+            `mapbox/driving` only.
+          schema:
+            type: string
+        - name: "linear_references"
+          in: query
+          required: false
+          description: >-
+            Return an OpenLR reference (base64) per matched leg, alongside
+            the ordinary geometry.
+          schema:
+            type: boolean
+        - name: "openlr_spec"
+          in: query
+          required: false
+          description: >-
+            Which OpenLR specification `coordinates` is encoded with, when
+            it is an OpenLR string rather than a coordinate list. Defaults
+            to `tomtom`.
+          schema:
+            type: string
+            enum: ["tomtom", "here"]
+        - name: "openlr_format"
+          in: query
+          required: false
+          description: >-
+            The OpenLR binary format `coordinates` is encoded in, when it
+            is an OpenLR string. Only `tomtom` exists today.
+          schema:
+            type: string
+            enum: ["tomtom"]
+        - name: "depart_at"
+          in: query
+          required: false
+          description: >-
+            Departure time, ISO 8601 — for `mapbox/driving-traffic`, which
+            live traffic conditions to route against.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: >-
+            A JSON object with a `code`, a `matchings` array (each with
+            `confidence`, `distance`, `duration`, `geometry`, and `legs`),
+            and a `tracepoints` array — one entry per input coordinate,
+            `null` for one too far from any candidate to match.
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Not Found — an invalid profile.
+        "422":
+          description: >-
+            Unprocessable Entity — invalid input, or more coordinates than
+            the profile allows (100 for a coordinate list, 50 for OpenLR).

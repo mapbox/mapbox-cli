@@ -286,9 +286,15 @@ paths:
         - name: "alley_bias"
           in: query
           required: false
+          # Content before the profile note, not after: `first_sentence` in
+          # `src/main.rs` cuts a `--help` line at the first `.`, and
+          # `` `mapbox/driving` only. `` — a real sentence on its own — was
+          # eating everything that followed it. `--schema` and
+          # `docs/commands.md` show the description in full either way —
+          # this ordering is only for the one-line case.
           description: >-
-            `mapbox/driving` only. -1 to 1: bias the route against (negative)
-            or toward (positive) alleys.
+            Bias the route against (negative) or toward (positive) alleys,
+            -1 to 1. `mapbox/driving` only.
           schema:
             type: number
             minimum: -1
@@ -297,26 +303,25 @@ paths:
           in: query
           required: false
           description: >-
-            `mapbox/driving` only. Desired arrival time, ISO 8601, for
-            time-dependent routing.
+            Desired arrival time, ISO 8601, for time-dependent routing.
+            `mapbox/driving` only.
           schema:
             type: string
         - name: "depart_at"
           in: query
           required: false
           description: >-
-            `mapbox/driving` and `mapbox/driving-traffic`. Departure time,
-            ISO 8601 — for `mapbox/driving` this drives time-dependent
-            routing; for `mapbox/driving-traffic` it selects which live
-            traffic conditions to route against.
+            Departure time, ISO 8601 — for `mapbox/driving` this drives
+            time-dependent routing; for `mapbox/driving-traffic` it selects
+            which live traffic conditions to route against. Both profiles.
           schema:
             type: string
         - name: "max_height"
           in: query
           required: false
           description: >-
-            `mapbox/driving` and `mapbox/driving-traffic`. Vehicle height in
-            meters, 0-10. Defaults to 1.6.
+            Vehicle height in meters, 0-10, defaulting to 1.6.
+            `mapbox/driving` and `mapbox/driving-traffic` only.
           schema:
             type: number
             minimum: 0
@@ -325,8 +330,8 @@ paths:
           in: query
           required: false
           description: >-
-            `mapbox/driving` and `mapbox/driving-traffic`. Vehicle width in
-            meters, 0-10. Defaults to 1.9.
+            Vehicle width in meters, 0-10, defaulting to 1.9.
+            `mapbox/driving` and `mapbox/driving-traffic` only.
           schema:
             type: number
             minimum: 0
@@ -335,8 +340,8 @@ paths:
           in: query
           required: false
           description: >-
-            `mapbox/driving` and `mapbox/driving-traffic`. Vehicle weight in
-            metric tons, 0-100. Defaults to 2.5.
+            Vehicle weight in metric tons, 0-100, defaulting to 2.5.
+            `mapbox/driving` and `mapbox/driving-traffic` only.
           schema:
             type: number
             minimum: 0
@@ -345,24 +350,24 @@ paths:
           in: query
           required: false
           description: >-
-            `mapbox/driving-traffic` only. Allow snapping to roads carrying
-            a live-traffic closure.
+            Allow snapping to roads carrying a live-traffic closure.
+            `mapbox/driving-traffic` only.
           schema:
             type: boolean
         - name: "snapping_include_static_closures"
           in: query
           required: false
           description: >-
-            `mapbox/driving-traffic` only. Allow snapping to roads carrying
-            a long-term closure.
+            Allow snapping to roads carrying a long-term closure.
+            `mapbox/driving-traffic` only.
           schema:
             type: boolean
         - name: "walking_speed"
           in: query
           required: false
           description: >-
-            `mapbox/walking` only. Walking speed in meters/second,
-            0.14-6.94. Defaults to 1.42.
+            Walking speed in meters/second, 0.14-6.94, defaulting to 1.42.
+            `mapbox/walking` only.
           schema:
             type: number
             minimum: 0.14
@@ -371,8 +376,8 @@ paths:
           in: query
           required: false
           description: >-
-            `mapbox/walking` only. -1 to 1: bias the route against
-            (negative) or toward (positive) walkways/footpaths.
+            Bias the route against (negative) or toward (positive)
+            walkways/footpaths, -1 to 1. `mapbox/walking` only.
           schema:
             type: number
             minimum: -1

@@ -19,6 +19,15 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox isochrone contours`, how far you can get from a point in a given
+  time or distance, for driving (with or without live traffic), walking, or
+  cycling — as GeoJSON polygons or linestrings. Hand-authored into
+  `custom-openapi/` for the same reason `mapbox directions route` was: no
+  upstream spec exists yet. Reuses `directions route`'s fix for a spec
+  parameter named `profile` colliding with the global `--profile` flag
+  (`ARG_NAME_OVERRIDES` already covered the mechanism; this is a second row,
+  not a second fix).
+
 - `mapbox directions route`, routes between 2-25 waypoints for driving (with
   or without live traffic), walking, or cycling. Hand-authored into
   `custom-openapi/` rather than waiting on an upstream spec — the whole

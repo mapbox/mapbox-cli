@@ -106,7 +106,10 @@ const BODY_CONTENT_TYPE_OVERRIDES: &[(&str, &str, &str)] = &[("styles", "starFil
 /// Kept as a table rather than a branch, for the same reason
 /// [`BODY_CONTENT_TYPE_OVERRIDES`] is: the fix sits next to the operation
 /// it's for, and outgrowing a global name later is just deleting a row.
-const ARG_NAME_OVERRIDES: &[(&str, &str, &str)] = &[("directions", "profile", "routing-profile")];
+const ARG_NAME_OVERRIDES: &[(&str, &str, &str)] = &[
+    ("directions", "profile", "routing-profile"),
+    ("isochrone", "profile", "routing-profile"),
+];
 
 /// The `arg_name` a parameter should present as, when its spec name collides
 /// with a global argument's id. See [`ARG_NAME_OVERRIDES`].
@@ -652,6 +655,10 @@ pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
     SpecEntry {
         name: "directions",
         yaml: include_str!("../custom-openapi/directions/openapi/directions.yaml"),
+    },
+    SpecEntry {
+        name: "isochrone",
+        yaml: include_str!("../custom-openapi/isochrone/openapi/isochrone.yaml"),
     },
 ];
 
@@ -2043,10 +2050,44 @@ paths:
         );
     }
 
+    /// Same regression as `the_directions_profile_parameter_does_not_collide…`
+    /// above, for the second spec that ran into it — `ARG_NAME_OVERRIDES`
+    /// taking effect is per-row, so a second entry earns its own proof
+    /// rather than trusting the first test to cover it.
+    #[test]
+    fn the_isochrone_profile_parameter_does_not_collide_with_the_global_flag() {
+        let spec = parse_spec(
+            "isochrone",
+            include_str!("../custom-openapi/isochrone/openapi/isochrone.yaml"),
+        )
+        .expect("isochrone.yaml parses");
+
+        let contours = spec
+            .operations
+            .iter()
+            .find(|op| op.command_path == ["contours"])
+            .expect("the contours operation exists");
+
+        let profile = contours
+            .path_params
+            .iter()
+            .find(|p| p.name == "profile")
+            .expect("a path parameter named profile");
+
+        assert_ne!(
+            profile.arg_name, "profile",
+            "must not collide with the global --profile id"
+        );
+    }
+
     #[test]
     fn arg_name_override_only_fires_for_the_row_it_names() {
         assert_eq!(
             arg_name_override("directions", "profile"),
+            Some("routing-profile")
+        );
+        assert_eq!(
+            arg_name_override("isochrone", "profile"),
             Some("routing-profile")
         );
         assert_eq!(arg_name_override("directions", "coordinates"), None);

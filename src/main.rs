@@ -1099,7 +1099,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                 profile,
                 mode,
             )?,
-            Some(("profiles", _)) => auth::profiles(mode)?,
+            Some(("profiles", _)) => auth::profiles(matches, mode)?,
             _ => unreachable!("`auth` sets subcommand_required(true)"),
         },
         Some((svc_name, svc_matches)) => {

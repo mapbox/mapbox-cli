@@ -139,6 +139,135 @@ fn only_credentials_files_count_as_a_profile() {
 }
 
 #[test]
+fn a_stray_credentials_default_json_is_not_a_second_default_profile() {
+    let home = scratch("stray-default");
+    let dir = config_dir(&home);
+    write_credentials(&dir, "credentials.json", "alice", None);
+    // Not a spelling `credentials_filename` ever writes for the default
+    // profile — a leftover from somewhere else, or a hand-edited file.
+    write_credentials(&dir, "credentials-default.json", "someone-else", None);
+
+    let json = command(&home)
+        .args(["-o", "json", "auth", "profiles"])
+        .output()
+        .expect("run mapbox auth profiles -o json");
+    assert!(json.status.success());
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&json)).expect("valid JSON");
+    let entries = parsed.as_array().expect("a JSON array");
+    assert_eq!(
+        entries.len(),
+        1,
+        "the stray file must not produce a second `default` row: {entries:?}"
+    );
+    assert_eq!(entries[0]["profile"], "default");
+    assert_eq!(entries[0]["account"], "alice");
+}
+
+#[test]
+fn an_explicit_profile_flag_is_warned_about_not_honored() {
+    let home = scratch("profile-flag");
+    write_credentials(&config_dir(&home), "credentials.json", "alice", None);
+
+    let out = command(&home)
+        .args(["--profile", "work", "auth", "profiles"])
+        .output()
+        .expect("run mapbox --profile work auth profiles");
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--profile") && stderr.contains("not honored"),
+        "{stderr}"
+    );
+    // The flag changes nothing about what is listed — every profile still
+    // appears, not just the one named.
+    let parsed: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("valid JSON");
+    assert_eq!(parsed.as_array().expect("a JSON array").len(), 1);
+}
+
+#[test]
+fn no_warning_without_an_explicit_profile_flag() {
+    let home = scratch("no-profile-flag");
+    write_credentials(&config_dir(&home), "credentials.json", "alice", None);
+
+    let out = command(&home)
+        .args(["auth", "profiles"])
+        .output()
+        .expect("run mapbox auth profiles");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+}
+
+#[test]
+fn an_expired_profile_reads_as_expired_not_clock_skew() {
+    let home = scratch("expired");
+    // Well in the past — not a value clock skew could plausibly explain.
+    write_credentials(&config_dir(&home), "credentials.json", "alice", Some(1));
+
+    let text = command(&home)
+        .args(["-o", "text", "auth", "profiles"])
+        .output()
+        .expect("run mapbox auth profiles");
+    assert!(text.status.success());
+    let rendered = stdout(&text);
+    assert!(rendered.contains("expired"), "{rendered}");
+    assert!(
+        !rendered.contains("check this machine's clock"),
+        "a profile expired long ago should not blame the clock: {rendered}"
+    );
+}
+
+#[test]
+fn the_text_table_columns_line_up() {
+    let home = scratch("table");
+    let dir = config_dir(&home);
+    write_credentials(&dir, "credentials.json", "a", None);
+    write_credentials(&dir, "credentials-longer-name.json", "bb", None);
+
+    let text = command(&home)
+        .args(["-o", "text", "auth", "profiles"])
+        .output()
+        .expect("run mapbox auth profiles");
+    assert!(text.status.success());
+    let rendered = stdout(&text);
+    let lines: Vec<&str> = rendered.lines().collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+
+    // The name column is padded to the widest name — "longer-name" (11
+    // characters) — so both rows' account column starts at the same
+    // offset, two spaces after it.
+    assert_eq!(&lines[0][0..13], "default      ", "{lines:?}");
+    assert_eq!(&lines[1][0..13], "longer-name  ", "{lines:?}");
+    assert!(lines[0][13..].starts_with('a'), "{lines:?}");
+    assert!(lines[1][13..].starts_with("bb"), "{lines:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn listing_existing_profiles_does_not_touch_directory_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = scratch("no-chmod");
+    let dir = config_dir(&home);
+    write_credentials(&dir, "credentials.json", "alice", None);
+    // Deliberately not 0700, so a `harden_dir` call as a side effect of
+    // listing would be visible.
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let out = command(&home)
+        .args(["auth", "profiles"])
+        .output()
+        .expect("run mapbox auth profiles");
+    assert!(out.status.success());
+
+    let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        mode, 0o755,
+        "listing profiles must not chmod the config directory"
+    );
+}
+
+#[test]
 fn an_absent_config_directory_lists_nothing_and_creates_none() {
     let home = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("auth-profiles-absent");
     let _ = std::fs::remove_dir_all(&home);

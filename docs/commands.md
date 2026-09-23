@@ -350,10 +350,25 @@ will use; this answers what is stored at all, for someone who has forgotten
 which named profiles they have logged into.
 
 Read-only, like `whoami`: it reads the stored credentials without
-refreshing, so listing profiles cannot spend a single-use refresh token.
-Unlike `whoami`, it never resolves `--token` or the environment — a typed
-flag or `MAPBOX_ACCESS_TOKEN` would outrank every stored profile for the
-*next* command, but neither has anything to do with what is on disk.
+refreshing, so listing profiles cannot spend a single-use refresh token —
+and it reads each one through a path that never creates or hardens the
+config directory, so listing what exists is never the reason a directory
+starts to exist or its permissions change. Unlike `whoami`, it never
+resolves `--token` or the environment — a typed flag or
+`MAPBOX_ACCESS_TOKEN` would outrank every stored profile for the *next*
+command, but neither has anything to do with what is on disk.
+
+**`--profile` from [the table above](#what-every-api-command-takes) is the
+one exception on this page: this command does not honor it.** That table's
+`--profile <name>` selects which single stored profile a command reads —
+the opposite of this command's whole point, which is every one of them at
+once. Typing it anyway parses (it is declared globally) but changes
+nothing, so it is warned about on stderr rather than silently ignored.
+
+An expired token reads as `expired`, not with the "check this machine's
+clock" phrasing `whoami` uses for a token about to be used right now — a
+stored profile may have been sitting untouched for weeks, where that
+clock-skew guess would be wrong far more often than right.
 
 #### Parameters
 
@@ -363,6 +378,9 @@ None. There is no `--dry-run`: the command only reads the store.
 
 ```sh
 mapbox auth profiles
+
+# --profile is warned about, not honored — see above
+mapbox auth profiles --profile work
 ```
 
 #### Outputs
@@ -372,14 +390,14 @@ mapbox auth profiles
 <tr><td>
 
 ```
-default	user	expires in 59 minutes
-work	work-user
+default  user       expires in 58 minutes
+work     work-user
 ```
 
 </td><td>
 
 ```json
-[{"account":"user","expires_at":1788276540,"profile":"default"},{"account":"work-user","expires_at":null,"profile":"work"}]
+[{"account":"user","expires_at":1790172530,"profile":"default"},{"account":"work-user","expires_at":null,"profile":"work"}]
 ```
 
 </td></tr>

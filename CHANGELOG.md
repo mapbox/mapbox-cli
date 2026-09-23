@@ -19,6 +19,19 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox map-matching`, snapping a noisy GPS trace to the road network and
+  returning the route it most likely followed, for driving (with or
+  without live traffic), walking, or cycling. No subcommand: like `mapbox
+  directions` below, this API has one operation, so there's nothing a
+  second word (the old `match`) would disambiguate; see
+  `spec::FLATTENED_SERVICES`. Hand-authored into `custom-openapi/` for the
+  same reason `mapbox directions` and `mapbox isochrone` were: no upstream
+  spec exists yet. Reuses the `profile`-vs-`--profile` collision fix
+  (`ARG_NAME_OVERRIDES` gets a third row) and the free-form (not `enum`)
+  routing profile, for the same OEM-account reason. Excludes POST, for the
+  same reason `directions` does: the API's own POST is for a trace too long
+  for a URL, a real gap rather than a design choice.
+
 - `mapbox isochrone`, how far you can get from a point in a given time or
   distance, for driving (with or without live traffic), walking, or
   cycling, returned as GeoJSON polygons or linestrings. No subcommand:

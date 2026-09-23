@@ -75,6 +75,10 @@ impl Remedy {
 // `every_documentation_page_belongs_to_a_service`.
 const SERVICE_DOCS: &[(&str, &str)] = &[
     ("accounts", TOKENS_DOC),
+    (
+        "directions",
+        "https://docs.mapbox.com/api/navigation/directions/",
+    ),
     ("feedback", "https://docs.mapbox.com/api/feedback/"),
     ("fonts", "https://docs.mapbox.com/api/maps/fonts/"),
     (

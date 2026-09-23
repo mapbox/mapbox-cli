@@ -25,6 +25,25 @@ that may never merge. They are not releases and are not listed here.
   that passes them now fails with an unknown-argument error; drop the
   flags. `mapbox search forward` keeps them. (#76)
 
+- `mapbox directions route`, routes between 2-25 waypoints for driving (with
+  or without live traffic), walking, or cycling. Hand-authored into
+  `custom-openapi/` rather than waiting on an upstream spec — the whole
+  Navigation API category had no CLI coverage before this; excludes the
+  ~30 electric-vehicle-routing parameters
+  (`engine=electric` and everything under it), which describe a vehicle's
+  charging curve down to the watt and are a poor fit for a hand-typed CLI
+  flag — the EV Charge Finder API is a better fit for that case and its own
+  follow-up. Two path-parameter bugs surfaced while wiring this up and are
+  fixed for every command, not just this one: a spec parameter literally
+  named `profile` (the routing profile, `mapbox/driving` etc.) silently
+  collided with the global `--profile` credentials flag, since clap has one
+  namespace of ids per command and a positional of the same name replaced it
+  outright; and an enum-constrained path parameter whose only valid values
+  contain a literal `/` (again, `mapbox/driving`) was being percent-encoded
+  to `%2F` by the same escaping that stops a free-text value from smuggling
+  in extra path segments — safe to skip once clap has already limited the
+  value to one of the spec's own literal strings.
+
 - **Breaking**: `--exclude-fields` removed from `mapbox search forward`
   and `mapbox search category`. The `photos` and `reviews` fields it
   omitted are only returned for accounts with a specific data provider

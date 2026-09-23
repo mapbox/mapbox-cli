@@ -1,6 +1,7 @@
 mapbox accounts list-scopes | aliases: (none)
 mapbox accounts list-tokens | aliases: (none)
 mapbox accounts retrieve-token | aliases: (none)
+mapbox directions route | aliases: (none)
 mapbox feedback create | aliases: (none)
 mapbox feedback get | aliases: (none)
 mapbox feedback list | aliases: (none)

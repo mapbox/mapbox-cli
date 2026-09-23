@@ -85,6 +85,9 @@ nests, and is typed `mapbox styles draft get`.
 **[Isochrone](#isochrone)** —
 [isochrone.contours](#mapbox-isochrone-contours)
 
+**[Map Matching](#map-matching)** —
+[map-matching.match](#mapbox-map-matching-match)
+
 **[Search](#search)** — [search.forward](#mapbox-search-forward) ·
 [search.reverse](#mapbox-search-reverse) ·
 [search.category](#mapbox-search-category) ·
@@ -1326,6 +1329,120 @@ line — same shape as `directions route`'s Outputs section above:
 
 Trimmed to one of the two features (the response has one per
 `--contours-minutes` value) and the polygon's coordinates, for length.
+
+---
+## Map Matching
+
+Snaps a noisy GPS trace to the road network and returns the route it most
+likely followed, for driving (with or without live traffic), walking, or
+cycling. Curated by hand down to the parameters documented at
+docs.mapbox.com/api/navigation/map-matching — see `custom-openapi/README.md`
+for why this command group doesn't come from the vendored specs the way
+most others do. Excludes POST, which this CLI's spec format has no way to
+express alongside GET for the same operation — the API's own POST is for a
+trace too long for a URL (~8100 bytes), a real gap rather than a design
+choice.
+
+### `mapbox map-matching match`
+
+One or more matched routes — more than one where the trace is ambiguous
+enough to split — each carrying a `confidence` the API assigns itself, plus
+one tracepoint per input coordinate (`null` for one too far from any
+candidate to match at all).
+
+#### Parameters
+
+`<routing-profile>` and `<coordinates>` (both positional) are required.
+`<routing-profile>` is one of `mapbox/driving-traffic`, `mapbox/driving`,
+`mapbox/walking`, `mapbox/cycling`. `<coordinates>` is 2-100
+`{longitude},{latitude}` trace points, semicolon-separated — or an
+OpenLR-encoded string of up to 50 points (pair with `--openlr-spec`/
+`--openlr-format`).
+
+| Parameter | Effect |
+| --- | --- |
+| `--annotations <fields>` | Segment-level metadata per leg, comma-separated (`distance`, `duration`, `speed`, `congestion`, `congestion_numeric`, `maxspeed`). Requires `--overview full`. |
+| `--approaches <unrestricted\|curb;...>` | Which side of the road to approach each waypoint from. Requires `--steps`. |
+| `--geometries <geojson\|polyline\|polyline6>` | Route geometry format. Defaults to `polyline`. |
+| `--overview <full\|simplified\|false>` | Geometry detail level. Defaults to `simplified`. |
+| `--radiuses <meters;...>` | Max snap distance, 0-50, one per coordinate. Defaults to 5. |
+| `--steps` | Return turn-by-turn instructions. Several flags below only take effect with this set. |
+| `--banner-instructions` | Return banner objects for display. Requires `--steps`. |
+| `--language <tag>` | Instruction language. Defaults to `en`. Requires `--steps`. |
+| `--roundabout-exits` | Separate entry/exit instructions for a roundabout. Requires `--steps`. |
+| `--voice-instructions` | Return SSML-marked voice guidance. Requires `--steps`. |
+| `--voice-units <imperial\|british_imperial\|metric>` | Requires `--steps` and `--voice-instructions`. |
+| `--tidy` | Remove clusters and resample the trace before matching — for a trace recorded at an inconsistent sample rate. |
+| `--timestamps <unix;...>` | When the trace was recorded, per coordinate, ascending — rather than assumed from even spacing. |
+| `--waypoint-names <names;...>` | A name per waypoint for its arrival instruction. Requires `--steps`. |
+| `--waypoints <indices>` | Which coordinates get their own arrival instruction — must include `0` and the last index. Requires `--steps`. |
+| `--ignore <types>` | Restrictions to ignore, comma-separated (`access`, `oneways`, `restrictions`). `mapbox/driving` only. |
+| `--linear-references` | Return an OpenLR reference (base64) per matched leg, alongside the ordinary geometry. |
+| `--openlr-spec <tomtom\|here>` | Which OpenLR spec `coordinates` is encoded with, if it's an OpenLR string. Defaults to `tomtom`. |
+| `--openlr-format tomtom` | The OpenLR binary format `coordinates` is encoded in, if it's an OpenLR string. |
+| `--depart-at <ISO 8601>` | For `mapbox/driving-traffic`, which live traffic conditions to route against. |
+
+#### Examples
+
+```sh
+mapbox map-matching match mapbox/driving "-122.42,37.78;-122.421,37.781;-122.422,37.782"
+mapbox map-matching match mapbox/driving "-122.42,37.78;-122.421,37.781;-122.422,37.782" \
+  --steps --geometries geojson
+```
+
+#### Outputs
+
+Captured live: three trace points in San Francisco, one deliberately far
+enough off the road network to leave its tracepoint `null`.
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```json
+{
+  "code": "Ok",
+  "matchings": [
+    {
+      "confidence": 0,
+      "distance": 353.157,
+      "duration": 92.702,
+      "geometry": "q|qeFndejVf@lJyDd@Y_E",
+      "legs": [
+        {
+          "distance": 353.157,
+          "duration": 92.702,
+          "steps": [],
+          "summary": "McAllister Street, Franklin Street",
+          "weight": 126.614
+        }
+      ],
+      "weight": 126.614,
+      "weight_name": "auto"
+    }
+  ],
+  "tracepoints": [
+    { "name": "McAllister Street", "location": [-122.420084, 37.780093], "waypoint_index": 0 },
+    { "name": "Golden Gate Avenue", "location": [-122.421141, 37.780946], "waypoint_index": 1 },
+    null
+  ]
+}
+```
+
+</td><td>
+
+```json
+{"code":"Ok","matchings":[{"confidence":0,"distance":353.157,"duration":92.702,"geometry":"q|qeFndejVf@lJyDd@Y_E","legs":[{"distance":353.157,"duration":92.702,"steps":[],"summary":"McAllister Street, Franklin Street","weight":126.614}],"weight":126.614,"weight_name":"auto"}],"tracepoints":[{"name":"McAllister Street","location":[-122.420084,37.780093],"waypoint_index":0},{"name":"Golden Gate Avenue","location":[-122.421141,37.780946],"waypoint_index":1},null]}
+```
+
+</td></tr>
+</table>
+
+Like `directions route`, neither output mode has a bespoke rendering for
+this response — it isn't GeoJSON at the top level — so both print the same
+JSON, `-o text` pretty-printed and `-o json` on one line. Trimmed to one
+matching and dropped `admins`/`via_waypoints`/`alternatives_count`/`uuid`
+for length; the real response carries them too.
 
 ---
 

@@ -172,6 +172,7 @@ mapbox directions *
 mapbox fonts *
 mapbox geocoder *
 mapbox isochrone *
+mapbox map-matching *
 mapbox search *
 mapbox sprites *
 mapbox static *

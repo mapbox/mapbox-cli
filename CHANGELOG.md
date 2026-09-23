@@ -19,6 +19,16 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox map-matching match`, snapping a noisy GPS trace to the road
+  network and returning the route it most likely followed, for driving
+  (with or without live traffic), walking, or cycling. Hand-authored into
+  `custom-openapi/` for the same reason `mapbox directions route` and
+  `mapbox isochrone contours` were: no upstream spec exists yet. Reuses the
+  `profile`-vs-`--profile` collision fix (`ARG_NAME_OVERRIDES` gets a third
+  row). Excludes POST, for the same reason `directions route` does — the
+  API's own POST is for a trace too long for a URL, a real gap rather than
+  a design choice.
+
 - `mapbox isochrone contours`, how far you can get from a point in a given
   time or distance, for driving (with or without live traffic), walking, or
   cycling — as GeoJSON polygons or linestrings. Hand-authored into

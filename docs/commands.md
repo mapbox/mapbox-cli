@@ -3297,11 +3297,18 @@ resolving to something other than what was intended.
 Nothing here is sent unless `--verify` asks for the one check that needs a
 request — the same precedent `auth whoami --verify` sets.
 
+`Proxy:` names which of `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`/`NO_PROXY` are
+set, upper- or lowercase (`reqwest` reads both, curl's convention). It
+answers "is a proxy variable set", not "would this request actually use
+one" — `NO_PROXY` can exempt `api.mapbox.com` specifically, and a
+scheme-specific variable only ever applied to that scheme in the first
+place.
+
 #### Parameters
 
 | Parameter | Effect |
 | --- | --- |
-| `--verify` | Also check that `api.mapbox.com` is reachable, through the same client and proxy handling every other request uses. |
+| `--verify` | Also check that `api.mapbox.com` is reachable, through the same client and proxy handling every other request uses. Honors `--timeout`/`MAPBOX_TIMEOUT` like any other request; defaults to 5 seconds when neither is given, since this is a diagnostic someone is waiting on, not a request whose payload bounds a longer budget. |
 
 #### Examples
 

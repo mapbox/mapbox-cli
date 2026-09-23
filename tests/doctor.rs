@@ -34,11 +34,16 @@ fn command(home: &Path) -> Command {
         .env_remove("MAPBOX_USERNAME")
         .env_remove("MAPBOX_OUTPUT")
         .env_remove("HTTPS_PROXY")
+        .env_remove("https_proxy")
         .env_remove("HTTP_PROXY")
+        .env_remove("http_proxy")
         .env_remove("ALL_PROXY")
+        .env_remove("all_proxy")
         .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
         .env_remove("MAPBOX_CLI_NO_TELEMETRY")
         .env_remove("MAPBOX_NO_UPDATE_CHECK")
+        .env_remove("MAPBOX_TIMEOUT")
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("MAPBOX_CONFIG_DIR", config_dir(home));
@@ -80,6 +85,25 @@ fn closed_port_url() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
     let addr = listener.local_addr().expect("the bound address");
     drop(listener);
+    format!("http://{addr}/")
+}
+
+/// Accepts a connection and then never answers it — unlike
+/// [`closed_port_url`], where the connection is refused immediately, this is
+/// what actually exercises a timeout budget rather than an instant refusal.
+/// The thread outlives the test (nothing tells it to stop), which is fine:
+/// it holds one socket open until the process exits.
+fn hanging_server() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let addr = listener.local_addr().expect("the bound address");
+
+    std::thread::spawn(move || {
+        if let Ok((stream, _)) = listener.accept() {
+            // Held open, on purpose, for as long as this process runs.
+            std::mem::forget(stream);
+        }
+    });
+
     format!("http://{addr}/")
 }
 
@@ -222,4 +246,92 @@ fn verify_reports_an_unreachable_host() {
 
     let value = stdout(&out);
     assert_eq!(value["connectivity"]["reachable"], false);
+}
+
+#[test]
+fn a_lowercase_proxy_variable_is_named_too() {
+    let home = scratch("proxy-lowercase");
+
+    let out = command(&home)
+        .env("https_proxy", "http://localhost:9")
+        .args(["-o", "json", "doctor"])
+        .output()
+        .expect("run mapbox doctor");
+    assert!(out.status.success());
+
+    let active = stdout(&out)["proxy"]["active"].clone();
+    assert_eq!(active, serde_json::json!(["https_proxy"]));
+}
+
+/// The bug this pins: the text line used to read only
+/// `update_check_persisted`/`update_check_env_opt_out`, so
+/// `MAPBOX_CLI_NO_TELEMETRY=1` alone — with the persisted setting still on
+/// its default and the dedicated env switch unset — printed
+/// "Update check: on" for a check that `update_check::enabled` would not
+/// actually run, since that silences it too.
+#[test]
+fn telemetry_off_alone_is_enough_to_turn_the_reported_update_check_off() {
+    let home = scratch("telemetry-only");
+
+    let out = command(&home)
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .args(["-o", "text", "doctor"])
+        .output()
+        .expect("run mapbox doctor");
+    assert!(out.status.success());
+
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        text.lines().any(|line| line.trim_start() == "Update check:  off"
+            || line.starts_with("Update check:  off")),
+        "{text}"
+    );
+}
+
+#[test]
+fn verify_honors_an_explicit_timeout() {
+    let home = scratch("verify-timeout");
+    let url = hanging_server();
+
+    let start = std::time::Instant::now();
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_DOCTOR_URL", &url)
+        .args(["-o", "json", "--timeout", "1", "doctor", "--verify"])
+        .output()
+        .expect("run mapbox --timeout 1 doctor --verify");
+    let elapsed = start.elapsed();
+
+    assert!(out.status.success());
+    assert_eq!(stdout(&out)["connectivity"]["reachable"], false);
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "an explicit --timeout 1 should have cut this short, took {elapsed:?}"
+    );
+}
+
+#[test]
+fn the_error_field_is_absent_without_debug_and_present_with_it() {
+    let home = scratch("verify-error-field");
+    let url = closed_port_url();
+
+    let without_debug = command(&home)
+        .env("MAPBOX_INTERNAL_DOCTOR_URL", &url)
+        .args(["-o", "json", "doctor", "--verify"])
+        .output()
+        .expect("run mapbox doctor --verify");
+    assert!(without_debug.status.success());
+    let value = stdout(&without_debug);
+    assert!(
+        value["connectivity"].get("error").is_none(),
+        "error should be absent, not null, outside --debug: {value}"
+    );
+
+    let with_debug = command(&home)
+        .env("MAPBOX_INTERNAL_DOCTOR_URL", &url)
+        .args(["-o", "json", "--debug", "doctor", "--verify"])
+        .output()
+        .expect("run mapbox --debug doctor --verify");
+    assert!(with_debug.status.success());
+    let value = stdout(&with_debug);
+    assert!(value["connectivity"]["error"].is_string(), "{value}");
 }

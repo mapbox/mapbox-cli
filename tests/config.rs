@@ -123,6 +123,70 @@ fn an_unknown_key_or_value_is_a_usage_error_not_a_panic() {
     );
 }
 
+#[test]
+fn list_reports_every_setting_including_an_unset_one() {
+    let home = scratch("list");
+
+    // Nothing set yet: list still names the one known key, at its default.
+    let empty = command(&home)
+        .args(["-o", "json", "config", "list"])
+        .output()
+        .expect("run mapbox config list");
+    assert!(empty.status.success());
+    assert_eq!(stdout(&empty), r#"[{"key":"update-check","value":true}]"#);
+
+    let set = command(&home)
+        .args(["config", "set", "update-check", "off"])
+        .output()
+        .expect("run mapbox config set");
+    assert!(set.status.success());
+
+    let after = command(&home)
+        .args(["-o", "json", "config", "list"])
+        .output()
+        .expect("run mapbox config list");
+    assert!(after.status.success());
+    assert_eq!(stdout(&after), r#"[{"key":"update-check","value":false}]"#);
+
+    let text = command(&home)
+        .args(["-o", "text", "config", "list"])
+        .output()
+        .expect("run mapbox config list");
+    assert!(text.status.success());
+    assert_eq!(stdout(&text), "update-check\toff");
+}
+
+#[test]
+fn unset_clears_the_key_rather_than_writing_the_default() {
+    let home = scratch("unset");
+    let path = config_dir(&home).join("config.json");
+
+    // Set to `on` explicitly — the default value, but written, not absent.
+    let set = command(&home)
+        .args(["config", "set", "update-check", "on"])
+        .output()
+        .expect("run mapbox config set");
+    assert!(set.status.success());
+    let written = std::fs::read_to_string(&path).expect("config.json exists");
+    assert!(
+        written.contains("update_check"),
+        "an explicit `on` should still be written: {written:?}"
+    );
+
+    let unset = command(&home)
+        .args(["-o", "json", "config", "unset", "update-check"])
+        .output()
+        .expect("run mapbox config unset");
+    assert!(unset.status.success());
+    assert_eq!(stdout(&unset), r#"{"key":"update-check","value":true}"#);
+
+    let cleared = std::fs::read_to_string(&path).expect("config.json still exists");
+    assert_eq!(
+        cleared, "{}",
+        "unset should remove the key, not merely write back its default"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn the_config_file_is_written_private() {

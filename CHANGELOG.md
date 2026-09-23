@@ -31,6 +31,14 @@ that may never merge. They are not releases and are not listed here.
   `.cargo/config.toml` already named it, so publishing the artifact was the
   whole client-side change.
 
+- `install.sh`/`install.ps1` now document a convention for `MAPBOX_CLI_INSTALL_SOURCE`
+  when a coding agent invokes the installer on someone's behalf: `agent-<name>`
+  (`agent-claude-code`, `agent-cursor`), so an access-log query can tell those
+  installs apart from a human or CI one. A dash rather than the slash an
+  earlier proposal used — `/` is stripped by the installers' own sanitizer,
+  which would have collapsed `agent/claude-code` into `agentclaude-code` and
+  lost the separator. Comment-only: neither installer's behavior changed.
+
 ## 0.3.0 - 2026-09-22
 
 ### Added

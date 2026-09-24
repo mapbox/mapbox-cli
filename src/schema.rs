@@ -379,6 +379,10 @@ fn commands(app: &Command, specs: &[ServiceSpec], path: &[String]) -> Vec<Comman
         ));
     }
 
+    if wants(crate::doctor::COMMAND) && wanted_command.is_none() {
+        out.extend(builtin_leaf_command(app, crate::doctor::COMMAND));
+    }
+
     // No flag check needed: builtin_leaf_command's find_subcommand returns
     // None (a no-op .extend) when the flag left it out of `app`.
     if wants(crate::account_usage::COMMAND) && wanted_command.is_none() {

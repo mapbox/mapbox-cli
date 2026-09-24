@@ -347,7 +347,7 @@ fn dispatch(
         .as_deref()
         .map(|next| NextPage::of(&op.query_params, next));
     if next_page.is_some() {
-        crate::events::record_more_pages();
+        crate::events::set_more_pages();
     }
 
     match as_text {

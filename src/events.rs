@@ -1,8 +1,9 @@
 //! One `cli.command` event per run: what ran and how it ended.
 //!
 //! Modules report what they know as it happens — the parse, the token, each
-//! request, the bytes on stdout, an error code — through the `record_*`
-//! functions here, and `main` calls [`finish`] once on the way out. The
+//! request, the bytes on stdout, an error code — and `main` calls [`finish`]
+//! once on the way out; nothing is written before then. `set_*` functions
+//! overwrite a field, last call wins; `add_*` functions accumulate. The
 //! event is then handed to a sink: a JSON line under
 //! `~/.mapbox/.telemetry/` by default, or Mapbox Events through a detached
 //! child with `MAPBOX_CLI_TELEMETRY_SINK=api`.
@@ -340,7 +341,7 @@ pub fn start() {
 }
 
 /// The command line clap parsed. `invocation` is `execute` or `schema`.
-pub fn record_parsed(
+pub fn set_parsed(
     app: &Command,
     specs: &[ServiceSpec],
     matches: &ArgMatches,
@@ -371,7 +372,7 @@ pub fn record_parsed(
 /// A command line clap refused, or answered with help or the version.
 /// Command names are recovered by walking the tree with argv's words, so
 /// only names the tree already has can come out.
-pub fn record_unparsed(app: &Command, argv: &[std::ffi::OsString], kind: clap::error::ErrorKind) {
+pub fn set_unparsed(app: &Command, argv: &[std::ffi::OsString], kind: clap::error::ErrorKind) {
     use clap::error::ErrorKind;
     with_run(|run| {
         let path = command_from_argv(app, argv);
@@ -391,13 +392,13 @@ pub fn record_unparsed(app: &Command, argv: &[std::ffi::OsString], kind: clap::e
 
 /// The token a command resolved, for `auth`. Read for its prefix and its
 /// `u` claim; the token itself is not kept.
-pub fn record_token(source: auth::TokenSource, token: &str) {
+pub fn set_token(source: auth::TokenSource, token: &str) {
     with_run(|run| run.auth = Some(auth_field(source, token)));
 }
 
-/// [`record_token`] for the service arms' resolution: a typed `--token`,
+/// [`set_token`] for the service arms' resolution: a typed `--token`,
 /// then the environment unless `--use-login`, then the stored login.
-pub fn record_resolved_token(matches: &ArgMatches, use_login: bool, token: &str) {
+pub fn set_resolved_token(matches: &ArgMatches, use_login: bool, token: &str) {
     let source = if auth::typed_token(matches).is_some() {
         auth::TokenSource::Flag
     } else if !use_login && matches.get_one::<String>("token").is_some() {
@@ -405,18 +406,18 @@ pub fn record_resolved_token(matches: &ArgMatches, use_login: bool, token: &str)
     } else {
         auth::TokenSource::Login
     };
-    record_token(source, token);
+    set_token(source, token);
 }
 
-pub fn record_error_code(code: &str) {
+pub fn set_error_code(code: &str) {
     with_run(|run| run.error_code = Some(clip(code, MAX_CODE)));
 }
 
-pub fn record_auth_step(step: &'static str) {
+pub fn set_auth_step(step: &'static str) {
     with_run(|run| run.auth_step = Some(step));
 }
 
-pub fn record_update_notice(version: &str) {
+pub fn set_update_notice(version: &str) {
     with_run(|run| run.update_notice = Some(clip(version, MAX_VERSION)));
 }
 
@@ -424,13 +425,13 @@ pub fn add_stdout_bytes(bytes: usize) {
     with_run(|run| run.stdout_bytes = run.stdout_bytes.saturating_add(bytes as u64));
 }
 
-pub fn record_more_pages() {
+pub fn set_more_pages() {
     with_run(|run| run.network.get_or_insert_with(Network::default).more_pages = true);
 }
 
 /// One request, from [`http::send`]. `status` is `None` when no response
 /// came back; `request_id` is passed only for a Mapbox response.
-pub fn record_request(
+pub fn add_request(
     status: Option<u16>,
     response_bytes: Option<u64>,
     request_body_bytes: Option<u64>,

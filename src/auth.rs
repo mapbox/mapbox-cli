@@ -689,11 +689,11 @@ pub fn force_refresh(debug: bool, profile: Option<&str>, mode: Mode) -> Result<(
     let mut creds = load_credentials(profile)
         .ok_or_else(|| anyhow!("Not currently logged in. Run `mapbox auth login` first."))?;
 
-    crate::events::record_auth_step("refresh");
+    crate::events::set_auth_step("refresh");
     refresh_credentials(&mut creds, debug)?;
-    crate::events::record_auth_step("save_credentials");
+    crate::events::set_auth_step("save_credentials");
     save_credentials(&creds, profile)?;
-    crate::events::record_auth_step("done");
+    crate::events::set_auth_step("done");
 
     let expires_at = token_expires_at(&creds.access_token);
     let text = match expires_at {
@@ -896,10 +896,10 @@ pub fn logout(profile: Option<&str>, mode: Mode) -> Result<()> {
     let path = credentials_path(profile)?;
     let had_credentials = path.exists();
     if had_credentials {
-        crate::events::record_auth_step("remove_credentials");
+        crate::events::set_auth_step("remove_credentials");
         std::fs::remove_file(&path)?;
     }
-    crate::events::record_auth_step("done");
+    crate::events::set_auth_step("done");
 
     let text = if had_credentials {
         "Logged out successfully."
@@ -1896,7 +1896,7 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     // Computed once: register_client's ceiling and the authorize scope must agree.
     let scopes = default_scopes();
 
-    crate::events::record_auth_step("register_client");
+    crate::events::set_auth_step("register_client");
     output::progress("Registering OAuth client with Mapbox...");
     let registration = register_client(&redirect_uri, debug, scopes)?;
 
@@ -1924,7 +1924,7 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     // Not discarded: with stderr redirected this is the only thing carrying
     // the run, so its failure is the difference between refusing now and
     // stalling for five minutes. See `login_can_be_completed`.
-    crate::events::record_auth_step("open_browser");
+    crate::events::set_auth_step("open_browser");
     let browser_opened = open::that(&auth_url).is_ok();
     if !login_can_be_completed(std::io::stderr().is_terminal(), browser_opened) {
         return Err(login_has_no_way_to_show_the_url());
@@ -1933,10 +1933,10 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     output::progress(&format!(
         "Waiting for authorization (listening on port {port})..."
     ));
-    crate::events::record_auth_step("wait_for_callback");
+    crate::events::set_auth_step("wait_for_callback");
     let code = wait_for_callback(port, &state, CALLBACK_TIMEOUT)?;
 
-    crate::events::record_auth_step("exchange_code");
+    crate::events::set_auth_step("exchange_code");
     output::progress("Exchanging authorization code for access token...");
     let mut creds = exchange_code_for_token(
         &code,
@@ -1948,9 +1948,9 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     )?;
     creds.client_id = Some(registration.client_id.clone());
 
-    crate::events::record_auth_step("save_credentials");
+    crate::events::set_auth_step("save_credentials");
     save_credentials(&creds, profile)?;
-    crate::events::record_auth_step("done");
+    crate::events::set_auth_step("done");
 
     let profile_note = match profile {
         Some(name) if name != "default" => format!(" (profile: {name})"),

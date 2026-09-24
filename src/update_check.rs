@@ -427,7 +427,7 @@ pub fn notify() {
     // it had, rather than racing a child that may finish first.
     if let Some(latest) = should_notify(cache.as_ref(), CURRENT, now) {
         output::progress(&notice(latest, CURRENT, cfg!(windows)));
-        crate::events::record_update_notice(latest);
+        crate::events::set_update_notice(latest);
         let mut updated = cache.clone().unwrap_or_default();
         updated.notified_at = now;
         write_cache(&updated);

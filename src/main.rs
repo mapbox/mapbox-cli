@@ -647,7 +647,7 @@ fn no_stored_credentials(profile: Option<&str>) -> anyhow::Error {
 
 /// Answers `--schema`, from either of the two places it can be noticed.
 fn emit_schema(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches) -> u8 {
-    events::record_parsed(app, specs, matches, "schema");
+    events::set_parsed(app, specs, matches, "schema");
     let mode = Mode::from_matches(matches);
     match schema::emit(mode, app, specs, matches) {
         Ok(()) => 0,
@@ -723,7 +723,7 @@ fn cli() -> u8 {
         Err(e) => match schema::requested(&app, argv) {
             Some(matches) => return emit_schema(&app, &specs, &matches),
             None => {
-                events::record_unparsed(&app, &raw_argv, e.kind());
+                events::set_unparsed(&app, &raw_argv, e.kind());
                 return report_parse_result(e, &raw_argv);
             }
         },
@@ -736,7 +736,7 @@ fn cli() -> u8 {
         return emit_schema(&app, &specs, &matches);
     }
 
-    events::record_parsed(&app, &specs, &matches, "execute");
+    events::set_parsed(&app, &specs, &matches, "execute");
     let mode = Mode::from_matches(&matches);
     match run(&app, &specs, &matches, mode) {
         Ok(()) => 0,
@@ -1018,14 +1018,14 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             }
             match &token {
                 Some(tilesets_cli::ChildToken::Flag(t)) => {
-                    events::record_token(auth::TokenSource::Flag, t)
+                    events::set_token(auth::TokenSource::Flag, t)
                 }
                 Some(tilesets_cli::ChildToken::Stored(t)) => {
-                    events::record_token(auth::TokenSource::Login, t)
+                    events::set_token(auth::TokenSource::Login, t)
                 }
                 None => {
                     if let Some((_, t)) = auth::environment_token() {
-                        events::record_token(auth::TokenSource::Environment, &t);
+                        events::set_token(auth::TokenSource::Environment, &t);
                     }
                 }
             }
@@ -1103,7 +1103,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                 return Err(no_stored_credentials(profile));
             }
             if let Some(token) = &token {
-                events::record_resolved_token(matches, use_login, token);
+                events::set_resolved_token(matches, use_login, token);
             }
 
             account_usage::run(
@@ -1218,7 +1218,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                 return Err(no_stored_credentials(profile));
             }
             if let Some(token) = &token {
-                events::record_resolved_token(matches, use_login, token);
+                events::set_resolved_token(matches, use_login, token);
             }
             let username: Option<String> = matches
                 .get_one::<String>("username")

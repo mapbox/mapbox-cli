@@ -1483,7 +1483,7 @@ fn error_payload(e: &CliError) -> Value {
 /// no `state` field: the streams already separate the two cases.
 pub fn emit_error(mode: Mode, err: &anyhow::Error) {
     let cli = err.downcast_ref::<CliError>();
-    crate::events::record_error_code(cli.map_or(GENERIC_CODE, |e| e.code.as_str()));
+    crate::events::set_error_code(cli.map_or(GENERIC_CODE, |e| e.code.as_str()));
 
     if mode.is_json() {
         let payload = match cli {

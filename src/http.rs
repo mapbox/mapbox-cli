@@ -277,7 +277,7 @@ pub fn send(
     let elapsed = started.elapsed();
 
     match &result {
-        Ok(response) => events::record_request(
+        Ok(response) => events::add_request(
             Some(response.status().as_u16()),
             response.content_length(),
             body_bytes,
@@ -286,7 +286,7 @@ pub fn send(
                 .then(|| executor::request_id(response.headers()))
                 .flatten(),
         ),
-        Err(_) => events::record_request(None, None, body_bytes, elapsed, None),
+        Err(_) => events::add_request(None, None, body_bytes, elapsed, None),
     }
     result
 }

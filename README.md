@@ -122,8 +122,14 @@ Expand-Archive $artifact.file -DestinationPath .
 ```
 
 `Invoke-WebRequest` and `Get-FileHash` rather than `curl` and `sha256sum`:
-the first is an alias for something else in Windows PowerShell and neither of
-the others is guaranteed to be present.
+Windows PowerShell 5.1 — the edition that ships with Windows, `powershell.exe`
+— aliases `curl` to `Invoke-WebRequest`, whose flags are nothing like real
+curl's, so the commands above would silently run the wrong tool there even
+though `curl.exe` itself has shipped in `System32` since Windows 10 1803.
+PowerShell 7 (`pwsh`) dropped that alias, so `curl` there is the real thing —
+but 5.1 is still what a plain "Windows PowerShell" shortcut opens on a
+default install. `sha256sum` has the simpler problem: it isn't shipped at
+all outside WSL or Git Bash.
 
 Use `latest` in place of the version for whatever is current. Each archive
 holds one file, the `mapbox` executable, so there is no directory to step

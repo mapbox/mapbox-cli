@@ -61,7 +61,7 @@ pub(crate) fn in_ci() -> bool {
     ci_marker().is_some()
 }
 
-/// For `crate::events`, which may not reach for stdout itself.
+/// For `crate::telemetry_event`, which may not reach for stdout itself.
 pub(crate) fn stdout_is_terminal() -> bool {
     std::io::stdout().is_terminal()
 }

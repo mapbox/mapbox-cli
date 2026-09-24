@@ -499,7 +499,7 @@ fn handoff(mut cmd: std::process::Command) -> std::io::Error {
     // binary resolves — a missing `tilesets` is a failure `main` reports,
     // and the event should carry it.
     if resolves(std::path::Path::new(cmd.get_program())) {
-        crate::events::finish(None);
+        crate::telemetry_event::finish(None);
     }
     cmd.exec()
 }
@@ -523,7 +523,7 @@ fn handoff(mut cmd: std::process::Command) -> std::io::Error {
         Ok(status) => {
             let code = status.code().unwrap_or(130);
             // `exit` skips `main`'s way out, where the event is sent.
-            crate::events::finish(u32::try_from(code).ok());
+            crate::telemetry_event::finish(u32::try_from(code).ok());
             std::process::exit(code)
         }
         Err(err) => err,

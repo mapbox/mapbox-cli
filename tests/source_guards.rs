@@ -43,7 +43,7 @@ fn sources() -> Vec<(String, String)> {
 /// - `agent_skills` — the staging directory it renames skills out of, and the
 ///   skill directory `install --force` replaces.
 /// - `auth` — `logout`, and the scratch file `write_private` renames from.
-/// - `events` — its own dated event files past the retention window, matched
+/// - `telemetry_event` — its own dated event files past the retention window, matched
 ///   by exact `YYYY-MM-DD.jsonl` names inside `~/.mapbox/.telemetry`, and the
 ///   `last-version` file it rewrites.
 /// - `executor` — nothing durable; the temp file a `--file` upload streams.
@@ -53,7 +53,7 @@ fn sources() -> Vec<(String, String)> {
 const MAY_DELETE: &[&str] = &[
     "agent_skills.rs",
     "auth.rs",
-    "events.rs",
+    "telemetry_event.rs",
     "executor.rs",
     "generate_skills.rs",
     "skill_dest.rs",

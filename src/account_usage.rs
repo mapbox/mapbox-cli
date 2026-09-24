@@ -507,7 +507,7 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     era * 146097 + doe - 719468
 }
 
-/// The inverse of [`days_from_civil`]. Also [`crate::events`]'s calendar.
+/// The inverse of [`days_from_civil`]. Also [`crate::telemetry_event`]'s calendar.
 pub(crate) fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719468;
     let era = z.div_euclid(146097);

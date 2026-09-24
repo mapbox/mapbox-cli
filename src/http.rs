@@ -20,7 +20,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::ArgMatches;
 
-use crate::{events, executor, telemetry};
+use crate::{executor, telemetry, telemetry_event};
 
 /// The flag and the variable a caller moves the budget with.
 pub const TIMEOUT_ARG: &str = "timeout";
@@ -277,7 +277,7 @@ pub fn send(
     let elapsed = started.elapsed();
 
     match &result {
-        Ok(response) => events::add_request(
+        Ok(response) => telemetry_event::add_request(
             Some(response.status().as_u16()),
             response.content_length(),
             body_bytes,
@@ -286,7 +286,7 @@ pub fn send(
                 .then(|| executor::request_id(response.headers()))
                 .flatten(),
         ),
-        Err(_) => events::add_request(None, None, body_bytes, elapsed, None),
+        Err(_) => telemetry_event::add_request(None, None, body_bytes, elapsed, None),
     }
     result
 }

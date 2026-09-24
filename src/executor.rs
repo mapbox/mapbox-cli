@@ -347,7 +347,7 @@ fn dispatch(
         .as_deref()
         .map(|next| NextPage::of(&op.query_params, next));
     if next_page.is_some() {
-        crate::events::set_more_pages();
+        crate::telemetry_event::set_more_pages();
     }
 
     match as_text {
@@ -1393,7 +1393,7 @@ fn write_binary(body: &[u8], content_type: &str) -> Result<()> {
         .into());
     }
 
-    crate::events::add_stdout_bytes(body.len());
+    crate::telemetry_event::add_stdout_bytes(body.len());
     stdout
         .write_all(body)
         .and_then(|()| stdout.flush())

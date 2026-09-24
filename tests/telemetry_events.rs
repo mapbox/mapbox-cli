@@ -1,6 +1,6 @@
 //! End-to-end tests for the run's `cli.command` event.
 //!
-//! The unit tests in `src/events.rs` cover the pure parts — how an argument
+//! The unit tests in `src/telemetry_event.rs` cover the pure parts — how an argument
 //! is classified, what a timestamp looks like, which files pruning may
 //! touch. What they cannot show is what a real run leaves behind: that the
 //! event lands where it should, carries what the command did and nothing the

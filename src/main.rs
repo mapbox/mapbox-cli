@@ -20,7 +20,6 @@ mod completion;
 mod config;
 mod confirm;
 mod deprecation;
-mod events;
 mod executor;
 mod generate_skills;
 mod http;
@@ -31,6 +30,7 @@ mod schema;
 mod skill_dest;
 mod spec;
 mod telemetry;
+mod telemetry_event;
 mod tilesets_cli;
 mod uninstall;
 mod update_check;
@@ -647,7 +647,7 @@ fn no_stored_credentials(profile: Option<&str>) -> anyhow::Error {
 
 /// Answers `--schema`, from either of the two places it can be noticed.
 fn emit_schema(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches) -> u8 {
-    events::set_parsed(app, specs, matches, "schema");
+    telemetry_event::set_parsed(app, specs, matches, "schema");
     let mode = Mode::from_matches(matches);
     match schema::emit(mode, app, specs, matches) {
         Ok(()) => 0,
@@ -675,15 +675,15 @@ fn main() -> ExitCode {
     if update_check::is_refresh_child() {
         return update_check::run_refresh_child();
     }
-    if events::is_sender_child() {
-        return events::run_sender_child();
+    if telemetry_event::is_sender_child() {
+        return telemetry_event::run_sender_child();
     }
 
-    events::start();
+    telemetry_event::start();
     let code = cli();
     update_check::notify();
     // After the notice, which the event reports.
-    events::finish(Some(u32::from(code)));
+    telemetry_event::finish(Some(u32::from(code)));
     ExitCode::from(code)
 }
 
@@ -723,7 +723,7 @@ fn cli() -> u8 {
         Err(e) => match schema::requested(&app, argv) {
             Some(matches) => return emit_schema(&app, &specs, &matches),
             None => {
-                events::set_unparsed(&app, &raw_argv, e.kind());
+                telemetry_event::set_unparsed(&app, &raw_argv, e.kind());
                 return report_parse_result(e, &raw_argv);
             }
         },
@@ -736,7 +736,7 @@ fn cli() -> u8 {
         return emit_schema(&app, &specs, &matches);
     }
 
-    events::set_parsed(&app, &specs, &matches, "execute");
+    telemetry_event::set_parsed(&app, &specs, &matches, "execute");
     let mode = Mode::from_matches(&matches);
     match run(&app, &specs, &matches, mode) {
         Ok(()) => 0,
@@ -787,7 +787,7 @@ fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> u8 
     if is_help || (!mode.is_json() && err.kind() != ErrorKind::MissingSubcommand) {
         if !err.use_stderr() {
             // Help and the version: clap writes these to stdout itself.
-            events::add_stdout_bytes(err.render().to_string().len());
+            telemetry_event::add_stdout_bytes(err.render().to_string().len());
         }
         let _ = err.print();
         return code;
@@ -1018,14 +1018,14 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             }
             match &token {
                 Some(tilesets_cli::ChildToken::Flag(t)) => {
-                    events::set_token(auth::TokenSource::Flag, t)
+                    telemetry_event::set_token(auth::TokenSource::Flag, t)
                 }
                 Some(tilesets_cli::ChildToken::Stored(t)) => {
-                    events::set_token(auth::TokenSource::Login, t)
+                    telemetry_event::set_token(auth::TokenSource::Login, t)
                 }
                 None => {
                     if let Some((_, t)) = auth::environment_token() {
-                        events::set_token(auth::TokenSource::Environment, &t);
+                        telemetry_event::set_token(auth::TokenSource::Environment, &t);
                     }
                 }
             }
@@ -1103,7 +1103,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                 return Err(no_stored_credentials(profile));
             }
             if let Some(token) = &token {
-                events::set_resolved_token(matches, use_login, token);
+                telemetry_event::set_resolved_token(matches, use_login, token);
             }
 
             account_usage::run(
@@ -1218,7 +1218,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                 return Err(no_stored_credentials(profile));
             }
             if let Some(token) = &token {
-                events::set_resolved_token(matches, use_login, token);
+                telemetry_event::set_resolved_token(matches, use_login, token);
             }
             let username: Option<String> = matches
                 .get_one::<String>("username")

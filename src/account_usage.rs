@@ -507,8 +507,8 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     era * 146097 + doe - 719468
 }
 
-/// The inverse of [`days_from_civil`].
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
+/// The inverse of [`days_from_civil`]. Also [`crate::events`]'s calendar.
+pub(crate) fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719468;
     let era = z.div_euclid(146097);
     let doe = z - era * 146097; // [0, 146096]
@@ -599,12 +599,13 @@ fn fetch(
         eprintln!("[debug] GET {}", redacted_url(&url, &query));
     }
 
-    let response = client
-        .get(&url)
-        .query(&query)
-        .timeout(http::budget(timeout, http::Payload::Bounded))
-        .send()
-        .map_err(|e| executor::transport_failure("Request failed", e))?;
+    let response = http::send(
+        client
+            .get(&url)
+            .query(&query)
+            .timeout(http::budget(timeout, http::Payload::Bounded)),
+    )
+    .map_err(|e| executor::transport_failure("Request failed", e))?;
 
     let status = response.status();
     // Before `text()` consumes the response: a 5xx here is worth escalating,

@@ -153,6 +153,7 @@ pub fn run(app: &Command, matches: &ArgMatches) -> Result<()> {
 
     // Straight to stdout rather than through `output::emit`: the script is
     // the result, and there is no rendering of it that is not itself.
+    crate::events::add_stdout_bytes(script.len());
     let mut out = io::stdout().lock();
     match out.write_all(&script).and_then(|()| out.flush()) {
         // A reader that stopped reading is `head`'s ordinary behavior, not a

@@ -654,10 +654,7 @@ fn refresh_credentials(creds: &mut Credentials, debug: bool) -> Result<()> {
         eprintln!("[debug] POST {} (grant_type=refresh_token)", TOKEN_ENDPOINT);
     }
 
-    let resp = client
-        .post(TOKEN_ENDPOINT)
-        .form(&params)
-        .send()
+    let resp = crate::http::send(client.post(TOKEN_ENDPOINT).form(&params))
         .context("Token refresh request failed")?;
 
     if !resp.status().is_success() {
@@ -692,8 +689,11 @@ pub fn force_refresh(debug: bool, profile: Option<&str>, mode: Mode) -> Result<(
     let mut creds = load_credentials(profile)
         .ok_or_else(|| anyhow!("Not currently logged in. Run `mapbox auth login` first."))?;
 
+    crate::events::record_auth_step("refresh");
     refresh_credentials(&mut creds, debug)?;
+    crate::events::record_auth_step("save_credentials");
     save_credentials(&creds, profile)?;
+    crate::events::record_auth_step("done");
 
     let expires_at = token_expires_at(&creds.access_token);
     let text = match expires_at {
@@ -896,8 +896,10 @@ pub fn logout(profile: Option<&str>, mode: Mode) -> Result<()> {
     let path = credentials_path(profile)?;
     let had_credentials = path.exists();
     if had_credentials {
+        crate::events::record_auth_step("remove_credentials");
         std::fs::remove_file(&path)?;
     }
+    crate::events::record_auth_step("done");
 
     let text = if had_credentials {
         "Logged out successfully."
@@ -932,7 +934,7 @@ impl TokenSource {
     /// The name a program reads. The prose form is built in
     /// [`Identity::source_prose`], where it can name the variable or profile
     /// the bare word leaves out.
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             TokenSource::Flag => "flag",
             TokenSource::Environment => "environment",
@@ -1136,17 +1138,18 @@ fn verify_token(token: &str, debug: bool, timeout: Option<Duration>) -> Result<V
         eprintln!("[debug] GET {VALIDATION_ENDPOINT}?access_token=<redacted>");
     }
 
-    let response = crate::http::client()?
-        .get(VALIDATION_ENDPOINT)
-        .query(&[("access_token", token)])
-        // The one request `auth` makes to a Mapbox API rather than to the
-        // authorization server, so it is the one `--timeout` has to reach.
-        // The other three — refresh, registration, code exchange — carry a
-        // few hundred bytes each and keep the client's own budget.
-        .timeout(crate::http::budget(timeout, crate::http::Payload::Bounded))
-        .send()
-        // `reqwest::Error`'s `Display` appends the URL, and the token is in it.
-        .map_err(|e| crate::executor::transport_failure("Token check failed", e))?;
+    let response = crate::http::send(
+        crate::http::client()?
+            .get(VALIDATION_ENDPOINT)
+            .query(&[("access_token", token)])
+            // The one request `auth` makes to a Mapbox API rather than to the
+            // authorization server, so it is the one `--timeout` has to reach.
+            // The other three — refresh, registration, code exchange — carry a
+            // few hundred bytes each and keep the client's own budget.
+            .timeout(crate::http::budget(timeout, crate::http::Payload::Bounded)),
+    )
+    // `reqwest::Error`'s `Display` appends the URL, and the token is in it.
+    .map_err(|e| crate::executor::transport_failure("Token check failed", e))?;
 
     let status = response.status();
     // Before `text()` consumes the response — see `executor::request_id`.
@@ -1436,12 +1439,13 @@ fn register_client(redirect_uri: &str, debug: bool, scopes: &str) -> Result<Clie
         eprintln!("[debug] body: {}", body);
     }
 
-    let resp = client
-        .post(REGISTRATION_ENDPOINT)
-        .query(&[("scope", scopes)])
-        .json(&body)
-        .send()
-        .context("Failed to reach Mapbox OAuth registration endpoint")?;
+    let resp = crate::http::send(
+        client
+            .post(REGISTRATION_ENDPOINT)
+            .query(&[("scope", scopes)])
+            .json(&body),
+    )
+    .context("Failed to reach Mapbox OAuth registration endpoint")?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -1734,10 +1738,7 @@ fn exchange_code_for_token(
         );
     }
 
-    let resp = client
-        .post(TOKEN_ENDPOINT)
-        .form(&params)
-        .send()
+    let resp = crate::http::send(client.post(TOKEN_ENDPOINT).form(&params))
         .context("Token exchange request failed")?;
 
     if !resp.status().is_success() {
@@ -1895,6 +1896,7 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     // Computed once: register_client's ceiling and the authorize scope must agree.
     let scopes = default_scopes();
 
+    crate::events::record_auth_step("register_client");
     output::progress("Registering OAuth client with Mapbox...");
     let registration = register_client(&redirect_uri, debug, scopes)?;
 
@@ -1922,6 +1924,7 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     // Not discarded: with stderr redirected this is the only thing carrying
     // the run, so its failure is the difference between refusing now and
     // stalling for five minutes. See `login_can_be_completed`.
+    crate::events::record_auth_step("open_browser");
     let browser_opened = open::that(&auth_url).is_ok();
     if !login_can_be_completed(std::io::stderr().is_terminal(), browser_opened) {
         return Err(login_has_no_way_to_show_the_url());
@@ -1930,8 +1933,10 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     output::progress(&format!(
         "Waiting for authorization (listening on port {port})..."
     ));
+    crate::events::record_auth_step("wait_for_callback");
     let code = wait_for_callback(port, &state, CALLBACK_TIMEOUT)?;
 
+    crate::events::record_auth_step("exchange_code");
     output::progress("Exchanging authorization code for access token...");
     let mut creds = exchange_code_for_token(
         &code,
@@ -1943,7 +1948,9 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
     )?;
     creds.client_id = Some(registration.client_id.clone());
 
+    crate::events::record_auth_step("save_credentials");
     save_credentials(&creds, profile)?;
+    crate::events::record_auth_step("done");
 
     let profile_note = match profile {
         Some(name) if name != "default" => format!(" (profile: {name})"),

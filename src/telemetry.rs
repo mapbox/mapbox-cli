@@ -51,6 +51,21 @@ fn arch_marker() -> String {
     format!("arch/{}", spelled_arch(std::env::consts::ARCH))
 }
 
+/// The CPU architecture as the event's `env.arch` spells it.
+pub(crate) fn arch() -> &'static str {
+    spelled_arch(std::env::consts::ARCH)
+}
+
+/// Whether this run is in CI, by the same rule as the `env/ci` marker.
+pub(crate) fn in_ci() -> bool {
+    ci_marker().is_some()
+}
+
+/// For `crate::events`, which may not reach for stdout itself.
+pub(crate) fn stdout_is_terminal() -> bool {
+    std::io::stdout().is_terminal()
+}
+
 fn spelled_arch(arch: &str) -> &str {
     match arch {
         "aarch64" => "arm64",

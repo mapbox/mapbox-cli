@@ -43,6 +43,9 @@ fn sources() -> Vec<(String, String)> {
 /// - `agent_skills` — the staging directory it renames skills out of, and the
 ///   skill directory `install --force` replaces.
 /// - `auth` — `logout`, and the scratch file `write_private` renames from.
+/// - `events` — its own dated event files past the retention window, matched
+///   by exact `YYYY-MM-DD.jsonl` names inside `~/.mapbox/.telemetry`, and the
+///   `last-version` file it rewrites.
 /// - `executor` — nothing durable; the temp file a `--file` upload streams.
 /// - `generate_skills` — the staged skill directory it renames into place.
 /// - `skill_dest` — a test scratch directory.
@@ -50,6 +53,7 @@ fn sources() -> Vec<(String, String)> {
 const MAY_DELETE: &[&str] = &[
     "agent_skills.rs",
     "auth.rs",
+    "events.rs",
     "executor.rs",
     "generate_skills.rs",
     "skill_dest.rs",
@@ -167,6 +171,30 @@ fn only_output_completion_and_binary_responses_write_to_stdout() {
          anything else belongs on stderr through `output::progress`. If a command really \
          does own its bytes — as `completion` does — add it to MAY_WRITE_STDOUT with the \
          reason.",
+        unexpected.join("\n  ")
+    );
+}
+
+/// Every request goes through `http::send`, which is what records it for the
+/// run's telemetry event.
+///
+/// A `reqwest` client has no response hook, so a request sent with
+/// `RequestBuilder::send` anywhere else is one the event's `network` never
+/// counts — silently, since nothing fails. `http.rs` is exempt: it is where
+/// `send` is defined, and its own tests call the builder directly.
+#[test]
+fn only_http_sends_requests() {
+    let unexpected: Vec<String> = sources()
+        .into_iter()
+        .filter(|(name, source)| name != "http.rs" && source.contains(".send()"))
+        .map(|(name, _)| format!("src/{name}"))
+        .collect();
+
+    assert!(
+        unexpected.is_empty(),
+        "these modules call `.send()` directly:\n  {}\n\n\
+         Wrap the request builder in `http::send(...)` instead, so the request is \
+         counted in the telemetry event.",
         unexpected.join("\n  ")
     );
 }

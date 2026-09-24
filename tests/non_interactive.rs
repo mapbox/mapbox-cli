@@ -165,7 +165,8 @@ fn the_refusal_carries_a_code_and_a_fix() {
 }
 
 /// The check runs before `config_dir`, which creates the store as a side
-/// effect. A CI job that tried to log in should leave nothing behind.
+/// effect. A CI job that tried to log in should leave nothing behind but
+/// the run's telemetry event, which every command writes.
 #[test]
 fn the_refusal_creates_no_credential_directory() {
     let home = scratch("no-dir");
@@ -175,9 +176,21 @@ fn the_refusal_creates_no_credential_directory() {
         .expect("run mapbox");
 
     assert!(!out.status.success());
+    let left: Vec<String> = std::fs::read_dir(home.join(".mapbox"))
+        .map(|entries| {
+            entries
+                .map(|e| {
+                    e.expect("an entry")
+                        .file_name()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     assert!(
-        !home.join(".mapbox").exists(),
-        "the refusal created the credential store anyway"
+        left.iter().all(|name| name == ".telemetry"),
+        "the refusal created the credential store anyway: {left:?}"
     );
 }
 

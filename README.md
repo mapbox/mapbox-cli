@@ -202,6 +202,12 @@ Every request sends `User-Agent: mapbox-cli/<version>` and nothing else
 about you or your machine. `MAPBOX_CLI_NO_TELEMETRY=1` keeps even future markers
 out of that header.
 
+Each run also appends one event to `~/.mapbox/.telemetry/<date>.jsonl`
+(kept for 7 days): the command's name, its options (a value only when it
+comes from a fixed list, otherwise just its length or size), how it ended,
+and how long it took — never a token, a file path or free text you typed.
+It stays on this machine. `MAPBOX_CLI_NO_TELEMETRY=1` turns it off.
+
 ### Agent skills
 
 ```sh

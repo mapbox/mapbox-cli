@@ -521,8 +521,14 @@ fn list_profile_names() -> Result<Vec<String>> {
 
     let mut names = vec![];
     for entry in entries {
-        let entry =
-            entry.with_context(|| format!("Failed to read an entry in {}", dir.display()))?;
+        // Skipped, not propagated: this function's own promise is "nothing
+        // to read" rather than a failure, the same reason
+        // `load_credentials_readonly` below reaches for `.ok()` instead of
+        // `?`. A transient error reading one entry — permissions changing
+        // underneath this call, a file removed between `read_dir` and here
+        // — has nothing to do with whether the *other* entries are valid
+        // profiles, so it should cost that one entry, not the whole list.
+        let Ok(entry) = entry else { continue };
         if let Some(name) = entry
             .file_name()
             .to_str()

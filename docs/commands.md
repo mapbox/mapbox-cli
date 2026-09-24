@@ -1,6 +1,6 @@
 # Implemented commands
 
-Every command the CLI ships: four auth commands, 33 API operations across 10
+Every command the CLI ships: five auth commands, 33 API operations across 10
 command groups, the tilesets-cli proxy, `completion` and `generate-skills`. Each is
 shown in both of its renderings. Which one you get is decided by `--output`, whose default
 (`auto`) reads stdout: a terminal gets the left column, a pipe or redirect
@@ -117,7 +117,7 @@ Then [Errors](#errors) — the shape a failure takes in each mode.
 Credentials live in `~/.mapbox`, one file per profile — or in whatever
 directory `MAPBOX_CONFIG_DIR` names, when it is set.
 
-All four commands take:
+All five commands take:
 
 | Parameter | Effect |
 | --- | --- |
@@ -125,7 +125,9 @@ All four commands take:
 | `--output`, `-o` | `auto` \| `text` \| `json`. |
 
 `login`, `logout` and `refresh` take `--dry-run` as well. `whoami` does not,
-for the reason its own section gives.
+for the reason its own section gives. `profiles` takes `--profile` too, in
+the sense that it parses — but doesn't honor it, since that command's whole
+point is every stored profile at once; see its own section for why.
 
 ### `mapbox auth login`
 

@@ -1,0 +1,160 @@
+openapi: "3.0.0"
+# `parse_spec` turns `info.description` below into this service's clap
+# `long_about`, so it also reaches `mapbox matrix --help`, `--schema` and
+# `generate-skills` output. Keep it to API prose only — the provenance below
+# is for whoever edits this file, not for a CLI user:
+#
+# Hand-authored down to the parameters documented at
+# docs.mapbox.com/api/navigation/matrix. See `custom-openapi/README.md` for
+# how a file like this is wired in, and `directions.yaml`'s header for why
+# `profile` needs `ARG_NAME_OVERRIDES` in `src/spec.rs` — the same reason
+# applies here.
+info:
+  title: "Mapbox Matrix API"
+  description: >-
+    Travel time and distance between every pair in a set of up to 25
+    coordinates, in one call — for driving (with or without live traffic),
+    walking, or cycling.
+  version: "0.0.0"
+servers:
+  - url: https://api.mapbox.com
+    description: Matrix API
+paths:
+  /directions-matrix/v1/{profile}/{coordinates}:
+    get:
+      operationId: compute
+      summary: A travel time/distance matrix across a set of coordinates.
+      description: >-
+        Returns a `durations` and/or `distances` matrix in row-major order —
+        `durations[i][j]` is the time from the ith source to the jth
+        destination — across every source/destination pair. Defaults to
+        every coordinate as both a source and a destination (a full N×N
+        matrix); `--sources`/`--destinations` narrow either side to a
+        subset. Answers "which of these is reachable soonest", not a route
+        through all of them — see `directions route` for a route through
+        fixed stops in order, or the future Optimization API command for
+        the best order to visit them in.
+      parameters:
+        - name: "profile"
+          in: path
+          required: true
+          description: >-
+            The routing profile. `mapbox/driving-traffic` accounts for live
+            traffic conditions and caps at 10 coordinates instead of 25;
+            `mapbox/driving` does not.
+          schema:
+            type: string
+            enum:
+              [
+                "mapbox/driving-traffic",
+                "mapbox/driving",
+                "mapbox/walking",
+                "mapbox/cycling",
+              ]
+          example: "mapbox/driving"
+        - name: "coordinates"
+          in: path
+          required: true
+          description: >-
+            2-25 coordinates, semicolon-separated, each
+            `{longitude},{latitude}` — 10 max for `mapbox/driving-traffic`.
+          schema:
+            type: string
+            minLength: 1
+          example: "-122.42,37.78;-122.45,37.91;-122.41,37.80"
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+        - name: "annotations"
+          in: query
+          required: false
+          description: >-
+            Which matrix or matrices to return, comma-separated. Options
+            are `duration` (the default) and `distance` — both together
+            returns both matrices.
+          schema:
+            type: string
+          example: "duration,distance"
+        - name: "approaches"
+          in: query
+          required: false
+          description: >-
+            Which side of the road to approach each coordinate from,
+            semicolon-separated — `unrestricted` or `curb` per coordinate.
+          schema:
+            type: string
+        - name: "bearings"
+          in: query
+          required: false
+          description: >-
+            `{angle},{degrees}` per coordinate, semicolon-separated,
+            filtering the road segments considered by direction of travel.
+          schema:
+            type: string
+        - name: "sources"
+          in: query
+          required: false
+          description: >-
+            Which coordinates act as sources (matrix rows) — `all`
+            (the default), or zero-based indices, semicolon-separated.
+            Verified against production: a comma-separated list is a 422,
+            "may be \"all\" or semicolon-separated list of 0-based integer
+            indices" — unlike every other index/value list on this CLI's
+            Navigation commands, which are comma- or semicolon-separated
+            per parameter but never comma where this API wants semicolons.
+          schema:
+            type: string
+          example: "0;2"
+        - name: "destinations"
+          in: query
+          required: false
+          description: >-
+            Which coordinates act as destinations (matrix columns) — `all`
+            (the default), or zero-based indices, semicolon-separated. See
+            `sources` above — comma-separated is a 422 here specifically.
+          schema:
+            type: string
+          example: "1;3"
+        - name: "fallback_speed"
+          in: query
+          required: false
+          # Content before "Legacy", not after: `first_sentence` in
+          # `src/main.rs` cuts a `--help` line at the first `.`, and
+          # "Legacy." on its own left `--help` showing just that word.
+          # `--schema` and `docs/commands.md` still show it in full.
+          description: >-
+            Replaces a `null` (unreachable) cell with a straight-line
+            estimate at this speed, km/h, rather than leaving it `null`.
+            Legacy.
+          schema:
+            type: integer
+            minimum: 1
+        - name: "depart_at"
+          in: query
+          required: false
+          description: >-
+            Departure time, ISO 8601, for future traffic conditions and
+            time-dependent road restrictions.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: >-
+            A JSON object with a `code`, a `durations` and/or `distances`
+            matrix (row-major, seconds and meters respectively — `null` for
+            an unreachable pair), and the snapped `sources`/`destinations`
+            waypoints.
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Not Found — an invalid profile.
+        "422":
+          description: >-
+            Unprocessable Entity — invalid input, or more coordinates than
+            the profile allows.

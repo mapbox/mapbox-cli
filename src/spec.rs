@@ -110,6 +110,7 @@ const ARG_NAME_OVERRIDES: &[(&str, &str, &str)] = &[
     ("directions", "profile", "routing-profile"),
     ("isochrone", "profile", "routing-profile"),
     ("map-matching", "profile", "routing-profile"),
+    ("matrix", "profile", "routing-profile"),
 ];
 
 /// The `arg_name` a parameter should present as, when its spec name collides
@@ -664,6 +665,10 @@ pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
     SpecEntry {
         name: "map-matching",
         yaml: include_str!("../custom-openapi/map-matching/openapi/map-matching.yaml"),
+    },
+    SpecEntry {
+        name: "matrix",
+        yaml: include_str!("../custom-openapi/matrix/openapi/matrix.yaml"),
     },
 ];
 
@@ -2112,6 +2117,33 @@ paths:
         );
     }
 
+    /// Same regression, for the fourth spec that ran into it.
+    #[test]
+    fn the_matrix_profile_parameter_does_not_collide_with_the_global_flag() {
+        let spec = parse_spec(
+            "matrix",
+            include_str!("../custom-openapi/matrix/openapi/matrix.yaml"),
+        )
+        .expect("matrix.yaml parses");
+
+        let compute = spec
+            .operations
+            .iter()
+            .find(|op| op.command_path == ["compute"])
+            .expect("the compute operation exists");
+
+        let profile = compute
+            .path_params
+            .iter()
+            .find(|p| p.name == "profile")
+            .expect("a path parameter named profile");
+
+        assert_ne!(
+            profile.arg_name, "profile",
+            "must not collide with the global --profile id"
+        );
+    }
+
     #[test]
     fn arg_name_override_only_fires_for_the_row_it_names() {
         assert_eq!(
@@ -2124,6 +2156,10 @@ paths:
         );
         assert_eq!(
             arg_name_override("map-matching", "profile"),
+            Some("routing-profile")
+        );
+        assert_eq!(
+            arg_name_override("matrix", "profile"),
             Some("routing-profile")
         );
         assert_eq!(arg_name_override("directions", "coordinates"), None);

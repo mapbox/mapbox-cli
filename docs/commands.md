@@ -88,6 +88,8 @@ nests, and is typed `mapbox styles draft get`.
 **[Map Matching](#map-matching)** —
 [map-matching.match](#mapbox-map-matching-match)
 
+**[Matrix](#matrix)** — [matrix.compute](#mapbox-matrix-compute)
+
 **[Search](#search)** — [search.forward](#mapbox-search-forward) ·
 [search.reverse](#mapbox-search-reverse) ·
 [search.category](#mapbox-search-category) ·
@@ -1443,6 +1445,103 @@ this response — it isn't GeoJSON at the top level — so both print the same
 JSON, `-o text` pretty-printed and `-o json` on one line. Trimmed to one
 matching and dropped `admins`/`via_waypoints`/`alternatives_count`/`uuid`
 for length; the real response carries them too.
+
+---
+## Matrix
+
+Travel time and distance between every pair in a set of up to 25
+coordinates, in one call, for driving (with or without live traffic),
+walking, or cycling. Curated by hand down to the parameters documented at
+docs.mapbox.com/api/navigation/matrix — see `custom-openapi/README.md` for
+why this command group doesn't come from the vendored specs the way most
+others do.
+
+**vs. `directions route`**: this answers "how far/long between every pair",
+not a route through all of them in order — `directions route` is a route
+through fixed stops; this is an N×N table, useful for ranking or filtering
+many candidates by reachability before committing to a route through any of
+them.
+
+### `mapbox matrix compute`
+
+A `durations` and/or `distances` matrix in row-major order —
+`durations[i][j]` is the time from the ith source to the jth destination —
+across every source/destination pair, or a subset of either side.
+
+#### Parameters
+
+`<routing-profile>` and `<coordinates>` (both positional) are required.
+`<routing-profile>` is one of `mapbox/driving-traffic`, `mapbox/driving`,
+`mapbox/walking`, `mapbox/cycling`. `<coordinates>` is 2-25
+`{longitude},{latitude}` pairs, semicolon-separated — 10 max for
+`mapbox/driving-traffic`.
+
+| Parameter | Effect |
+| --- | --- |
+| `--annotations <duration\|distance>` | Which matrix or matrices to return, comma-separated. `duration` alone is the default; both together returns both. |
+| `--approaches <unrestricted\|curb;...>` | Which side of the road to approach each coordinate from. |
+| `--bearings <angle,degrees;...>` | Filter road segments by direction of travel, one entry per coordinate. |
+| `--sources <indices>` | Which coordinates are matrix rows — `all` (the default) or zero-based indices, **semicolon**-separated. Verified against production: comma-separated is a 422 here, unlike most other index lists on these commands. |
+| `--destinations <indices>` | Which coordinates are matrix columns — same rules as `--sources`. |
+| `--fallback-speed <km/h>` | Replaces a `null` (unreachable) cell with a straight-line estimate at this speed, rather than leaving it `null`. Legacy. |
+| `--depart-at <ISO 8601>` | For future traffic conditions and time-dependent road restrictions. |
+
+#### Examples
+
+```sh
+mapbox matrix compute mapbox/driving "-122.42,37.78;-122.45,37.91;-122.41,37.80"
+mapbox matrix compute mapbox/driving "-122.42,37.78;-122.45,37.91;-122.41,37.80" \
+  --sources 0 --destinations "1;2"
+```
+
+#### Outputs
+
+Captured live: a full 3×3 matrix between three San Francisco points, both
+`durations` (seconds) and `distances` (meters).
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```json
+{
+  "code": "Ok",
+  "durations": [
+    [0, 2381.5, 790.1],
+    [2593.8, 0, 2272.5],
+    [994.8, 2269.7, 0]
+  ],
+  "distances": [
+    [0, 25766, 3348.3],
+    [26960.4, 0, 25382],
+    [3781.3, 25174.1, 0]
+  ],
+  "sources": [
+    { "name": "Van Ness Avenue", "location": [-122.420122, 37.779978] },
+    { "name": "Playa Verde", "location": [-122.461997, 37.89621] },
+    { "name": "Columbus Avenue", "location": [-122.409926, 37.800067] }
+  ],
+  "destinations": [
+    { "name": "Van Ness Avenue", "location": [-122.420122, 37.779978] },
+    { "name": "Playa Verde", "location": [-122.461997, 37.89621] },
+    { "name": "Columbus Avenue", "location": [-122.409926, 37.800067] }
+  ]
+}
+```
+
+</td><td>
+
+```json
+{"code":"Ok","durations":[[0,2381.5,790.1],[2593.8,0,2272.5],[994.8,2269.7,0]],"distances":[[0,25766,3348.3],[26960.4,0,25382],[3781.3,25174.1,0]],"sources":[{"name":"Van Ness Avenue","location":[-122.420122,37.779978]},{"name":"Playa Verde","location":[-122.461997,37.89621]},{"name":"Columbus Avenue","location":[-122.409926,37.800067]}],"destinations":[{"name":"Van Ness Avenue","location":[-122.420122,37.779978]},{"name":"Playa Verde","location":[-122.461997,37.89621]},{"name":"Columbus Avenue","location":[-122.409926,37.800067]}]}
+```
+
+</td></tr>
+</table>
+
+Neither output mode has a bespoke rendering for this response, same as
+`directions route` and `map-matching match` — both print the same JSON,
+`-o text` pretty-printed and `-o json` on one line. Dropped each waypoint's
+own snap `distance` for length; the real response carries it too.
 
 ---
 

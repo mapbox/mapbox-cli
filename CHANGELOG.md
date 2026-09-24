@@ -19,6 +19,19 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox matrix`, travel time and/or distance between every pair in a set
+  of up to 25 coordinates in one call, for driving (with or without live
+  traffic), walking, or cycling. No subcommand: like `mapbox directions`
+  below, this API has one operation, so there's nothing a second word (the
+  old `compute`) would disambiguate; see `spec::FLATTENED_SERVICES`.
+  Hand-authored into `custom-openapi/` for the same reason the other
+  Navigation commands were: no upstream spec exists yet. Reuses the
+  `profile`-vs-`--profile` collision fix (`ARG_NAME_OVERRIDES` gets a
+  fourth row) and the free-form (not `enum`) routing profile, for the same
+  OEM-account reason. `--sources`/`--destinations` take
+  semicolon-separated indices, not comma; verified against production
+  after the API answered a comma-separated list with a 422.
+
 - `mapbox map-matching`, snapping a noisy GPS trace to the road network and
   returning the route it most likely followed, for driving (with or
   without live traffic), walking, or cycling. No subcommand: like `mapbox

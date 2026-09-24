@@ -208,7 +208,8 @@ Each run also appends one event to `~/.mapbox/.telemetry/<date>.jsonl`
 (kept for 7 days): the command's name, its options (a value only when it
 comes from a fixed list, otherwise just its length or size), how it ended,
 and how long it took — never a token, a file path or free text you typed.
-It stays on this machine. `MAPBOX_CLI_NO_TELEMETRY=1` turns it off.
+It stays on this machine. `MAPBOX_CLI_NO_TELEMETRY=1` or
+`mapbox config set telemetry off` turns it off.
 
 ### Agent skills
 

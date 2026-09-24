@@ -3194,10 +3194,12 @@ Removed /home/user/.local/bin/mapbox.
 ## Config
 
 Settings that persist across shells and sessions — `~/.mapbox/config.json`
-(or `$MAPBOX_CONFIG_DIR`), written the same way credentials are. One setting
-today, `update-check`, which mirrors `MAPBOX_NO_UPDATE_CHECK` (see [Update
+(or `$MAPBOX_CONFIG_DIR`), written the same way credentials are. Two
+settings: `update-check`, which mirrors `MAPBOX_NO_UPDATE_CHECK` (see [Update
 notices](../README.md#update-notices)) but stays off in every future shell
-rather than only the one the environment variable was set in.
+rather than only the one the environment variable was set in, and
+`telemetry`, which does the same for the run's telemetry event and
+`MAPBOX_CLI_NO_TELEMETRY`.
 
 ### `mapbox config get`
 
@@ -3209,7 +3211,7 @@ than failing, the same forgiving read the update-check cache itself uses.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to read. Only `update-check` exists today. |
+| `<key>` | Which setting to read: `update-check` or `telemetry`. |
 
 #### Examples
 
@@ -3248,7 +3250,7 @@ without an environment variable.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to change. Only `update-check` exists today. |
+| `<key>` | Which setting to change: `update-check` or `telemetry`. |
 | `<value>` | `on` or `off`. |
 
 #### Examples
@@ -3332,7 +3334,7 @@ default, a key explicitly set to the old default value does not.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to clear. Only `update-check` exists today. |
+| `<key>` | Which setting to clear: `update-check` or `telemetry`. |
 
 #### Examples
 

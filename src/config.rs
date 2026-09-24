@@ -6,8 +6,8 @@
 //! file beside the credentials, written through the same
 //! [`crate::auth::write_private`] so it gets the same `0600` treatment.
 //!
-//! One setting today — `update-check` — with room for more: `get`/`set`/
-//! `unset` take a `key`, restricted by clap to [`KEYS`], so adding a second
+//! Two settings — `update-check` and `telemetry` — with room for more:
+//! `get`/`set`/`unset` take a `key`, restricted by clap to [`KEYS`], so a new
 //! setting is a new key and a new match arm rather than a new subcommand.
 //! `list` needs no key at all: it walks [`KEYS`] and reports every setting's
 //! current value in one call, which `get` cannot — the whole reason it
@@ -30,7 +30,8 @@ pub const COMMAND: &str = "config";
 const CONFIG_FILE: &str = "config.json";
 
 const UPDATE_CHECK_KEY: &str = "update-check";
-const KEYS: &[&str] = &[UPDATE_CHECK_KEY];
+const TELEMETRY_KEY: &str = "telemetry";
+const KEYS: &[&str] = &[UPDATE_CHECK_KEY, TELEMETRY_KEY];
 
 const ON: &str = "on";
 const OFF: &str = "off";
@@ -43,6 +44,8 @@ const OFF: &str = "off";
 struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     update_check: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    telemetry: Option<bool>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -83,6 +86,12 @@ pub fn update_check_enabled() -> bool {
     update_check_setting(&read_config())
 }
 
+/// Whether the run's telemetry event may be recorded, per the persisted
+/// setting. [`crate::telemetry_event`] checks it alongside `MAPBOX_CLI_NO_TELEMETRY`.
+pub fn telemetry_enabled() -> bool {
+    read_config().telemetry.unwrap_or(true)
+}
+
 fn on_off(enabled: bool) -> &'static str {
     if enabled {
         ON
@@ -97,6 +106,7 @@ fn on_off(enabled: bool) -> &'static str {
 fn resolve(config: &Config, key: &str) -> bool {
     match key {
         UPDATE_CHECK_KEY => update_check_setting(config),
+        TELEMETRY_KEY => config.telemetry.unwrap_or(true),
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
 }
@@ -109,6 +119,7 @@ fn resolve(config: &Config, key: &str) -> bool {
 fn clear(config: &mut Config, key: &str) {
     match key {
         UPDATE_CHECK_KEY => config.update_check = None,
+        TELEMETRY_KEY => config.telemetry = None,
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
 }
@@ -173,6 +184,7 @@ pub fn set(matches: &ArgMatches, mode: Mode) -> Result<()> {
     let mut config = read_config();
     match key.as_str() {
         UPDATE_CHECK_KEY => config.update_check = Some(enabled),
+        TELEMETRY_KEY => config.telemetry = Some(enabled),
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
     write_config(&config)?;
@@ -228,6 +240,7 @@ mod tests {
     fn the_config_round_trips_and_tolerates_an_empty_one() {
         let off = Config {
             update_check: Some(false),
+            ..Config::default()
         };
         let text = serde_json::to_string(&off).expect("serialize");
         assert_eq!(text, r#"{"update_check":false}"#);
@@ -249,7 +262,10 @@ mod tests {
     #[test]
     fn resolve_matches_update_check_setting_at_every_state() {
         for update_check in [None, Some(true), Some(false)] {
-            let config = Config { update_check };
+            let config = Config {
+                update_check,
+                ..Config::default()
+            };
             assert_eq!(
                 resolve(&config, UPDATE_CHECK_KEY),
                 update_check_setting(&config)
@@ -265,6 +281,7 @@ mod tests {
     fn clear_removes_the_key_rather_than_writing_the_default() {
         let mut explicit_default = Config {
             update_check: Some(true),
+            ..Config::default()
         };
         clear(&mut explicit_default, UPDATE_CHECK_KEY);
         assert_eq!(explicit_default, Config::default());
@@ -272,6 +289,7 @@ mod tests {
 
         let mut explicit_off = Config {
             update_check: Some(false),
+            ..Config::default()
         };
         clear(&mut explicit_off, UPDATE_CHECK_KEY);
         assert_eq!(explicit_off.update_check, None);

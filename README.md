@@ -175,6 +175,7 @@ mapbox geocoder *
 mapbox isochrone *
 mapbox map-matching *
 mapbox matrix *
+mapbox optimization *
 mapbox search *
 mapbox sprites *
 mapbox static *

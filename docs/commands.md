@@ -1692,6 +1692,190 @@ Neither output mode has a bespoke rendering for this response, same as
 own snap `distance` for length; the real response carries it too.
 
 ---
+## Optimization
+
+Solves a multi-vehicle, multi-stop routing problem — which vehicle visits
+which stop, and in what order — as an asynchronous job (v2; v1 is
+retired). Curated by hand down to the parameters documented at
+docs.mapbox.com/api/navigation/optimization — see `custom-openapi/README.md`
+for why this command group doesn't come from the vendored specs the way
+most others do.
+
+**vs. `matrix compute`**: that ranks reachability across many pairs;
+this decides an actual visiting order for one or more vehicles, given
+constraints (time windows, capacities, breaks) `matrix` knows nothing
+about.
+
+### `mapbox optimization submit`
+
+Submits a routing problem. Accepted (202) with a job `id` and `status` —
+`optimization get <id>` is the follow-up poll, not this command; solving
+happens asynchronously and can take a while for a large problem.
+
+#### Parameters
+
+`--data`/`-d` carries the whole problem as one JSON document — there is no
+per-field flag for something this shape. Top-level fields:
+
+| Field | Effect |
+| --- | --- |
+| `version` | Always `1`. |
+| `locations` | `name` (unique) + `coordinates` (`[longitude, latitude]`) per stop. |
+| `vehicles` | `name` (unique); optionally `routing_profile` (`mapbox/driving` by default), `start_location`/`end_location`, `capacities`, `capabilities`, `earliest_start`/`latest_end`, `breaks`, `loading_policy` (`any`/`fifo`/`lifo`). |
+| `services` | A single stop to visit: `name`, `location`, `duration`, `requirements`, `service_times`. At least one of `services`/`shipments` is required. |
+| `shipments` | A pickup-then-dropoff pair: `name`, `from`, `to`, `size`, `requirements`, `pickup_duration`/`dropoff_duration`, `pickup_times`/`dropoff_times`. |
+| `options.objectives` | What to optimize for: `min-total-travel-duration` or `min-schedule-completion-time`. |
+
+#### Examples
+
+```sh
+mapbox optimization submit -d '{
+  "version": 1,
+  "locations": [
+    {"name": "depot", "coordinates": [-122.42, 37.78]},
+    {"name": "stop1", "coordinates": [-122.45, 37.91]},
+    {"name": "stop2", "coordinates": [-122.41, 37.80]}
+  ],
+  "vehicles": [{"name": "van1", "start_location": "depot", "end_location": "depot"}],
+  "services": [
+    {"name": "svc1", "location": "stop1"},
+    {"name": "svc2", "location": "stop2"}
+  ]
+}'
+```
+
+#### Outputs
+
+Captured live — one vehicle, two single-stop services:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```json
+{ "id": "5f57b00c-a3a1-45de-89ca-1e24b3a23cc4.r1", "status": "ok" }
+```
+
+</td><td>
+
+```json
+{"id":"5f57b00c-a3a1-45de-89ca-1e24b3a23cc4.r1","status":"ok"}
+```
+
+</td></tr>
+</table>
+
+### `mapbox optimization get`
+
+Retrieves a submitted problem's solved routes. Answers 202 with no body
+while still solving; 200 with the routes once done.
+
+#### Parameters
+
+`<id>` (positional) is required — the job id `submit` returned.
+
+#### Examples
+
+```sh
+mapbox optimization get 5f57b00c-a3a1-45de-89ca-1e24b3a23cc4.r1
+```
+
+#### Outputs
+
+Captured live — the job submitted above, once solved: one route, a start,
+two service stops in the order the solver chose, and an end, each with a
+running `odometer` (meters) and `eta`:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```json
+{
+  "dropped": { "services": [], "shipments": [] },
+  "routes": [
+    {
+      "vehicle": "van1",
+      "stops": [
+        { "type": "start", "location": "depot", "eta": "1970-01-01T00:00:00Z", "odometer": 0 },
+        {
+          "type": "service",
+          "location": "stop1",
+          "eta": "1970-01-01T00:39:41Z",
+          "odometer": 25766,
+          "services": ["svc1"]
+        },
+        {
+          "type": "service",
+          "location": "stop2",
+          "eta": "1970-01-01T01:17:33Z",
+          "odometer": 51148,
+          "services": ["svc2"]
+        },
+        { "type": "end", "location": "depot", "eta": "1970-01-01T01:34:07Z", "odometer": 54929 }
+      ]
+    }
+  ]
+}
+```
+
+</td><td>
+
+```json
+{"dropped":{"services":[],"shipments":[]},"routes":[{"vehicle":"van1","stops":[{"type":"start","location":"depot","eta":"1970-01-01T00:00:00Z","odometer":0},{"type":"service","location":"stop1","eta":"1970-01-01T00:39:41Z","odometer":25766,"services":["svc1"]},{"type":"service","location":"stop2","eta":"1970-01-01T01:17:33Z","odometer":51148,"services":["svc2"]},{"type":"end","location":"depot","eta":"1970-01-01T01:34:07Z","odometer":54929}]}]}
+```
+
+</td></tr>
+</table>
+
+Neither output mode has a bespoke rendering for this response — both print
+the same JSON, `-o text` pretty-printed and `-o json` on one line. Dropped
+each stop's `location_metadata` (snapped vs. supplied coordinate) and `wait`
+for length; the real response carries them too. The `1970-01-01` dates are
+this problem's own timestamps — no `earliest_start`/time window was given,
+so the solver counted elapsed seconds from epoch rather than a real clock.
+
+### `mapbox optimization list`
+
+Every routing problem this account has submitted, with its status —
+`pending`, `processing`, or `complete`. Does not return the solved routes
+themselves; `optimization get <id>` does, once `status` is `complete`.
+
+#### Parameters
+
+None.
+
+#### Examples
+
+```sh
+mapbox optimization list
+```
+
+#### Outputs
+
+Captured live, the same job as above, now complete:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```json
+[{ "id": "5f57b00c-a3a1-45de-89ca-1e24b3a23cc4.r1", "status": "complete" }]
+```
+
+</td><td>
+
+```json
+[{"id":"5f57b00c-a3a1-45de-89ca-1e24b3a23cc4.r1","status":"complete"}]
+```
+
+</td></tr>
+</table>
+
+A bare JSON array, not wrapped in an `items`/`results` field — every entry
+is just `{id, status}`.
+
+---
 
 ## Search
 

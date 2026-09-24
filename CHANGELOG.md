@@ -19,6 +19,16 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox optimization submit`/`get`/`list`, solving a multi-vehicle,
+  multi-stop routing problem (v2 — v1 is retired) as an asynchronous job:
+  submit the problem, poll `get` for the solved routes, `list` to see every
+  job's status without tracking ids yourself. Hand-authored into
+  `custom-openapi/` for the same reason the other commands added this
+  session were: no upstream spec exists yet. `submit`'s whole problem
+  (locations, vehicles, services/shipments, options) goes through `--data`
+  as one JSON document, the same shape `styles create` already uses for a
+  body with no sensible per-field flag.
+
 - `mapbox feedback list`/`get`, reading feedback submitted against Mapbox
   API responses — filterable, sortable, paginated. Hand-authored into
   `custom-openapi/` for the same reason the Navigation commands were: no

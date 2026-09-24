@@ -1,0 +1,127 @@
+openapi: "3.0.0"
+# `parse_spec` turns `info.description` below into this service's clap
+# `long_about`, so it also reaches `mapbox optimization --help`, `--schema`
+# and `generate-skills` output. Keep it to API prose only — the provenance
+# below is for whoever edits this file, not for a CLI user:
+#
+# Hand-authored down to the parameters documented at
+# docs.mapbox.com/api/navigation/optimization (v2 — v1 is retired). See
+# `custom-openapi/README.md` for how a file like this is wired in.
+info:
+  title: "Mapbox Optimization API v2"
+  description: >-
+    Solves a multi-vehicle, multi-stop routing problem — which vehicle
+    visits which stop, and in what order — as an asynchronous job: submit
+    it, then poll for the solved routes.
+  version: "0.0.0"
+servers:
+  - url: https://api.mapbox.com
+    description: Optimization API v2
+paths:
+  /optimized-trips/v2:
+    post:
+      operationId: submit
+      summary: Submit a routing problem to solve.
+      description: >-
+        Accepted (202) with a job `id` and a `status`; poll `mapbox
+        optimization get <id>` until it stops answering 202. Up to 1000
+        locations per problem. `--data` carries the whole problem as one
+        JSON document — there is no per-field flag for something this
+        shape. Top-level fields: `version` (always `1`), `locations`
+        (`name` + `[longitude, latitude]` `coordinates`, every name unique),
+        `vehicles` (`name`, and optionally `routing_profile` —
+        `mapbox/driving` by default — `start_location`/`end_location`,
+        `capacities`, `capabilities`, `earliest_start`/`latest_end`,
+        `breaks`, `loading_policy`: `any`/`fifo`/`lifo`), `services` — a
+        single stop to visit (`name`, `location`, `duration`,
+        `requirements`, `service_times`) — and/or `shipments` — a
+        pickup-then-dropoff pair (`name`, `from`, `to`, `size`,
+        `requirements`, `pickup_duration`/`dropoff_duration`,
+        `pickup_times`/`dropoff_times`); at least one of `services` or
+        `shipments` is required. `options.objectives` picks what to
+        optimize for: `min-total-travel-duration` or
+        `min-schedule-completion-time`.
+      parameters:
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "202":
+          description: >-
+            Accepted: `{"id": "<uuid>", "status": "ok|pending|processing"}`.
+            Not solved yet — poll `optimization get`.
+        "401":
+          description: Unauthorized
+        "422":
+          description: Unprocessable Entity — a malformed problem.
+
+    get:
+      operationId: list
+      summary: List every submitted routing problem and its status.
+      description: >-
+        Every job this account has submitted, each as `{"id", "status"}` —
+        `status` is `pending`, `processing`, or `complete`. Does not return
+        the solved routes themselves; `optimization get <id>` does, once
+        `status` is `complete`.
+      parameters:
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: "A JSON array of `{id, status}` objects, one per submitted job."
+        "401":
+          description: Unauthorized
+
+  /optimized-trips/v2/{id}:
+    get:
+      operationId: get
+      summary: Retrieve a routing problem's solved routes.
+      description: >-
+        Answers 202 with no body while still solving; 200 with the solved
+        routes once done — one entry per vehicle, each a list of stops
+        (`start`, `service`, `pickup`, `dropoff`, `break`, `end`) with an
+        ETA and running odometer, plus a `dropped` list of any
+        service/shipment the solver couldn't fit in.
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          description: "The job id `optimization submit` returned."
+          schema:
+            type: string
+            minLength: 1
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: >-
+            Solved: `routes` (one per vehicle, each a `vehicle` name and a
+            `stops` array — `type`, `location`, `eta`, `odometer`, and for
+            a `service`/`pickup`/`dropoff` stop the names it covers) and
+            `dropped` (`services`/`shipments` the solver left out).
+        "202":
+          description: "Still processing — no body. Poll again."
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found — no job with that id.

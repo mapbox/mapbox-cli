@@ -682,6 +682,10 @@ pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
         name: "feedback",
         yaml: include_str!("../custom-openapi/feedback/openapi/feedback.yaml"),
     },
+    SpecEntry {
+        name: "optimization",
+        yaml: include_str!("../custom-openapi/optimization/openapi/optimization.yaml"),
+    },
 ];
 
 /// The list the CLI actually generates commands from: [`MAPBOX_SPEC_ENTRIES`],

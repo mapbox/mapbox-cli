@@ -23,6 +23,12 @@ that may never merge. They are not releases and are not listed here.
   the same `k1=v1&k2=v2` shape as a URL's own query string — for an API
   parameter this CLI's specs don't declare a flag for.
 
+- `mapbox auth profiles` — lists every credential profile stored on disk,
+  not just the one `--profile` would select. Read-only, like `whoami`, and
+  answers a different question than it does: `whoami` reports which token
+  the *next* command will use, this reports what's stored at all, for
+  someone who has forgotten which named profiles they've logged into.
+
 - `mapbox doctor` — a read-only snapshot of what the next command would
   see: which token wins and its state, which proxy variables are in effect,
   and where the update-check and telemetry switches currently stand.

@@ -145,6 +145,7 @@ mapbox auth login     # opens a browser (OAuth/PKCE)
 mapbox auth logout    # removes stored credentials
 mapbox auth refresh   # force-refreshes the access token
 mapbox auth whoami    # reports which token the next command will use
+mapbox auth profiles  # lists every stored profile, not just one
 ```
 
 Credentials live in `~/.mapbox` as plain JSON with locked-down file
@@ -160,6 +161,7 @@ wants.
 ```sh
 mapbox auth login --profile android_app
 mapbox --profile android_app styles list
+mapbox auth profiles              # which profiles are actually stored
 ```
 
 ### API Related

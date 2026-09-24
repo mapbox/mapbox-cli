@@ -457,6 +457,95 @@ fn credentials_path(profile: Option<&str>) -> Result<PathBuf> {
     Ok(config_dir()?.join(credentials_filename(profile)?))
 }
 
+/// The same path, through [`config_dir_path`] rather than [`config_dir`] —
+/// for a caller that must not create or harden the directory merely by
+/// asking what is in it. `None` where [`credentials_filename`] would have
+/// erred (an invalid profile name) or the config directory cannot be
+/// resolved at all, folding both into "nothing to read" rather than a
+/// failure a read-only command has no business raising.
+fn credentials_path_readonly(profile: Option<&str>) -> Option<PathBuf> {
+    Some(config_dir_path()?.join(credentials_filename(profile).ok()?))
+}
+
+/// [`load_credentials`], without creating or hardening the config
+/// directory as a side effect of reading it — see
+/// [`credentials_path_readonly`]. What [`profiles`] reads each stored
+/// profile through, since listing what exists must not be the reason a
+/// directory starts to exist or its permissions change.
+fn load_credentials_readonly(profile: Option<&str>) -> Option<Credentials> {
+    let data = std::fs::read_to_string(credentials_path_readonly(profile)?).ok()?;
+    serde_json::from_str(&data).ok()
+}
+
+/// The reverse of [`credentials_filename`]: the profile name a credentials
+/// filename would have been written under, or `None` for anything else in
+/// the config directory — `credentials-<name>.json.lock`, `config.json`,
+/// `update-check.json`. Pure, and tested against `credentials_filename`'s own
+/// output rather than only against hand-written examples, so the two cannot
+/// quietly drift apart.
+fn profile_name_from_filename(filename: &str) -> Option<String> {
+    if filename == "credentials.json" {
+        return Some("default".to_string());
+    }
+    let name = filename
+        .strip_prefix("credentials-")?
+        .strip_suffix(".json")?;
+    // `credentials_filename` never writes this file — `Some("default")`
+    // maps to the bare `credentials.json` above, so a
+    // `credentials-default.json` sitting in the directory is stray, not a
+    // second profile that happens to share the reserved name. Reading it
+    // as one would print a `default` row twice: once for the real file,
+    // once for this one — and the second row's data would come from
+    // `load_credentials(Some("default"))`, which resolves back to
+    // `credentials.json` and never touches the file that produced the row.
+    (!name.is_empty() && name != "default").then(|| name.to_string())
+}
+
+/// Every profile with a credentials file on disk, sorted with `default`
+/// first and everything else alphabetically after it.
+///
+/// Reads rather than creates: [`config_dir_path`], not [`config_dir`], so
+/// asking what is stored is not itself the reason a directory starts to
+/// exist. An absent directory reads the same as an empty one.
+fn list_profile_names() -> Result<Vec<String>> {
+    let Some(dir) = config_dir_path() else {
+        return Ok(vec![]);
+    };
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => {
+            return Err(e).with_context(|| format!("Failed to read {}", dir.display()));
+        }
+    };
+
+    let mut names = vec![];
+    for entry in entries {
+        // Skipped, not propagated: this function's own promise is "nothing
+        // to read" rather than a failure, the same reason
+        // `load_credentials_readonly` below reaches for `.ok()` instead of
+        // `?`. A transient error reading one entry — permissions changing
+        // underneath this call, a file removed between `read_dir` and here
+        // — has nothing to do with whether the *other* entries are valid
+        // profiles, so it should cost that one entry, not the whole list.
+        let Ok(entry) = entry else { continue };
+        if let Some(name) = entry
+            .file_name()
+            .to_str()
+            .and_then(profile_name_from_filename)
+        {
+            names.push(name);
+        }
+    }
+    names.sort_unstable_by(|a, b| match (a.as_str(), b.as_str()) {
+        ("default", "default") => std::cmp::Ordering::Equal,
+        ("default", _) => std::cmp::Ordering::Less,
+        (_, "default") => std::cmp::Ordering::Greater,
+        _ => a.cmp(b),
+    });
+    Ok(names)
+}
+
 /// One lock file per profile, so refreshing profile A never blocks profile B.
 fn lock_filename(profile: Option<&str>) -> Result<String> {
     Ok(format!("{}.lock", credentials_filename(profile)?))
@@ -1299,6 +1388,135 @@ pub fn whoami(
 /// naming the implicit one keeps the JSON shape the same either way.
 fn profile_name(profile: Option<&str>) -> &str {
     profile.unwrap_or("default")
+}
+
+/// One stored profile's summary, for [`profiles`].
+struct ProfileEntry {
+    name: String,
+    /// The credentials' own `username` field when `login` recorded one,
+    /// falling back to the token's `u` claim — the same fallback `whoami`
+    /// draws on, for a token this crate wrote before that field existed.
+    account: Option<String>,
+    expires_at: Option<u64>,
+}
+
+impl ProfileEntry {
+    fn account_display(&self) -> &str {
+        self.account.as_deref().unwrap_or("unknown")
+    }
+
+    /// Distinct from `time_until`, which `whoami` reads a token through at
+    /// the moment it is about to be used — where a small negative result is
+    /// as likely to be clock skew as a real expiry, worth naming as such. A
+    /// profile in this list may not have been touched in weeks, so guessing
+    /// "check this machine's clock" here would be wrong far more often than
+    /// it would be right; a token past its `exp` claim just reads "expired".
+    fn expiry_prose(&self, now: u64) -> Option<String> {
+        self.expires_at.map(|expires_at| {
+            if expires_at > now {
+                format!("expires {}", time_until(expires_at, now))
+            } else {
+                "expired".to_string()
+            }
+        })
+    }
+
+    fn json(&self) -> Value {
+        json!({
+            "profile": self.name,
+            "account": self.account,
+            "expires_at": self.expires_at,
+        })
+    }
+}
+
+/// Columns padded to the widest entry, rather than the tab-separated line
+/// an earlier version of this printed — tabs render at whatever width a
+/// terminal's tab stops happen to be, which is not the same width twice
+/// when account names differ in length, and reads as misaligned rather than
+/// as a table at all.
+fn render_profiles_table(entries: &[ProfileEntry], now: u64) -> String {
+    let name_width = entries.iter().map(|e| e.name.len()).max().unwrap_or(0);
+    let account_width = entries
+        .iter()
+        .map(|e| e.account_display().len())
+        .max()
+        .unwrap_or(0);
+
+    entries
+        .iter()
+        .map(|entry| {
+            let expiry = entry.expiry_prose(now).unwrap_or_default();
+            format!(
+                "{:name_width$}  {:account_width$}  {expiry}",
+                entry.name,
+                entry.account_display(),
+            )
+            .trim_end()
+            .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `mapbox auth profiles` — every credentials file on disk, not just the one
+/// `--profile` would select.
+///
+/// Read-only, like `whoami`: it never refreshes, so listing profiles cannot
+/// itself spend a single-use refresh token, and it reads each profile
+/// through [`load_credentials_readonly`] rather than [`load_credentials`] so
+/// listing what exists is never the reason the config directory starts to
+/// exist or its permissions change. Unlike `whoami`, it does not resolve
+/// `--token` or the environment at all — those answer "what will the next
+/// command use", and this answers "what is stored", which is a different
+/// question with a different audience: someone who has forgotten which
+/// named profiles they have logged into.
+///
+/// `--profile` selects *which* stored profile the rest of this CLI reads;
+/// it has nothing to select here, since the whole point is every profile at
+/// once. Typing it anyway is warned about rather than silently ignored —
+/// the same shape `completion::warn_output_ignored` warns about `--output`
+/// in, for the same reason: a flag that visibly parses but visibly does
+/// nothing is worse than one clap rejects outright.
+pub fn profiles(matches: &clap::ArgMatches, mode: Mode) -> Result<()> {
+    if matches.value_source("profile") == Some(clap::parser::ValueSource::CommandLine) {
+        eprintln!(
+            "Warning: `--profile` is not honored by `auth profiles` — it selects which \
+             stored profile a command reads, and this lists every one of them at once."
+        );
+    }
+
+    let names = list_profile_names()?;
+
+    let entries: Vec<ProfileEntry> = names
+        .into_iter()
+        .map(|name| {
+            let selector = (name != "default").then(|| name.clone());
+            let stored = load_credentials_readonly(selector.as_deref());
+            let account = stored
+                .as_ref()
+                .and_then(|c| c.username.clone())
+                .or_else(|| stored.as_ref().and_then(|c| token_account(&c.access_token)));
+            let expires_at = stored
+                .as_ref()
+                .and_then(|c| token_expires_at(&c.access_token));
+            ProfileEntry {
+                name,
+                account,
+                expires_at,
+            }
+        })
+        .collect();
+
+    let now = now();
+    let text = if entries.is_empty() {
+        "No stored profiles. Run `mapbox auth login` to create one.".to_string()
+    } else {
+        render_profiles_table(&entries, now)
+    };
+    let json = Value::Array(entries.iter().map(ProfileEntry::json).collect());
+
+    output::emit(mode, &text, json)
 }
 
 /// What an `auth` command would do, for `--dry-run`.
@@ -2928,6 +3146,45 @@ mod tests {
             lock_filename(Some("a")).unwrap(),
             lock_filename(Some("b")).unwrap()
         );
+    }
+
+    /// The reverse of the two tests above: every filename `credentials_filename`
+    /// can produce reads back to the profile that produced it, rather than
+    /// only checked against hand-written examples that could quietly drift
+    /// from what the forward direction actually writes.
+    #[test]
+    fn profile_name_from_filename_reverses_credentials_filename() {
+        for profile in [None, Some("default"), Some("android_app"), Some("a")] {
+            let filename = credentials_filename(profile).unwrap();
+            assert_eq!(
+                profile_name_from_filename(&filename).as_deref(),
+                Some(profile_name(profile)),
+                "{filename:?} did not reverse to {:?}",
+                profile_name(profile)
+            );
+        }
+    }
+
+    #[test]
+    fn profile_name_from_filename_ignores_everything_else_in_the_directory() {
+        for other in [
+            "credentials-android_app.json.lock",
+            "config.json",
+            "update-check.json",
+            "credentials.json.lock",
+            "credentials-.json",
+            "credentials-",
+            "not-credentials-at-all.json",
+            // Stray — `credentials_filename` never writes this spelling of
+            // the default profile, so it must not read as a second `default`.
+            "credentials-default.json",
+        ] {
+            assert_eq!(
+                profile_name_from_filename(other),
+                None,
+                "{other:?} should not read as a profile"
+            );
+        }
     }
 
     /// Proves the create-time mode, not a chmod applied afterwards: the mode is

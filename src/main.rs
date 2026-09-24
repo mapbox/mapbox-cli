@@ -20,6 +20,7 @@ mod completion;
 mod config;
 mod confirm;
 mod deprecation;
+mod doctor;
 mod executor;
 mod generate_skills;
 mod http;
@@ -607,6 +608,13 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
     // machine, never the network.
     app = app.subcommand(config::command());
 
+    // Reads what the other hand-written commands above also read — the
+    // token store, the proxy environment, the config and telemetry
+    // switches — so it belongs beside them rather than the API surface
+    // below. `--verify` is its one exception, the same opt-in
+    // `auth whoami --verify` already sets a precedent for.
+    app = app.subcommand(doctor::command());
+
     app = app.subcommand(account_usage::command());
 
     app.subcommand(tilesets_cli::command())
@@ -1067,6 +1075,13 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             Some(("unset", unset_matches)) => config::unset(unset_matches, mode)?,
             _ => unreachable!("`config` sets subcommand_required(true)"),
         },
+        // Also ahead of the generic service arm: read-only except for the
+        // opt-in `--verify` request, and needs no credential load of its own
+        // — it reports what one would resolve to, not what a fresh one
+        // would be.
+        Some((doctor::COMMAND, doctor_matches)) => {
+            doctor::run(matches, use_login, debug, profile, mode, doctor_matches)?
+        }
         // Token resolution mirrors the service arm below, minus path
         // placeholders, a request body, and `--dry-run` — this GET always refreshes.
         Some((account_usage::COMMAND, usage_matches)) => {

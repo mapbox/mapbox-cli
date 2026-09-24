@@ -29,6 +29,13 @@ that may never merge. They are not releases and are not listed here.
   the *next* command will use, this reports what's stored at all, for
   someone who has forgotten which named profiles they've logged into.
 
+- `mapbox doctor` — a read-only snapshot of what the next command would
+  see: which token wins and its state, which proxy variables are in effect,
+  and where the update-check and telemetry switches currently stand.
+  `--verify` additionally checks that `api.mapbox.com` is reachable, the
+  only part of this that makes a request — the same precedent
+  `auth whoami --verify` sets.
+
 - A native `aarch64-pc-windows-msvc` build. Windows on Arm ran the x64 build
   under emulation before this — including inside a VM on Apple Silicon, the
   larger of the two populations this serves — which `install.ps1` already

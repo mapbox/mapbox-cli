@@ -609,7 +609,7 @@ fn save_credentials(creds: &Credentials, profile: Option<&str>) -> Result<()> {
         .with_context(|| format!("Failed to write credentials to {}", path.display()))
 }
 
-fn token_expires_at(token: &str) -> Option<u64> {
+pub(crate) fn token_expires_at(token: &str) -> Option<u64> {
     let payload_b64 = token.split('.').nth(1)?;
     let decoded = URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
     let json: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
@@ -1021,7 +1021,7 @@ impl TokenSource {
     /// The name a program reads. The prose form is built in
     /// [`Identity::source_prose`], where it can name the variable or profile
     /// the bare word leaves out.
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             TokenSource::Flag => "flag",
             TokenSource::Environment => "environment",
@@ -1062,7 +1062,7 @@ pub(crate) fn resolve_source<'a>(
 /// Read off the prefix rather than the payload because that is where the API
 /// itself reports it — and because the prefix is the one part of a token that
 /// is safe to print.
-fn token_usage(token: &str) -> Option<&str> {
+pub(crate) fn token_usage(token: &str) -> Option<&str> {
     let (usage, rest) = token.split_once('.')?;
     (!rest.is_empty() && matches!(usage, "pk" | "sk" | "tk")).then_some(usage)
 }

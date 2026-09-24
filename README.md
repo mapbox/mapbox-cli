@@ -305,7 +305,7 @@ or your login) when you have one, and with a token built into the CLI
 otherwise; Mapbox Events keeps the token an event was sent with, and the
 account it belongs to, alongside the event. A build from source has no
 built-in token, so with no token of your own the event is dropped.
-`MAPBOX_CLI_NO_TELEMETRY=1` turns it off.
+`MAPBOX_CLI_NO_TELEMETRY=1` or `mapbox config set telemetry off` turns it off.
 
 ### Diagnostics and settings
 

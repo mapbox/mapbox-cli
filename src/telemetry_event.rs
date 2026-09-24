@@ -18,7 +18,8 @@
 //!
 //! Best-effort throughout: nothing here can change a command's output, its
 //! exit code, or how long it takes to return. With telemetry off
-//! (`MAPBOX_CLI_NO_TELEMETRY`), nothing is built or written.
+//! (`MAPBOX_CLI_NO_TELEMETRY`, or `mapbox config set telemetry off`),
+//! nothing is built or written.
 
 use std::io::IsTerminal;
 use std::path::Path;
@@ -336,7 +337,12 @@ fn with_workflow(f: impl FnOnce(&mut Option<Workflow>)) {
 /// second after exit, and a sender still running from that image would keep
 /// the file locked and the delete would fail.
 pub(crate) fn deliver(record: &Record) {
-    if !telemetry::telemetry_allowed() || std::env::var_os("SUDO_USER").is_some() {
+    // The config setting is read at the end of the run: the run that turns
+    // telemetry off is one that should not report itself.
+    if !telemetry::telemetry_allowed()
+        || !crate::config::telemetry_enabled()
+        || std::env::var_os("SUDO_USER").is_some()
+    {
         return;
     }
     if cfg!(windows)

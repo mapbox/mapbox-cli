@@ -6,11 +6,8 @@
 //! event lands where it should, carries what the command did and nothing the
 //! user typed, disappears when telemetry is off, and never changes stdout.
 
-use std::io::{Read, Write};
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -37,8 +34,6 @@ fn command(home: &Path) -> Command {
         .env_remove("MAPBOX_USERNAME")
         .env_remove("MAPBOX_OUTPUT")
         .env_remove("MAPBOX_CLI_NO_TELEMETRY")
-        .env_remove("MAPBOX_CLI_TELEMETRY_SINK")
-        .env_remove("MAPBOX_CLI_TELEMETRY_DEBUG")
         .env("MAPBOX_NO_UPDATE_CHECK", "1")
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
@@ -234,104 +229,5 @@ fn completion_records_nothing() {
         !config_dir(&home).exists(),
         "`completion` created {}",
         config_dir(&home).display()
-    );
-}
-
-/// The `api` sink, against a loopback server standing in for Mapbox Events:
-/// one POST, the event wrapped in an array, the token in the query and the
-/// bare `User-Agent` — no `agent/` marker, even when an agent is detected.
-#[test]
-fn the_api_sink_posts_one_event_with_a_bare_user_agent() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
-    let addr = listener.local_addr().expect("the bound address");
-    listener.set_nonblocking(true).expect("nonblocking");
-
-    let home = scratch("api");
-    let out = command(&home)
-        .env("MAPBOX_CLI_TELEMETRY_SINK", "api")
-        .env(
-            "MAPBOX_INTERNAL_TELEMETRY_URL",
-            format!("http://{addr}/events/v2"),
-        )
-        .env("MAPBOX_INTERNAL_TELEMETRY_TOKEN", "pk.upload-token")
-        .env("CLAUDECODE", "1")
-        .args(["config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-
-    // The sender is detached and outlives the command, so wait for it.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut stream = loop {
-        match listener.accept() {
-            Ok((stream, _)) => break stream,
-            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
-            Err(e) => panic!("the sender never connected: {e}"),
-        }
-    };
-    stream.set_nonblocking(false).expect("blocking");
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("a read timeout");
-
-    let mut request = Vec::new();
-    let mut buf = [0u8; 4096];
-    loop {
-        let n = stream.read(&mut buf).unwrap_or(0);
-        request.extend_from_slice(&buf[..n]);
-        let text = String::from_utf8_lossy(&request);
-        if let Some((head, body)) = text.split_once("\r\n\r\n") {
-            let length = head
-                .lines()
-                .find_map(|l| {
-                    l.to_ascii_lowercase()
-                        .strip_prefix("content-length:")
-                        .map(|v| v.trim().parse::<usize>().unwrap_or(0))
-                })
-                .unwrap_or(0);
-            if body.len() >= length {
-                break;
-            }
-        }
-        if n == 0 {
-            break;
-        }
-    }
-    let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
-
-    let text = String::from_utf8_lossy(&request).into_owned();
-    let (head, body) = text
-        .split_once("\r\n\r\n")
-        .expect("a request head and body");
-    let first_line = head.lines().next().unwrap_or_default();
-    assert!(
-        first_line.starts_with("POST /events/v2?access_token=pk.upload-token "),
-        "{first_line}"
-    );
-    let user_agent = head
-        .lines()
-        .find_map(|l| {
-            l.to_ascii_lowercase()
-                .strip_prefix("user-agent:")
-                .map(|v| v.trim().to_string())
-        })
-        .expect("a User-Agent");
-    assert_eq!(
-        user_agent,
-        format!("mapbox-cli/{}", env!("CARGO_PKG_VERSION"))
-    );
-
-    let sent: Value = serde_json::from_str(body).expect("the body is JSON");
-    let sent = sent.as_array().expect("an array of events");
-    assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0]["command"], serde_json::json!(["config", "list"]));
-    assert_eq!(sent[0]["env"]["agent"], "claude-code");
-    assert!(
-        !config_dir(&home)
-            .join(".telemetry")
-            .read_dir()
-            .is_ok_and(|mut d| d
-                .any(|e| e.is_ok_and(|e| e.path().extension().is_some_and(|x| x == "jsonl")))),
-        "the api sink also wrote to the file sink"
     );
 }

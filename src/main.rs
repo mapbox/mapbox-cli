@@ -31,6 +31,7 @@ mod skill_dest;
 mod spec;
 mod telemetry;
 mod telemetry_event;
+mod telemetry_sink;
 mod tilesets_cli;
 mod uninstall;
 mod update_check;
@@ -674,9 +675,6 @@ fn emit_schema(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches) -> u8
 fn main() -> ExitCode {
     if update_check::is_refresh_child() {
         return update_check::run_refresh_child();
-    }
-    if telemetry_event::is_sender_child() {
-        return telemetry_event::run_sender_child();
     }
 
     telemetry_event::start();

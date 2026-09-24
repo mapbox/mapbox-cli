@@ -232,20 +232,8 @@ pub fn client_for(command_group: Option<&str>) -> Result<reqwest::blocking::Clie
 /// here chose and nobody could move, which a `reqwest` upgrade could have
 /// changed without a line of this repo appearing in the diff.
 fn build(timeout: Duration, command_group: Option<&str>) -> Result<reqwest::blocking::Client> {
-    build_with(telemetry::user_agent(command_group), timeout)
-}
-
-/// A client whose `User-Agent` is [`telemetry::PRODUCT_TOKEN`] alone, for
-/// the telemetry sender. Mapbox Events stores the `User-Agent` of the upload
-/// in every record, so the markers — `agent/<id>` among them — must not
-/// ride along on it.
-pub fn bare_client(timeout: Duration) -> Result<reqwest::blocking::Client> {
-    build_with(telemetry::PRODUCT_TOKEN.to_string(), timeout)
-}
-
-fn build_with(user_agent: String, timeout: Duration) -> Result<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
-        .user_agent(user_agent)
+        .user_agent(telemetry::user_agent(command_group))
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(timeout)
         .build()

@@ -4,9 +4,8 @@
 //! request, the bytes on stdout, an error code — and `main` calls [`finish`]
 //! once on the way out; nothing is written before then. `set_*` functions
 //! overwrite a field, last call wins; `add_*` functions accumulate. The
-//! event is then handed to a sink: a JSON line under
-//! `~/.mapbox/.telemetry/` by default, or Mapbox Events through a detached
-//! child with `MAPBOX_CLI_TELEMETRY_SINK=api`.
+//! finished event goes to [`crate::telemetry_sink`], which decides where it
+//! is delivered; this module decides only what it contains.
 //!
 //! What this refuses to record is the point of it. Argument values leave
 //! only when they come from a fixed set (an enum, a boolean, a number the
@@ -20,9 +19,8 @@
 //! (`MAPBOX_CLI_NO_TELEMETRY`), nothing is recorded or written.
 
 use std::collections::HashSet;
-use std::io::{IsTerminal, Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command as Process, ExitCode, Stdio};
+use std::io::IsTerminal;
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -31,36 +29,21 @@ use clap::{ArgMatches, Command};
 use serde::Serialize;
 
 use crate::spec::ServiceSpec;
-use crate::{agent_detect, auth, confirm, executor, http, output, schema, telemetry};
+use crate::{
+    agent_detect, auth, confirm, executor, http, output, schema, telemetry, telemetry_sink,
+};
 
 const EVENT: &str = "cli.command";
 const SCHEMA_VERSION: &str = "2.0";
 const SDK_IDENTIFIER: &str = "mapbox-cli";
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
-/// `file` or `api`. Anything else, or nothing, is `file`.
-const SINK_ENV: &str = "MAPBOX_CLI_TELEMETRY_SINK";
-/// Prints the event to stderr instead of handing it to the sink.
-const DEBUG_ENV: &str = "MAPBOX_CLI_TELEMETRY_DEBUG";
+/// The largest `--data @<path>` file read for its top-level keys; above
+/// it, only the size is recorded.
+const MAX_DATA_TO_PARSE: u64 = 256 * 1024;
 
-/// Set on the child [`finish`] spawns for the `api` sink — a mode of this
-/// binary for the reason `update_check`'s refresher is one: a hidden
-/// subcommand would be in `--schema` and the generated skills.
-const SENDER_ENV: &str = "MAPBOX_INTERNAL_TELEMETRY_SEND";
-/// Overrides for the compiled-in endpoint and token, for tests and for
-/// pointing a dev build at staging.
-const URL_ENV: &str = "MAPBOX_INTERNAL_TELEMETRY_URL";
-const TOKEN_ENV: &str = "MAPBOX_INTERNAL_TELEMETRY_TOKEN";
-const PRODUCTION_URL: &str = "https://events.mapbox.com/events/v2";
-const SEND_TIMEOUT: Duration = Duration::from_secs(5);
-/// Far above one event (about 1 KB); a bound on what the child will read.
-const MAX_PAYLOAD: u64 = 256 * 1024;
-
-const DIR: &str = ".telemetry";
 const USER_ID_FILE: &str = "user-id";
 const LAST_VERSION_FILE: &str = "last-version";
-/// Days of event files kept by the `file` sink.
-const KEEP_DAYS: i64 = 7;
 
 // Bounds from the schema. An event over any of them is rejected whole at
 // ingest, so they are enforced here rather than trusted.
@@ -479,16 +462,8 @@ fn deliver_locked(run: &mut Run, exit_code: Option<u32>) {
     }
     run.finished = true;
     let event = build(run, exit_code);
-    let Ok(line) = serde_json::to_string(&event) else {
-        return;
-    };
-    if std::env::var_os(DEBUG_ENV).is_some_and(|value| !value.is_empty()) {
-        output::progress(&line);
-        return;
-    }
-    match std::env::var(SINK_ENV).ok().as_deref().map(str::trim) {
-        Some("api") => spawn_sender(&line),
-        _ => append_to_file(&line),
+    if let Ok(line) = serde_json::to_string(&event) {
+        telemetry_sink::deliver(&line);
     }
 }
 
@@ -790,7 +765,7 @@ fn data_shape(value: &str) -> (Option<u64>, Option<Vec<String>>) {
             };
             // Parsed only when small enough to be a request body worth
             // describing; the size alone is still recorded above that.
-            if meta.len() > MAX_PAYLOAD {
+            if meta.len() > MAX_DATA_TO_PARSE {
                 return (Some(meta.len()), None);
             }
             match std::fs::read_to_string(path) {
@@ -854,65 +829,23 @@ fn clip(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
 }
 
-fn telemetry_dir() -> Option<PathBuf> {
-    Some(auth::config_dir_path()?.join(DIR))
-}
-
-/// The directory, created `0700` inside a config directory `auth` has
-/// created and hardened, as it would for credentials. `None` when it cannot be.
-fn prepared_dir() -> Option<PathBuf> {
-    auth::config_dir().ok()?;
-    let dir = telemetry_dir()?;
-    std::fs::create_dir_all(&dir).ok()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-    }
-    Some(dir)
-}
-
-fn open_private(path: &Path, append: bool) -> std::io::Result<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    if append {
-        options.append(true).create(true);
-    } else {
-        options.write(true).create_new(true);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path)
-}
-
 /// The installation's random id, created on first use. Two first runs in
 /// parallel can each create one; `create_new` makes the second read the
 /// first's instead of replacing it. When nothing can be stored, the run
 /// still gets an id — just not one the next run will share.
 fn user_id() -> String {
-    let fresh = uuid_v4(rand::random());
-    let Some(dir) = prepared_dir() else {
-        return fresh;
-    };
-    let path = dir.join(USER_ID_FILE);
-    if let Some(existing) = read_user_id(&path) {
+    if let Some(existing) = read_user_id() {
         return existing;
     }
-    match open_private(&path, false) {
-        Ok(mut file) => {
-            let _ = file.write_all(fresh.as_bytes());
-            fresh
-        }
-        Err(_) => read_user_id(&path).unwrap_or(fresh),
+    let fresh = uuid_v4(rand::random());
+    if telemetry_sink::create_state(USER_ID_FILE, &fresh) {
+        return fresh;
     }
+    read_user_id().unwrap_or(fresh)
 }
 
-fn read_user_id(path: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let id = text.trim();
-    is_uuid(id).then(|| id.to_string())
+fn read_user_id() -> Option<String> {
+    telemetry_sink::read_state(USER_ID_FILE).filter(|id| is_uuid(id))
 }
 
 fn is_uuid(text: &str) -> bool {
@@ -927,18 +860,11 @@ fn is_uuid(text: &str) -> bool {
 /// first run after an upgrade. Checked against the same shape the update
 /// check trusts, since it is read back from disk.
 fn previous_version() -> Option<String> {
-    let dir = prepared_dir()?;
-    let path = dir.join(LAST_VERSION_FILE);
-    let last = std::fs::read_to_string(&path)
-        .ok()
-        .map(|text| text.trim().to_string());
+    let last = telemetry_sink::read_state(LAST_VERSION_FILE);
     if last.as_deref() == Some(CURRENT) {
         return None;
     }
-    let _ = std::fs::remove_file(&path);
-    if let Ok(mut file) = open_private(&path, false) {
-        let _ = file.write_all(CURRENT.as_bytes());
-    }
+    telemetry_sink::replace_state(LAST_VERSION_FILE, CURRENT);
     last.filter(|version| is_version(version))
         .map(|version| clip(&version, MAX_VERSION))
 }
@@ -968,7 +894,7 @@ fn uuid_v4(mut bytes: [u8; 16]) -> String {
 /// RFC 3339 in UTC, to the millisecond.
 fn timestamp(at: SystemTime) -> String {
     let since = at.duration_since(UNIX_EPOCH).unwrap_or_default();
-    let (date, secs) = utc_date(since.as_secs());
+    let (date, secs) = telemetry_sink::utc_date(since.as_secs());
     format!(
         "{date}T{:02}:{:02}:{:02}.{:03}Z",
         secs / 3600,
@@ -976,144 +902,6 @@ fn timestamp(at: SystemTime) -> String {
         secs % 60,
         since.subsec_millis()
     )
-}
-
-/// `YYYY-MM-DD` and the seconds into that day.
-fn utc_date(unix_secs: u64) -> (String, u64) {
-    let days = (unix_secs / 86_400) as i64;
-    let (y, m, d) = crate::account_usage::civil_from_days(days);
-    (format!("{y:04}-{m:02}-{d:02}"), unix_secs % 86_400)
-}
-
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
-
-/// Appends one line to today's file. A line this short goes out in one
-/// `write`, which `O_APPEND` keeps whole against parallel runs.
-fn append_to_file(line: &str) {
-    let Some(dir) = prepared_dir() else {
-        return;
-    };
-    let (today, _) = utc_date(now_secs());
-    let path = dir.join(format!("{today}.jsonl"));
-    let is_new_day = !path.exists();
-    if let Ok(mut file) = open_private(&path, true) {
-        let _ = file.write_all(format!("{line}\n").as_bytes());
-    }
-    if is_new_day {
-        prune(&dir, now_secs());
-    }
-}
-
-/// Deletes event files older than [`KEEP_DAYS`]. Only names that are
-/// exactly `YYYY-MM-DD.jsonl` are considered, and only inside the telemetry
-/// directory itself, so nothing else there can be matched.
-fn prune(dir: &Path, now: u64) {
-    let (cutoff, _) = utc_date(now.saturating_sub(KEEP_DAYS as u64 * 86_400));
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if let Some(date) = event_file_date(&name) {
-            if date < cutoff.as_str() {
-                let _ = std::fs::remove_file(dir.join(&name));
-            }
-        }
-    }
-}
-
-fn event_file_date(name: &str) -> Option<&str> {
-    let date = name.strip_suffix(".jsonl")?;
-    let shape = date.len() == 10
-        && date.char_indices().all(|(i, c)| match i {
-            4 | 7 => c == '-',
-            _ => c.is_ascii_digit(),
-        });
-    shape.then_some(date)
-}
-
-/// The endpoint and token for the `api` sink. `None` without a token, which
-/// a build outside the release pipeline has none of.
-fn api_target() -> Option<(String, String)> {
-    let from_env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
-    let token = from_env(TOKEN_ENV)
-        .or_else(|| option_env!("MAPBOX_CLI_TELEMETRY_TOKEN").map(String::from))?;
-    let url = from_env(URL_ENV)
-        .or_else(|| option_env!("MAPBOX_CLI_TELEMETRY_URL").map(String::from))
-        .unwrap_or_else(|| PRODUCTION_URL.to_string());
-    Some((url, token))
-}
-
-/// Starts the sender with the event on its stdin, and forgets it. Detached
-/// the way `update_check` detaches its refresher, and for the same reasons.
-/// The event goes on stdin rather than argv, which other users can read in
-/// `ps`.
-fn spawn_sender(line: &str) {
-    if api_target().is_none() {
-        return;
-    }
-    let Ok(exe) = std::env::current_exe() else {
-        return;
-    };
-    let mut command = Process::new(exe);
-    command
-        .env(SENDER_ENV, "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
-    }
-
-    if let Ok(mut child) = command.spawn() {
-        // One event fits in the pipe's buffer, so this does not wait on the
-        // child; dropping stdin closes it, which is the child's end of input.
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(line.as_bytes());
-        }
-    }
-}
-
-/// Whether this process is the `api` sink's sender rather than a command.
-pub fn is_sender_child() -> bool {
-    std::env::var_os(SENDER_ENV).is_some_and(|value| !value.is_empty())
-}
-
-/// The whole of the sender: read one event, POST it once, exit. Its result
-/// is read by nobody, so there is nothing to report and nothing to retry.
-pub fn run_sender_child() -> ExitCode {
-    let mut line = String::new();
-    let _ = std::io::stdin().take(MAX_PAYLOAD).read_to_string(&mut line);
-    if line.trim().is_empty() || !enabled() {
-        return ExitCode::SUCCESS;
-    }
-    let Some((url, token)) = api_target() else {
-        return ExitCode::SUCCESS;
-    };
-    let Ok(client) = http::bare_client(SEND_TIMEOUT) else {
-        return ExitCode::SUCCESS;
-    };
-    let request = client
-        .post(url)
-        .query(&[("access_token", token)])
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(format!("[{}]", line.trim()));
-    let _ = http::send(request);
-    ExitCode::SUCCESS
 }
 
 #[cfg(test)]
@@ -1208,44 +996,6 @@ mod tests {
         );
         assert_eq!(method("/srv/tools/mapbox"), "other");
         assert_eq!(install_method(None), "other");
-    }
-
-    #[test]
-    fn only_dated_event_files_are_pruned() {
-        assert_eq!(event_file_date("2026-09-24.jsonl"), Some("2026-09-24"));
-        for name in [
-            "user-id",
-            "last-version",
-            "2026-09-24.json",
-            "notes.jsonl",
-            "2026-9-24.jsonl",
-        ] {
-            assert_eq!(event_file_date(name), None, "{name}");
-        }
-    }
-
-    #[test]
-    fn prune_removes_old_event_files_and_nothing_else() {
-        let dir =
-            std::env::temp_dir().join(format!("mapbox-events-prune-{}", uuid_v4(rand::random())));
-        std::fs::create_dir_all(&dir).unwrap();
-        for name in [
-            "2026-09-01.jsonl",
-            "2026-09-20.jsonl",
-            "user-id",
-            "2026-09-01.txt",
-        ] {
-            std::fs::write(dir.join(name), "x").unwrap();
-        }
-        // 2026-09-24T00:00:00Z
-        prune(&dir, 1_790_208_000);
-        let mut left: Vec<String> = std::fs::read_dir(&dir)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        left.sort();
-        std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(left, ["2026-09-01.txt", "2026-09-20.jsonl", "user-id"]);
     }
 
     #[test]

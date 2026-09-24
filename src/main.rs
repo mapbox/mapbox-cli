@@ -1641,12 +1641,15 @@ mod tests {
             .filter(|op| op.disabled_scope.is_some())
             .map(|op| op.command())
             .collect();
-        // Every current UNSUPPORTED_OPERATIONS entry is also `disabled` (or
-        // `tbd`, which strips the same way) in the maintainer-only decision
-        // record, so this is legitimately empty now rather than a broken guard — the
-        // operations are absent from the bundled specs, not merely filtered
-        // here. Nothing left to assert on `disabled` itself; the loop below
-        // still holds for whatever, if anything, shows up.
+        // Every current UNSUPPORTED_OPERATIONS entry sourced from
+        // `MAPBOX_SPEC_ENTRIES` is also `disabled` (or `tbd`, which strips
+        // the same way) in the maintainer-only decision record, so those
+        // are absent from the bundled specs rather than merely filtered
+        // here. A custom spec has no such record to strip it at the
+        // source — `feedback.yaml`'s `createFeedback` is UNSUPPORTED_OPERATIONS'
+        // first entry that actually reaches this list non-empty — so the
+        // loop below is doing real work for it, not just standing guard
+        // over an empty case.
 
         let app = build_app(&specs);
         for (path, _) in leaf_commands(&app, &[]) {

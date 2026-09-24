@@ -545,6 +545,14 @@ const UNSUPPORTED_OPERATIONS: &[(&str, &str, &str)] = &[
     // itself, which is why it wasn't registered alongside the other two
     // fonts scopes.
     ("styles", "downloadStyleZip", "styles:download"),
+    // Confirmed 2026-09-24 with a direct POST /oauth/register against
+    // production requesting `user-feedback:write` alongside two scopes
+    // already known registrable — the response's granted `scope` carried
+    // the other two and silently dropped this one, the same shape
+    // `tokens:write` and `styles:download` above already document.
+    // `user-feedback:read` (list/get) is unaffected and already in
+    // `DEFAULT_SCOPES_LIST`.
+    ("feedback", "createFeedbackItem", "user-feedback:write"),
 ];
 
 fn unsupported_scope_for(service_name: &str, operation_id: &str) -> Option<&'static str> {
@@ -669,6 +677,10 @@ pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
     SpecEntry {
         name: "matrix",
         yaml: include_str!("../custom-openapi/matrix/openapi/matrix.yaml"),
+    },
+    SpecEntry {
+        name: "feedback",
+        yaml: include_str!("../custom-openapi/feedback/openapi/feedback.yaml"),
     },
 ];
 
@@ -2142,6 +2154,40 @@ paths:
             profile.arg_name, "profile",
             "must not collide with the global --profile id"
         );
+    }
+
+    /// `createFeedbackItem` needs `user-feedback:write`, confirmed
+    /// unregistrable via a direct `POST /oauth/register` against
+    /// production — see `UNSUPPORTED_OPERATIONS`'s own comment for that.
+    /// `list` and `get` need only `user-feedback:read`, already in
+    /// `DEFAULT_SCOPES_LIST`, so they must stay reachable.
+    #[test]
+    fn feedback_create_is_unreachable_but_list_and_get_are_not() {
+        let spec = parse_spec(
+            "feedback",
+            include_str!("../custom-openapi/feedback/openapi/feedback.yaml"),
+        )
+        .expect("feedback.yaml parses");
+
+        let create = spec
+            .operations
+            .iter()
+            .find(|op| op.command_path == ["create-feedback-item"])
+            .expect("the create-feedback-item operation exists in the spec");
+        assert!(
+            create.disabled_scope.is_some(),
+            "createFeedbackItem must be disabled — user-feedback:write isn't registrable"
+        );
+        assert!(!create.is_exposed());
+
+        for path in [["list"], ["get"]] {
+            let op = spec
+                .operations
+                .iter()
+                .find(|op| op.command_path == path)
+                .unwrap_or_else(|| panic!("the {path:?} operation exists in the spec"));
+            assert!(op.is_exposed(), "{path:?} needs only user-feedback:read");
+        }
     }
 
     #[test]

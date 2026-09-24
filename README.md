@@ -169,6 +169,7 @@ Each API is a top-level subcommand, one sub-subcommand per operation:
 ```sh
 mapbox accounts *
 mapbox directions *
+mapbox feedback *
 mapbox fonts *
 mapbox geocoder *
 mapbox isochrone *

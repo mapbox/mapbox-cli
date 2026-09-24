@@ -19,6 +19,16 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox feedback list`/`get`, reading feedback submitted against Mapbox
+  API responses — filterable, sortable, paginated. Hand-authored into
+  `custom-openapi/` for the same reason the Navigation commands were: no
+  upstream spec exists yet. `feedback create`, the write side, is not a
+  command — confirmed directly against production that `user-feedback:write`
+  is silently dropped from a `POST /oauth/register` grant, the same
+  unregistrable shape `accounts create-token` and `styles
+  download-style-zip` already document, so no `mapbox auth login` token can
+  ever carry it.
+
 - `mapbox matrix compute`, travel time and/or distance between every pair in
   a set of up to 25 coordinates in one call, for driving (with or without
   live traffic), walking, or cycling. Hand-authored into `custom-openapi/`

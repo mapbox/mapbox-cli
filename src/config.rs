@@ -33,7 +33,8 @@ const CONFIG_FILE: &str = "config.json";
 const UPDATE_CHECK_KEY: &str = "update-check";
 const HISTORY_KEY: &str = "history";
 const LOG_KEY: &str = "log";
-const KEYS: &[&str] = &[UPDATE_CHECK_KEY, HISTORY_KEY, LOG_KEY];
+const TELEMETRY_KEY: &str = "telemetry";
+const KEYS: &[&str] = &[UPDATE_CHECK_KEY, HISTORY_KEY, LOG_KEY, TELEMETRY_KEY];
 
 const ON: &str = "on";
 const OFF: &str = "off";
@@ -50,6 +51,8 @@ struct Config {
     history: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     log: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    telemetry: Option<bool>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -102,6 +105,12 @@ pub fn log_enabled() -> bool {
     read_config().log.unwrap_or(false)
 }
 
+/// Whether the run's telemetry event may be recorded, per the persisted
+/// setting. [`crate::telemetry_event`] checks it alongside `MAPBOX_CLI_NO_TELEMETRY`.
+pub fn telemetry_enabled() -> bool {
+    read_config().telemetry.unwrap_or(true)
+}
+
 fn on_off(enabled: bool) -> &'static str {
     if enabled {
         ON
@@ -118,6 +127,7 @@ fn resolve(config: &Config, key: &str) -> bool {
         UPDATE_CHECK_KEY => update_check_setting(config),
         HISTORY_KEY => config.history.unwrap_or(true),
         LOG_KEY => config.log.unwrap_or(false),
+        TELEMETRY_KEY => config.telemetry.unwrap_or(true),
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
 }
@@ -132,6 +142,7 @@ fn clear(config: &mut Config, key: &str) {
         UPDATE_CHECK_KEY => config.update_check = None,
         HISTORY_KEY => config.history = None,
         LOG_KEY => config.log = None,
+        TELEMETRY_KEY => config.telemetry = None,
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
 }
@@ -214,6 +225,7 @@ pub fn set(matches: &ArgMatches, mode: Mode) -> Result<()> {
         UPDATE_CHECK_KEY => config.update_check = Some(enabled),
         HISTORY_KEY => config.history = Some(enabled),
         LOG_KEY => config.log = Some(enabled),
+        TELEMETRY_KEY => config.telemetry = Some(enabled),
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
     write_config(&config)?;

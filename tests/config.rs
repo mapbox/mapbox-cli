@@ -127,13 +127,16 @@ fn an_unknown_key_or_value_is_a_usage_error_not_a_panic() {
 fn list_reports_every_setting_including_an_unset_one() {
     let home = scratch("list");
 
-    // Nothing set yet: list still names the one known key, at its default.
+    // Nothing set yet: list still names every known key, at its default.
     let empty = command(&home)
         .args(["-o", "json", "config", "list"])
         .output()
         .expect("run mapbox config list");
     assert!(empty.status.success());
-    assert_eq!(stdout(&empty), r#"[{"key":"update-check","value":true}]"#);
+    assert_eq!(
+        stdout(&empty),
+        r#"[{"key":"update-check","value":true},{"key":"telemetry","value":true}]"#
+    );
 
     let set = command(&home)
         .args(["config", "set", "update-check", "off"])
@@ -146,14 +149,17 @@ fn list_reports_every_setting_including_an_unset_one() {
         .output()
         .expect("run mapbox config list");
     assert!(after.status.success());
-    assert_eq!(stdout(&after), r#"[{"key":"update-check","value":false}]"#);
+    assert_eq!(
+        stdout(&after),
+        r#"[{"key":"update-check","value":false},{"key":"telemetry","value":true}]"#
+    );
 
     let text = command(&home)
         .args(["-o", "text", "config", "list"])
         .output()
         .expect("run mapbox config list");
     assert!(text.status.success());
-    assert_eq!(stdout(&text), "update-check\toff");
+    assert_eq!(stdout(&text), "update-check\toff\ntelemetry\ton");
 }
 
 #[test]

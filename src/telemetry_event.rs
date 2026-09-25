@@ -16,7 +16,8 @@
 //!
 //! Best-effort throughout: nothing here can change a command's output, its
 //! exit code, or how long it takes to return. With telemetry off
-//! (`MAPBOX_CLI_NO_TELEMETRY`), nothing is recorded or written.
+//! (`MAPBOX_CLI_NO_TELEMETRY`, or `mapbox config set telemetry off`),
+//! nothing is recorded or written.
 
 use std::collections::HashSet;
 use std::io::IsTerminal;
@@ -354,7 +355,7 @@ static ENABLED: OnceLock<bool> = OnceLock::new();
 
 /// Read once: the answer must not change halfway through a run.
 fn enabled() -> bool {
-    *ENABLED.get_or_init(telemetry::telemetry_allowed)
+    *ENABLED.get_or_init(|| telemetry::telemetry_allowed() && crate::config::telemetry_enabled())
 }
 
 /// A poisoned lock is a panic somewhere else; recording is not worth a
@@ -624,7 +625,9 @@ pub fn finish(exit_code: Option<u32>) {
 }
 
 fn deliver_locked(run: &mut Run, exit_code: Option<u32>) {
-    if run.finished || !enabled() {
+    // The setting is read again here: the run that turns telemetry off is
+    // one that should not report itself.
+    if run.finished || !enabled() || !crate::config::telemetry_enabled() {
         return;
     }
     run.finished = true;

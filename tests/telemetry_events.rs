@@ -197,7 +197,7 @@ fn help_version_and_usage_errors_record_their_invocation() {
 }
 
 #[test]
-fn the_opt_out_records_nothing() {
+fn either_opt_out_records_nothing() {
     let home = scratch("opt-out-env");
     let out = command(&home)
         .env("MAPBOX_CLI_NO_TELEMETRY", "1")
@@ -209,6 +209,14 @@ fn the_opt_out_records_nothing() {
         !config_dir(&home).join(".telemetry").exists(),
         "MAPBOX_CLI_NO_TELEMETRY=1 still wrote telemetry"
     );
+
+    let home = scratch("opt-out-config");
+    assert!(run(&home, &["config", "set", "telemetry", "off"])
+        .status
+        .success());
+    // That run records nothing either: the setting it wrote is read at exit.
+    let _ = run(&home, &["config", "list"]);
+    assert_eq!(events(&home), Vec::<Value>::new());
 }
 
 #[test]

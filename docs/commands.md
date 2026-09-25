@@ -81,8 +81,7 @@ nests, and is typed `mapbox styles draft get`.
 [geocoder.reverse](#mapbox-geocoder-reverse) ·
 [geocoder.batch](#mapbox-geocoder-batch)
 
-**[Isochrone](#isochrone)** —
-[isochrone.contours](#mapbox-isochrone-contours)
+**[Isochrone](#isochrone)** — [isochrone](#mapbox-isochrone)
 
 **[Search](#search)** — [search.forward](#mapbox-search-forward) ·
 [search.reverse](#mapbox-search-reverse) ·
@@ -1247,18 +1246,23 @@ the parameters documented at docs.mapbox.com/api/navigation/isochrone — see
 `custom-openapi/README.md` for why this command group doesn't come from the
 vendored specs the way most others do.
 
-### `mapbox isochrone contours`
+### `mapbox isochrone`
 
 One contour per value in `--contours-minutes` or `--contours-meters`, as
-GeoJSON around the given center point.
+GeoJSON around the given center point. No subcommand: this API has one
+operation, so there's nothing a second word would disambiguate, the same
+reason `mapbox directions` has none either.
 
 #### Parameters
 
 `<routing-profile>` and `<coordinates>` (both positional) are required.
-`<routing-profile>` is one of `mapbox/driving-traffic`, `mapbox/driving`,
-`mapbox/walking`, `mapbox/cycling`. `<coordinates>` is one
-`{longitude},{latitude}` pair — unlike `directions route`, this command
-takes a single center point, not a list of waypoints.
+`<routing-profile>` is sent exactly as typed, not checked against a fixed
+list: `mapbox/driving-traffic`, `mapbox/driving`, `mapbox/walking` and
+`mapbox/cycling` are documented, but some accounts (OEM agreements, mainly)
+have additional profiles of their own that were never published, the API
+is the authority on whether a value is valid, not this page. `<coordinates>`
+is one `{longitude},{latitude}` pair, unlike `mapbox directions`, this
+command takes a single center point, not a list of waypoints.
 
 Exactly one of `--contours-minutes` or `--contours-meters` is required by
 the API, though nothing here enforces it before the request goes out.
@@ -1277,20 +1281,20 @@ the API, though nothing here enforces it before the request goes out.
 #### Examples
 
 ```sh
-mapbox isochrone contours mapbox/driving "-122.42,37.78" --contours-minutes 5,10,15
-mapbox isochrone contours mapbox/walking "-122.42,37.78" --contours-minutes 5,10 --polygons
+mapbox isochrone mapbox/driving "-122.42,37.78" --contours-minutes 5,10,15
+mapbox isochrone mapbox/walking "-122.42,37.78" --contours-minutes 5,10 --polygons
 ```
 
 #### Outputs
 
 Captured live against `mapbox/walking`, two 5- and 10-minute contours as
-polygons. This response is a real GeoJSON `FeatureCollection` — unlike
-`directions route`'s response — but isochrone isn't one of the three
+polygons. This response is a real GeoJSON `FeatureCollection`, unlike
+`mapbox directions`'s response, but isochrone isn't one of the three
 services (`search`, `geocoder`, `tilequery`) this CLI has a bespoke
 list-per-feature rendering for yet (`output.rs`'s `list_rendering` is an
 exact service allow-list, not a "looks like GeoJSON" test), so both output
 modes print the same JSON, `-o text` pretty-printed and `-o json` on one
-line — same shape as `directions route`'s Outputs section above:
+line, same shape as `mapbox directions`'s Outputs section above:
 
 <table>
 <tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>

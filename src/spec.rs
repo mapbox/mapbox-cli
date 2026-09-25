@@ -147,7 +147,7 @@ fn arg_name_override(service_name: &str, param_name: &str) -> Option<&'static st
 /// `generate-skills`, this file's own `command()` above — reads a
 /// [`FLATTENED_SERVICES`] service correctly for free, because they all go
 /// through `command()` rather than reconstructing the string themselves.
-pub const FLATTENED_SERVICES: &[&str] = &["directions"];
+pub const FLATTENED_SERVICES: &[&str] = &["directions", "isochrone"];
 
 /// (service, path parameter name) pairs whose value is trusted to reach the
 /// URL unescaped, because every legitimate value already contains a
@@ -167,7 +167,8 @@ pub const FLATTENED_SERVICES: &[&str] = &["directions"];
 /// (`mapbox/driving`, `mapbox/cycling`, an OEM's own profile name, …), which
 /// the routing profile's own path segment depends on reaching the API
 /// unescaped regardless of which spelling was typed.
-pub const UNESCAPED_PATH_PARAMS: &[(&str, &str)] = &[("directions", "profile")];
+pub const UNESCAPED_PATH_PARAMS: &[(&str, &str)] =
+    &[("directions", "profile"), ("isochrone", "profile")];
 
 /// The media types an operation's request body may be sent as.
 ///
@@ -2154,6 +2155,24 @@ paths:
             profile.arg_name, "profile",
             "must not collide with the global --profile id"
         );
+        // Deliberately not an `enum`: see `UNESCAPED_PATH_PARAMS`'s own doc
+        // comment for why a closed set was wrong here (OEM accounts have
+        // undocumented profiles of their own).
+        assert!(
+            profile.enum_values.is_empty(),
+            "profile must accept any value, not just the four documented ones"
+        );
+        assert!(
+            UNESCAPED_PATH_PARAMS.contains(&("isochrone", "profile")),
+            "profile's literal `/` must still reach the URL unescaped, \
+             now that it can't rely on being an enum to prove that"
+        );
+
+        // `isochrone` has exactly one operation and is in
+        // `FLATTENED_SERVICES` — `command()` must say so, dropping
+        // `command_path` from the string entirely, even though
+        // `command_path` itself stays `["contours"]` for internal lookups.
+        assert_eq!(contours.command(), "isochrone");
     }
 
     #[test]

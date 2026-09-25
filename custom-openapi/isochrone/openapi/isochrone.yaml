@@ -34,18 +34,24 @@ paths:
         - name: "profile"
           in: path
           required: true
+          # Not an `enum`: the four documented values are what's public, but
+          # not what's exhaustive — some customers (OEM agreements, mainly)
+          # have additional profiles never published to docs.mapbox.com.
+          # An `enum` here becomes a clap `PossibleValuesParser` that
+          # rejects anything else client-side, which would break this CLI
+          # for exactly the accounts that most need a routing profile
+          # named beyond `driving`/`walking`/`cycling`. Same fix as
+          # `directions.yaml`'s `profile`.
           description: >-
-            The routing profile. `mapbox/driving-traffic` accounts for live
-            traffic conditions; `mapbox/driving` does not.
+            The routing profile — `mapbox/driving-traffic` (accounts for
+            live traffic), `mapbox/driving`, `mapbox/walking`, or
+            `mapbox/cycling` are documented, but not necessarily
+            exhaustive: some accounts have additional profiles of their
+            own. Sent exactly as typed; the API is the authority on
+            whether a value is valid, not this description.
           schema:
             type: string
-            enum:
-              [
-                "mapbox/driving-traffic",
-                "mapbox/driving",
-                "mapbox/walking",
-                "mapbox/cycling",
-              ]
+            minLength: 1
           example: "mapbox/driving"
         - name: "coordinates"
           in: path

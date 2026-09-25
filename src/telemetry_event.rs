@@ -60,6 +60,7 @@ const MAX_COMMAND_NAME: usize = 32;
 const MAX_REQUEST_IDS: usize = 5;
 const MAX_REQUEST_ID: usize = 128;
 const MAX_CODE: usize = 64;
+const MAX_STEPS: usize = 20;
 const MAX_VERSION: usize = 32;
 
 /// Options that are top-level fields or `invocation`, so never `params`.
@@ -159,10 +160,32 @@ impl WorkflowSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Workflow {
     source: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    step_count: Option<u32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    steps: Vec<Step>,
+}
+
+/// One step of a workflow run. Built only by [`cli_step`] and
+/// [`script_step`], so a script step can never carry a command name or an
+/// error category: nothing about a user's script is recorded beyond how it
+/// exited and how long it took.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Step {
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
+    duration_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -447,6 +470,78 @@ fn workflow_field(source: WorkflowSource, name: Option<&str>) -> Workflow {
     Workflow {
         source: source.as_str(),
         name,
+        step_count: None,
+        steps: Vec::new(),
+    }
+}
+
+/// How many steps the running workflow has, which can be more than the
+/// [`MAX_STEPS`] recorded.
+#[allow(dead_code)] // Called by the workflow commands, which don't exist yet.
+pub(crate) fn set_workflow_step_count(count: usize) {
+    with_run(|run| {
+        if let Some(workflow) = run.workflow.as_mut() {
+            workflow.step_count = Some(u32::try_from(count).unwrap_or(u32::MAX));
+        }
+    });
+}
+
+/// A step that ran a `mapbox` command. `words` is the step's command line;
+/// only the names the command tree has are kept, so an argument can't pass
+/// for a command name.
+#[allow(dead_code)] // Called by the workflow commands, which don't exist yet.
+pub(crate) fn add_cli_step(
+    app: &Command,
+    words: &[&str],
+    exit_code: Option<u32>,
+    error_code: Option<&str>,
+    duration: Duration,
+) {
+    let step = cli_step(app, words, exit_code, error_code, duration);
+    with_run(|run| push_step(run, step));
+}
+
+/// A step that ran one of the user's own scripts.
+#[allow(dead_code)] // Called by the workflow commands, which don't exist yet.
+pub(crate) fn add_script_step(exit_code: Option<u32>, duration: Duration) {
+    let step = script_step(exit_code, duration);
+    with_run(|run| push_step(run, step));
+}
+
+fn cli_step(
+    app: &Command,
+    words: &[&str],
+    exit_code: Option<u32>,
+    error_code: Option<&str>,
+    duration: Duration,
+) -> Step {
+    let path = tree_path(app, words.iter().map(|word| word.to_string()));
+    Step {
+        kind: "cli",
+        command: (!path.is_empty()).then(|| clip_command(path)),
+        exit_code,
+        error_code: error_code.map(|code| clip(code, MAX_CODE)),
+        duration_ms: duration.as_millis() as u64,
+    }
+}
+
+fn script_step(exit_code: Option<u32>, duration: Duration) -> Step {
+    Step {
+        kind: "script",
+        command: None,
+        exit_code,
+        error_code: None,
+        duration_ms: duration.as_millis() as u64,
+    }
+}
+
+/// Steps belong to a workflow: one reported before [`set_workflow`] has
+/// nowhere to go and is dropped.
+fn push_step(run: &mut Run, step: Step) {
+    if let Some(workflow) = run.workflow.as_mut() {
+        if workflow.steps.len() < MAX_STEPS {
+            workflow.steps.push(step);
+        }
     }
 }
 
@@ -654,13 +749,25 @@ fn clip_command(path: Vec<String>) -> Vec<String> {
 /// subcommand of the one before. Flags and their values are skipped; the
 /// first word that is neither ends the walk.
 fn command_from_argv(app: &Command, argv: &[std::ffi::OsString]) -> Vec<String> {
+    tree_path(
+        app,
+        argv.iter()
+            .skip(1)
+            .map(|word| word.to_string_lossy().into_owned()),
+    )
+}
+
+/// Subcommand names from `words`, in order, for as long as each word names
+/// a subcommand of the one before. Flags and their values are skipped; the
+/// first word that is neither ends the walk.
+fn tree_path(app: &Command, words: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut path = vec![];
     let mut command = app;
-    for word in argv.iter().skip(1).map(|w| w.to_string_lossy()) {
+    for word in words {
         if word.starts_with('-') {
             continue;
         }
-        match command.find_subcommand(word.as_ref()) {
+        match command.find_subcommand(&word) {
             Some(found) => {
                 path.push(found.get_name().to_string());
                 if found.get_name() == TILESETS {
@@ -983,20 +1090,66 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_custom_workflow_never_records_its_name() {
+    fn a_script_step_records_only_how_it_exited_and_how_long_it_took() {
+        let step = script_step(Some(3), Duration::from_millis(2300));
         assert_eq!(
-            workflow_field(WorkflowSource::Custom, Some("acme-client-export")),
-            Workflow {
-                source: "custom",
-                name: None
-            }
+            serde_json::to_value(&step).unwrap(),
+            serde_json::json!({ "kind": "script", "exitCode": 3, "durationMs": 2300 })
+        );
+    }
+
+    #[test]
+    fn a_cli_step_keeps_only_names_the_command_tree_has() {
+        let app = Command::new("mapbox")
+            .subcommand(Command::new("styles").subcommand(Command::new("get")));
+        let step = cli_step(
+            &app,
+            &["styles", "get", "my-secret-style"],
+            Some(0),
+            None,
+            Duration::ZERO,
         );
         assert_eq!(
-            workflow_field(WorkflowSource::Marketplace, Some("style-clone")),
-            Workflow {
-                source: "marketplace",
-                name: Some("style-clone".to_string())
-            }
+            step.command,
+            Some(vec!["styles".to_string(), "get".to_string()])
+        );
+
+        let unknown = cli_step(
+            &app,
+            &["/Users/someone/run.sh"],
+            Some(1),
+            Some("error"),
+            Duration::ZERO,
+        );
+        assert_eq!(unknown.command, None);
+        assert_eq!(unknown.error_code.as_deref(), Some("error"));
+    }
+
+    #[test]
+    fn steps_need_a_workflow_and_stop_at_the_bound() {
+        let mut run = Run::new();
+        push_step(&mut run, script_step(Some(0), Duration::ZERO));
+        assert!(
+            run.workflow.is_none(),
+            "a step without a workflow is dropped"
+        );
+
+        run.workflow = Some(workflow_field(WorkflowSource::Builtin, Some("style-clone")));
+        for _ in 0..MAX_STEPS + 5 {
+            push_step(&mut run, script_step(Some(0), Duration::ZERO));
+        }
+        assert_eq!(run.workflow.unwrap().steps.len(), MAX_STEPS);
+    }
+
+    #[test]
+    fn a_custom_workflow_never_records_its_name() {
+        assert_eq!(
+            workflow_field(WorkflowSource::Custom, Some("acme-client-export")).name,
+            None
+        );
+        assert_eq!(
+            workflow_field(WorkflowSource::Marketplace, Some("style-clone")).name,
+            Some("style-clone".to_string())
         );
         assert_eq!(workflow_field(WorkflowSource::Builtin, None).name, None);
     }

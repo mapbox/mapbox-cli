@@ -344,7 +344,8 @@ fn the_hand_written_commands_describe_themselves() {
             "mapbox auth login",
             "mapbox auth logout",
             "mapbox auth refresh",
-            "mapbox auth whoami"
+            "mapbox auth whoami",
+            "mapbox auth profiles"
         ]
     );
     assert!(commands(&value)

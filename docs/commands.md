@@ -1,6 +1,6 @@
 # Implemented commands
 
-Every command the CLI ships: four auth commands, 33 API operations across 10
+Every command the CLI ships: five auth commands, 33 API operations across 10
 command groups, the tilesets-cli proxy, `completion` and `generate-skills`. Each is
 shown in both of its renderings. Which one you get is decided by `--output`, whose default
 (`auto`) reads stdout: a terminal gets the left column, a pipe or redirect
@@ -45,7 +45,7 @@ nests, and is typed `mapbox styles draft get`.
 
 **[Auth](#auth)** — [auth.login](#mapbox-auth-login) ·
 [auth.logout](#mapbox-auth-logout) · [auth.refresh](#mapbox-auth-refresh) ·
-[auth.whoami](#mapbox-auth-whoami)
+[auth.whoami](#mapbox-auth-whoami) · [auth.profiles](#mapbox-auth-profiles)
 
 **[Agent skills](#agent-skills)** —
 [agent-skills.list](#mapbox-agent-skills-list) ·
@@ -63,6 +63,8 @@ nests, and is typed `mapbox styles draft get`.
 **[Config](#config)** — [config.get](#mapbox-config-get) ·
 [config.set](#mapbox-config-set) · [config.list](#mapbox-config-list) ·
 [config.unset](#mapbox-config-unset)
+
+**[Doctor](#doctor)** — [doctor](#mapbox-doctor)
 
 **[Usage](#usage)** — [usage](#mapbox-usage)
 
@@ -117,7 +119,7 @@ Then [Errors](#errors) — the shape a failure takes in each mode.
 Credentials live in `~/.mapbox`, one file per profile — or in whatever
 directory `MAPBOX_CONFIG_DIR` names, when it is set.
 
-All four commands take:
+All five commands take:
 
 | Parameter | Effect |
 | --- | --- |
@@ -125,7 +127,9 @@ All four commands take:
 | `--output`, `-o` | `auto` \| `text` \| `json`. |
 
 `login`, `logout` and `refresh` take `--dry-run` as well. `whoami` does not,
-for the reason its own section gives.
+for the reason its own section gives. `profiles` takes `--profile` too, in
+the sense that it parses — but doesn't honor it, since that command's whole
+point is every stored profile at once; see its own section for why.
 
 ### `mapbox auth login`
 
@@ -341,6 +345,86 @@ Docs: https://docs.mapbox.com/api/accounts/tokens/
 
 ```json
 {"code":"not_authenticated","docs":["https://docs.mapbox.com/api/accounts/tokens/"],"fix":"Run `mapbox auth login`, export MAPBOX_ACCESS_TOKEN, or pass `--token`.","message":"No Mapbox token available.","next_actions":["mapbox auth login"]}
+```
+
+</td></tr>
+</table>
+
+### `mapbox auth profiles`
+
+Lists every profile with credentials stored on disk — not just the one
+`--profile` would select. `whoami` answers which token the *next* command
+will use; this answers what is stored at all, for someone who has forgotten
+which named profiles they have logged into.
+
+Read-only, like `whoami`: it reads the stored credentials without
+refreshing, so listing profiles cannot spend a single-use refresh token —
+and it reads each one through a path that never creates or hardens the
+config directory, so listing what exists is never the reason a directory
+starts to exist or its permissions change. Unlike `whoami`, it never
+resolves `--token` or the environment — a typed flag or
+`MAPBOX_ACCESS_TOKEN` would outrank every stored profile for the *next*
+command, but neither has anything to do with what is on disk.
+
+**`--profile` from [the table above](#what-every-api-command-takes) is the
+one exception on this page: this command does not honor it.** That table's
+`--profile <name>` selects which single stored profile a command reads —
+the opposite of this command's whole point, which is every one of them at
+once. Typing it anyway parses (it is declared globally) but changes
+nothing, so it is warned about on stderr rather than silently ignored.
+
+An expired token reads as `expired`, not with the "check this machine's
+clock" phrasing `whoami` uses for a token about to be used right now — a
+stored profile may have been sitting untouched for weeks, where that
+clock-skew guess would be wrong far more often than right.
+
+#### Parameters
+
+None. There is no `--dry-run`: the command only reads the store.
+
+#### Examples
+
+```sh
+mapbox auth profiles
+
+# --profile is warned about, not honored — see above
+mapbox auth profiles --profile work
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```
+default  user       expires in 58 minutes
+work     work-user
+```
+
+</td><td>
+
+```json
+[{"account":"user","expires_at":1790172530,"profile":"default"},{"account":"work-user","expires_at":null,"profile":"work"}]
+```
+
+</td></tr>
+</table>
+
+With nothing stored:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```
+No stored profiles. Run `mapbox auth login` to create one.
+```
+
+</td><td>
+
+```json
+[]
 ```
 
 </td></tr>
@@ -3277,6 +3361,89 @@ update-check cleared, now on (default).
 
 </td></tr>
 </table>
+
+---
+
+## Doctor
+
+### `mapbox doctor`
+
+A read-only snapshot of what the next command would see: which token wins
+and its state, which proxy variables are in effect, and where the
+update-check and telemetry switches currently stand. `auth whoami` answers
+which token the next command will use; this answers the rest of what
+commonly goes wrong before a real command finds out the hard way — a proxy
+variable that silently isn't doing what someone thinks, or a switch
+resolving to something other than what was intended.
+
+Nothing here is sent unless `--verify` asks for the one check that needs a
+request — the same precedent `auth whoami --verify` sets.
+
+`Proxy:` names which of `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`/`NO_PROXY` are
+set — upper- or lowercase, exactly those two spellings each, which is what
+`reqwest` itself reads. It answers "is a proxy variable set", not "would
+this request actually use one" — `NO_PROXY` can exempt `api.mapbox.com`
+specifically, a scheme-specific variable only ever applied to that scheme
+in the first place, and on macOS a proxy configured only through system
+Network settings (rather than an environment variable) is invisible here
+even though `reqwest` would still use it.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `--verify` | Also check that `api.mapbox.com` is reachable, through the same client and proxy handling every other request uses. Honors `--timeout`/`MAPBOX_TIMEOUT` like any other request; defaults to 5 seconds when neither is given, since this is a diagnostic someone is waiting on, not a request whose payload bounds a longer budget. |
+
+#### Examples
+
+```sh
+mapbox doctor
+
+mapbox doctor --verify
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+mapbox 0.3.0 (production)
+Token:         available, from login (sk)
+Proxy:         none set
+Update check:  on
+Telemetry:     on
+```
+
+</td><td>
+
+```json
+{
+  "build": { "version": "0.3.0", "channel": "production" },
+  "proxy": { "active": [] },
+  "switches": {
+    "telemetry_allowed": true,
+    "update_check_env_opt_out": false,
+    "update_check_persisted": true
+  },
+  "token": {
+    "available": true,
+    "source": "login",
+    "account": "user",
+    "usage": "sk",
+    "expires_at": 1788276540
+  }
+}
+```
+
+</td></tr>
+</table>
+
+With `--verify`, a `connectivity` object joins the JSON and a `Reachable:`
+line joins the text — `{ "reachable": true, "status": 200 }`, or `{
+"reachable": false }` (plus an `error` field under `--debug`) when the
+request itself failed rather than answered.
 
 ---
 

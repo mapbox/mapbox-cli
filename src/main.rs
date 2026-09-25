@@ -20,6 +20,7 @@ mod completion;
 mod config;
 mod confirm;
 mod deprecation;
+mod doctor;
 mod executor;
 mod generate_skills;
 mod http;
@@ -570,6 +571,17 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                                  cannot: a revoked token still looks perfectly valid",
                             ),
                     ),
+            )
+            .subcommand(
+                // No `--dry-run`: read-only, like `whoami`.
+                Command::new("profiles")
+                    .about("List every stored credential profile")
+                    .long_about(
+                        "List every profile with credentials stored on disk — not just the \
+                         one `--profile` would select. `whoami` answers which token the next \
+                         command will use; this answers what is stored at all, for someone \
+                         who has forgotten which named profiles they have logged into.",
+                    ),
             ),
     );
 
@@ -597,6 +609,13 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
     // Beside `uninstall`: the other command that only ever touches this
     // machine, never the network.
     app = app.subcommand(config::command());
+
+    // Reads what the other hand-written commands above also read — the
+    // token store, the proxy environment, the config and telemetry
+    // switches — so it belongs beside them rather than the API surface
+    // below. `--verify` is its one exception, the same opt-in
+    // `auth whoami --verify` already sets a precedent for.
+    app = app.subcommand(doctor::command());
 
     app = app.subcommand(account_usage::command());
 
@@ -1086,6 +1105,13 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             Some(("unset", unset_matches)) => config::unset(unset_matches, mode)?,
             _ => unreachable!("`config` sets subcommand_required(true)"),
         },
+        // Also ahead of the generic service arm: read-only except for the
+        // opt-in `--verify` request, and needs no credential load of its own
+        // — it reports what one would resolve to, not what a fresh one
+        // would be.
+        Some((doctor::COMMAND, doctor_matches)) => {
+            doctor::run(matches, use_login, debug, profile, mode, doctor_matches)?
+        }
         // Token resolution mirrors the service arm below, minus path
         // placeholders, a request body, and `--dry-run` — this GET always refreshes.
         Some((account_usage::COMMAND, usage_matches)) => {
@@ -1136,6 +1162,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                 profile,
                 mode,
             )?,
+            Some(("profiles", _)) => auth::profiles(matches, mode)?,
             _ => unreachable!("`auth` sets subcommand_required(true)"),
         },
         Some((svc_name, svc_matches)) => {
@@ -1840,7 +1867,7 @@ mod tests {
     #[test]
     fn the_auth_subcommands_that_write_offer_dry_run() {
         const WRITES: [&str; 3] = ["login", "logout", "refresh"];
-        const READS: [&str; 1] = ["whoami"];
+        const READS: [&str; 2] = ["whoami", "profiles"];
 
         let specs = bundled_specs();
         let app = build_app(&specs);

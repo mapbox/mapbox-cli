@@ -29,9 +29,9 @@
 //!   * It doesn't check `--dry-run` section by section, which would raise
 //!     that number. Rejected on purpose: the page states a page-wide fact
 //!     once, and 24 near-identical paragraphs is exactly the duplication
-//!     that design avoids. Where a split needs spelling out — the four
-//!     `auth` commands, three of which take the flag and one of which
-//!     doesn't — the page says so in prose instead.
+//!     that design avoids. Where a split needs spelling out — the five
+//!     `auth` commands, three of which take the flag and two of which
+//!     don't — the page says so in prose instead.
 //!   * It doesn't check the captured **Outputs** blocks. Those are the
 //!     half no test can reach: bytes a real account returned once, a
 //!     dated snapshot re-taken by hand.

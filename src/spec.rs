@@ -110,6 +110,7 @@ const ARG_NAME_OVERRIDES: &[(&str, &str, &str)] = &[
     ("directions", "profile", "routing-profile"),
     ("isochrone", "profile", "routing-profile"),
     ("map-matching", "profile", "routing-profile"),
+    ("matrix", "profile", "routing-profile"),
 ];
 
 /// The `arg_name` a parameter should present as, when its spec name collides
@@ -148,7 +149,7 @@ fn arg_name_override(service_name: &str, param_name: &str) -> Option<&'static st
 /// `generate-skills`, this file's own `command()` above — reads a
 /// [`FLATTENED_SERVICES`] service correctly for free, because they all go
 /// through `command()` rather than reconstructing the string themselves.
-pub const FLATTENED_SERVICES: &[&str] = &["directions", "isochrone", "map-matching"];
+pub const FLATTENED_SERVICES: &[&str] = &["directions", "isochrone", "map-matching", "matrix"];
 
 /// (service, path parameter name) pairs whose value is trusted to reach the
 /// URL unescaped, because every legitimate value already contains a
@@ -172,6 +173,7 @@ pub const UNESCAPED_PATH_PARAMS: &[(&str, &str)] = &[
     ("directions", "profile"),
     ("isochrone", "profile"),
     ("map-matching", "profile"),
+    ("matrix", "profile"),
 ];
 
 /// The media types an operation's request body may be sent as.
@@ -723,6 +725,10 @@ pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
     SpecEntry {
         name: "map-matching",
         yaml: include_str!("../custom-openapi/map-matching/openapi/map-matching.yaml"),
+    },
+    SpecEntry {
+        name: "matrix",
+        yaml: include_str!("../custom-openapi/matrix/openapi/matrix.yaml"),
     },
 ];
 
@@ -2228,6 +2234,51 @@ paths:
         assert_eq!(matched.command(), "map-matching");
     }
 
+    /// Same regression, for the fourth spec that ran into it.
+    #[test]
+    fn the_matrix_profile_parameter_does_not_collide_with_the_global_flag() {
+        let spec = parse_spec(
+            "matrix",
+            include_str!("../custom-openapi/matrix/openapi/matrix.yaml"),
+        )
+        .expect("matrix.yaml parses");
+
+        let compute = spec
+            .operations
+            .iter()
+            .find(|op| op.command_path == ["compute"])
+            .expect("the compute operation exists");
+
+        let profile = compute
+            .path_params
+            .iter()
+            .find(|p| p.name == "profile")
+            .expect("a path parameter named profile");
+
+        assert_ne!(
+            profile.arg_name, "profile",
+            "must not collide with the global --profile id"
+        );
+        // Deliberately not an `enum`: see `UNESCAPED_PATH_PARAMS`'s own doc
+        // comment for why a closed set was wrong here (OEM accounts have
+        // undocumented profiles of their own).
+        assert!(
+            profile.enum_values.is_empty(),
+            "profile must accept any value, not just the four documented ones"
+        );
+        assert!(
+            UNESCAPED_PATH_PARAMS.contains(&("matrix", "profile")),
+            "profile's literal `/` must still reach the URL unescaped, \
+             now that it can't rely on being an enum to prove that"
+        );
+
+        // `matrix` has exactly one operation and is in `FLATTENED_SERVICES`
+        // — `command()` must say so, dropping `command_path` from the
+        // string entirely, even though `command_path` itself stays
+        // `["compute"]` for internal lookups.
+        assert_eq!(compute.command(), "matrix");
+    }
+
     #[test]
     fn arg_name_override_only_fires_for_the_row_it_names() {
         assert_eq!(
@@ -2240,6 +2291,10 @@ paths:
         );
         assert_eq!(
             arg_name_override("map-matching", "profile"),
+            Some("routing-profile")
+        );
+        assert_eq!(
+            arg_name_override("matrix", "profile"),
             Some("routing-profile")
         );
         assert_eq!(arg_name_override("directions", "coordinates"), None);

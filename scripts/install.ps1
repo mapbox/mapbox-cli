@@ -295,10 +295,9 @@ Or point this copy at one:
     if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE }
     if (-not $arch) { $arch = 'an unnamed architecture' }
 
-    # In preference order. Arm64 Windows has no build of its own yet, and runs
-    # the x64 one under emulation; listing both means the day a native
-    # aarch64-pc-windows-msvc appears in the manifest, this picks it up with no
-    # change here.
+    # In preference order. Arm64 Windows has a native aarch64-pc-windows-msvc
+    # build; the x64 one is the fallback for a manifest that hasn't published
+    # it yet (an older pinned version, say), which runs under emulation.
     $candidates = @()
     switch ($arch) {
         'AMD64' { $candidates = @('x86_64-pc-windows-msvc') }

@@ -19,6 +19,16 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox places get`/`batch`, full place detail — hours, phone, website,
+  photos, address, coordinates, activity data — by the `mapbox_id` a
+  Search Box API result already returned. Hand-authored into
+  `custom-openapi/` for the same reason this session's other additions
+  were: no upstream spec exists yet. `batch` takes `--data
+  '{"ids": [...]}'`, up to 100 ids in one call, the same shape `styles
+  create` already uses for a body with no sensible per-field flag. Both
+  operations verified against production with real ids from
+  `search forward`.
+
 - `mapbox ev-charge-finder search`/`get`/`list-operators`, EV charging
   stations near a point — searchable by connector type, operator, charging
   power, availability, amenities and payment method — plus one station's

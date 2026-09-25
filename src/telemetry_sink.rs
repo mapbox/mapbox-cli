@@ -10,7 +10,8 @@
 //! [`HttpSink`] is the interface for sending them, not implemented yet.
 //!
 //! It also owns the directory, `~/.mapbox/.telemetry` (or under
-//! `$MAPBOX_CONFIG_DIR`), including the two small state files the event
+//! `$MAPBOX_CONFIG_DIR`), written only once the config directory exists,
+//! including the two small state files the event
 //! reads — the installation id and the last version seen — so that every
 //! write and delete under it is in this file.
 
@@ -121,12 +122,17 @@ pub(crate) fn replace_state(name: &str, contents: &str) {
     }
 }
 
-/// The directory, created `0700` inside a config directory `auth` has
-/// created and hardened, as it would for credentials. `None` when it
-/// cannot be.
+/// The directory, created `0700` inside the config directory — only when
+/// that already exists. Recording must not be what creates `~/.mapbox` or
+/// changes its permissions: read-only commands promise to leave it alone
+/// (`tests/auth_profiles.rs`, `tests/non_interactive.rs`). `None` otherwise,
+/// and nothing is written.
 fn dir() -> Option<PathBuf> {
-    auth::config_dir().ok()?;
-    let dir = auth::config_dir_path()?.join(DIR);
+    let config = auth::config_dir_path()?;
+    if !config.is_dir() {
+        return None;
+    }
+    let dir = config.join(DIR);
     std::fs::create_dir_all(&dir).ok()?;
     #[cfg(unix)]
     {

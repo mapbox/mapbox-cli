@@ -19,7 +19,9 @@ const ADDRESS: &str = "1600 Pennsylvania Ave";
 fn scratch(name: &str) -> PathBuf {
     let home = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("events-{name}"));
     let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("create the scratch home");
+    // With `.mapbox` already there, as on any machine that has logged in:
+    // the file sink never creates it.
+    std::fs::create_dir_all(config_dir(&home)).expect("create the scratch config dir");
     home
 }
 
@@ -226,8 +228,21 @@ fn completion_records_nothing() {
     let home = scratch("completion");
     assert!(run(&home, &["completion", "zsh"]).status.success());
     assert!(
+        !config_dir(&home).join(".telemetry").exists(),
+        "`completion` wrote telemetry"
+    );
+}
+
+/// Recording never creates the config directory: a machine that has never
+/// logged in or set a config keeps no `~/.mapbox` at all.
+#[test]
+fn without_a_config_directory_nothing_is_created() {
+    let home = scratch("no-config-dir");
+    std::fs::remove_dir(config_dir(&home)).expect("remove the scratch config dir");
+    assert!(run(&home, &["styles", "--help"]).status.success());
+    assert!(
         !config_dir(&home).exists(),
-        "`completion` created {}",
+        "recording created {}",
         config_dir(&home).display()
     );
 }

@@ -19,24 +19,33 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
-- `mapbox directions route`, routes between 2-25 waypoints for driving (with
-  or without live traffic), walking, or cycling. Hand-authored into
-  `custom-openapi/` rather than waiting on an upstream spec — the whole
+- `mapbox directions`, routes between 2-25 waypoints for driving (with
+  or without live traffic), walking, or cycling. No subcommand: this API
+  has one operation, so — like `mapbox usage` — there's nothing a second
+  word would disambiguate; see `spec::FLATTENED_SERVICES`. Hand-authored
+  into `custom-openapi/` rather than waiting on an upstream spec — the whole
   Navigation API category had no CLI coverage before this; excludes the
-  ~30 electric-vehicle-routing parameters
-  (`engine=electric` and everything under it), which describe a vehicle's
-  charging curve down to the watt and are a poor fit for a hand-typed CLI
-  flag — the EV Charge Finder API is a better fit for that case and its own
-  follow-up. Two path-parameter bugs surfaced while wiring this up and are
-  fixed for every command, not just this one: a spec parameter literally
-  named `profile` (the routing profile, `mapbox/driving` etc.) silently
+  ~30 electric-vehicle-routing parameters (`engine=electric` and everything
+  under it), which describe one vehicle's charge/discharge curve down to
+  the watt and are a poor fit for a hand-typed CLI flag — left for a
+  follow-up.
+
+  The routing profile (`mapbox/driving` etc.) is a free-form value, not a
+  fixed set of four: an early version rejected anything else client-side,
+  which would have broken this command for exactly the accounts that most
+  need it, since some (OEM agreements, mainly) have additional profiles of
+  their own never published to docs.mapbox.com. Reported in review before
+  this shipped anywhere. Two path-parameter bugs surfaced while wiring the
+  original four up and are fixed for every command, not just this one: a
+  spec parameter literally named `profile` (the routing profile) silently
   collided with the global `--profile` credentials flag, since clap has one
   namespace of ids per command and a positional of the same name replaced it
-  outright; and an enum-constrained path parameter whose only valid values
-  contain a literal `/` (again, `mapbox/driving`) was being percent-encoded
-  to `%2F` by the same escaping that stops a free-text value from smuggling
-  in extra path segments — safe to skip once clap has already limited the
-  value to one of the spec's own literal strings.
+  outright; and a path parameter whose every legitimate value contains a
+  literal `/` (`mapbox/driving`) was being percent-encoded to `%2F` by the
+  same escaping that stops a free-text value from smuggling in extra path
+  segments — safe to skip for a parameter named in a small table
+  (`UNESCAPED_PATH_PARAMS`) as one whose values are trusted to carry that
+  character on purpose.
 
 - `MAPBOX_CLI_EXTRA_QUERY` appends raw query parameters to every request, in
   the same `k1=v1&k2=v2` shape as a URL's own query string — for an API

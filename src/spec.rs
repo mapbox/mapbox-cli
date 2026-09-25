@@ -117,6 +117,55 @@ fn arg_name_override(service_name: &str, param_name: &str) -> Option<&'static st
         .map(|(_, _, arg_name)| *arg_name)
 }
 
+/// A service with exactly one operation, typed with no subcommand at all —
+/// `mapbox directions <args>`, not `mapbox directions route <args>`.
+///
+/// Every other multi-operation service needs `<service> <operation>` to say
+/// which of several things to do; a one-operation service has nothing to
+/// disambiguate, and naming the single operation anyway is a word the
+/// caller has to know and type for no information it carries. `mapbox
+/// usage` already has this shape, hand-written outside the generic
+/// pipeline because it predates this table; these reuse the mechanism the
+/// generic pipeline builds every other command through instead of adding a
+/// second hand-written command per service.
+///
+/// Reached for deliberately, not inferred from "this service happens to
+/// have one operation": a future service could have exactly one operation
+/// and still read better with it named (a first operation before a second
+/// is added, say). Listed here is a decision, the same way
+/// `ARG_NAME_OVERRIDES` and `BODY_CONTENT_TYPE_OVERRIDES` are tables of
+/// decisions rather than something inferred from shape alone.
+///
+/// `build_service_command` and `run`'s dispatch in `main.rs` are the two
+/// places this changes anything: attaching the operation directly onto the
+/// service-level `Command` instead of as a subcommand, and skipping the
+/// subcommand walk that would otherwise expect one. Every other reader of a
+/// command's identity — `--schema`, `docs/commands.md`,
+/// `generate-skills`, this file's own `command()` above — reads a
+/// [`FLATTENED_SERVICES`] service correctly for free, because they all go
+/// through `command()` rather than reconstructing the string themselves.
+pub const FLATTENED_SERVICES: &[&str] = &["directions"];
+
+/// (service, path parameter name) pairs whose value is trusted to reach the
+/// URL unescaped, because every legitimate value already contains a
+/// character [`crate::executor::path_segment`]'s escaping would otherwise
+/// mangle.
+///
+/// Used to be inferred from the parameter having an `enum` — clap's
+/// `PossibleValuesParser` had already limited it to one of the spec's own
+/// literal strings, so there was nothing left to smuggle in. That stopped
+/// being true once `directions.yaml`'s own `profile` dropped its `enum`:
+/// the four documented routing profiles (`mapbox/driving` etc.) aren't
+/// exhaustive — some accounts have additional ones of their own that never
+/// reached docs.mapbox.com, and an `enum` rejected those client-side.
+/// Reported in review. So this is now a named decision instead of a
+/// side effect of another one — every entry here is a path parameter whose
+/// documented *and* undocumented values alike contain a literal `/`
+/// (`mapbox/driving`, `mapbox/cycling`, an OEM's own profile name, …), which
+/// the routing profile's own path segment depends on reaching the API
+/// unescaped regardless of which spelling was typed.
+pub const UNESCAPED_PATH_PARAMS: &[(&str, &str)] = &[("directions", "profile")];
+
 /// The media types an operation's request body may be sent as.
 ///
 /// This used to be a plain `has_body: bool`, which forced the executor to
@@ -414,9 +463,15 @@ impl Operation {
             .expect("a command path is never empty")
     }
 
-    /// The command as it is typed after `mapbox`: `styles draft get`.
+    /// The command as it is typed after `mapbox`: `styles draft get` — or,
+    /// for a [`FLATTENED_SERVICES`] service, just the service name, since
+    /// that service has exactly one operation and no subcommand at all.
     pub fn command(&self) -> String {
-        format!("{} {}", self.service, self.command_path.join(" "))
+        if FLATTENED_SERVICES.contains(&self.service.as_str()) {
+            self.service.clone()
+        } else {
+            format!("{} {}", self.service, self.command_path.join(" "))
+        }
     }
 
     /// Whether this is a service's own health check, rather than something
@@ -2032,15 +2087,36 @@ paths:
             profile.arg_name, "profile",
             "must not collide with the global --profile id"
         );
-        assert_eq!(
-            profile.enum_values,
-            [
-                "mapbox/driving-traffic",
-                "mapbox/driving",
-                "mapbox/walking",
-                "mapbox/cycling"
-            ]
+        // Deliberately not an `enum`: see `UNESCAPED_PATH_PARAMS`'s own doc
+        // comment for why a closed set was wrong here (OEM accounts have
+        // undocumented profiles of their own).
+        assert!(
+            profile.enum_values.is_empty(),
+            "profile must accept any value, not just the four documented ones"
         );
+        assert!(
+            UNESCAPED_PATH_PARAMS.contains(&("directions", "profile")),
+            "profile's literal `/` must still reach the URL unescaped, \
+             now that it can't rely on being an enum to prove that"
+        );
+
+        // `directions` has exactly one operation and is in
+        // `FLATTENED_SERVICES` — `command()` must say so, dropping
+        // `command_path` from the string entirely, even though
+        // `command_path` itself stays `["route"]` for internal lookups
+        // (`op.command_name()`, the `command_path == …` matches above and
+        // in `main.rs`'s dispatch).
+        assert_eq!(route.command(), "directions");
+    }
+
+    /// A non-flattened operation's `command()` is unaffected — this is the
+    /// regression test for `FLATTENED_SERVICES` breaking every other
+    /// service's rendering along with the one it's meant for.
+    #[test]
+    fn command_only_drops_the_path_for_a_flattened_service() {
+        let svc = service(PAIRED);
+        let op = operation(&svc, "list-styles");
+        assert_eq!(op.command(), "svc list-styles");
     }
 
     #[test]

@@ -25,7 +25,10 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 
 use crate::generate_skills;
 use crate::output::{self, Mode};
-use crate::spec::{Numeric, Operation, Parameter, RequestBody, ServiceSpec, ACCOUNT_PLACEHOLDERS};
+use crate::spec::{
+    Numeric, Operation, Parameter, RequestBody, ServiceSpec, ACCOUNT_PLACEHOLDERS,
+    FLATTENED_SERVICES,
+};
 use crate::tilesets_cli;
 
 /// The `--schema` flag's arg id, and its long spelling.
@@ -396,12 +399,18 @@ fn commands(app: &Command, specs: &[ServiceSpec], path: &[String]) -> Vec<Comman
 /// where the tree has no such command.
 ///
 /// A walk rather than one `find_subcommand`, because a path can be more than
-/// one segment: `styles draft get` is three levels down from the root.
+/// one segment: `styles draft get` is three levels down from the root. A
+/// `spec::FLATTENED_SERVICES` service has no subcommand to walk to at all —
+/// its one operation *is* the service-level command — so `path` is ignored
+/// for one of those; walking it would look for a `route` subcommand under
+/// `directions` that `build_service_command` never attached.
 fn declared_command<'a>(app: &'a Command, service: &str, path: &[String]) -> Option<&'a Command> {
+    let root = app.find_subcommand(service)?;
+    if FLATTENED_SERVICES.contains(&service) {
+        return Some(root);
+    }
     path.iter()
-        .try_fold(app.find_subcommand(service)?, |cmd, segment| {
-            cmd.find_subcommand(segment)
-        })
+        .try_fold(root, |cmd, segment| cmd.find_subcommand(segment))
 }
 
 fn api_command(app: &Command, svc: &ServiceSpec, op: &Operation) -> CommandEntry {

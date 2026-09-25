@@ -8,12 +8,13 @@ openapi: "3.0.0"
 # docs.mapbox.com/api/navigation/directions: routes between 2-25 waypoints
 # for driving (with or without live traffic), walking, and cycling. Excludes
 # the ~30 electric-vehicle-routing parameters (`engine=electric` and
-# everything under it) — those describe a vehicle's charging curve down to
-# the watt, which is data an integration passes in from a vehicle profile,
-# not something to hand-type as CLI flags. The EV Charge Finder API is
-# Mapbox's dedicated per-vehicle routing product and the better fit for that
-# case; this file can grow the EV parameters later if that changes. Also
-# excludes POST — every other
+# everything under it) — those describe one vehicle's charge/discharge
+# curve down to the watt so this same Directions API can plan charging
+# stops along the route, which is data an integration passes in from its
+# own vehicle profile, not something to hand-type as CLI flags on every
+# call. Left for a follow-up rather than the EV Charge Finder API, a
+# different, separate product (finding charging stations near a point) that
+# doesn't cover this. Also excludes POST — every other
 # operation this CLI wires up is one HTTP method per operation, and the spec
 # format here has no way to say "GET or POST, caller's choice" for the same
 # operationId. GET's 2-25 waypoint limit covers the CLI's own use (typed or
@@ -45,18 +46,23 @@ paths:
         - name: "profile"
           in: path
           required: true
+          # Not an `enum`: the four documented values are what's public, but
+          # not what's exhaustive — some customers (OEM agreements, mainly)
+          # have additional profiles never published to docs.mapbox.com.
+          # An `enum` here becomes a clap `PossibleValuesParser` that
+          # rejects anything else client-side, which would break this CLI
+          # for exactly the accounts that most need a routing profile
+          # named beyond `driving`/`walking`/`cycling`. Reported in review.
           description: >-
-            The routing profile. `mapbox/driving-traffic` accounts for live
-            traffic conditions; `mapbox/driving` does not.
+            The routing profile — `mapbox/driving-traffic` (accounts for
+            live traffic), `mapbox/driving`, `mapbox/walking`, or
+            `mapbox/cycling` are documented, but not necessarily
+            exhaustive: some accounts have additional profiles of their
+            own. Sent exactly as typed; the API is the authority on
+            whether a value is valid, not this description.
           schema:
             type: string
-            enum:
-              [
-                "mapbox/driving-traffic",
-                "mapbox/driving",
-                "mapbox/walking",
-                "mapbox/cycling",
-              ]
+            minLength: 1
           example: "mapbox/driving"
         - name: "coordinates"
           in: path

@@ -347,6 +347,31 @@ fn attach_operations<'a>(
 }
 
 fn build_service_command(svc: &ServiceSpec) -> Command {
+    // Operations needing a scope nobody can hold are left out of the command
+    // surface entirely, so they answer exactly as a mistyped name does. An
+    // operation that can never succeed is not a feature to advertise, and a
+    // dedicated "this is disabled" reply told a caller which scopes exist
+    // without doing anything for them. See issue #9.
+    let exposed: Vec<&spec::Operation> =
+        svc.operations.iter().filter(|op| op.is_exposed()).collect();
+
+    // See `spec::FLATTENED_SERVICES`'s own doc comment for why this exists
+    // and what it changes: the operation's own command — same args, same
+    // `--dry-run`, same everything `build_operation_command` gives it — is
+    // the service-level command itself, renamed from its own generated name
+    // (`route`, say) to the service's (`directions`), rather than attached
+    // under it as a subcommand a caller has to name too.
+    if spec::FLATTENED_SERVICES.contains(&svc.name.as_str()) {
+        assert_eq!(
+            exposed.len(),
+            1,
+            "`{}` is in FLATTENED_SERVICES but has {} exposed operations, not exactly one",
+            svc.name,
+            exposed.len()
+        );
+        return build_operation_command(exposed[0]).name(svc.name.clone());
+    }
+
     // `subcommand_required` alone, not paired with `arg_required_else_help`.
     // The pairing used to give a bare `mapbox styles` the full help text —
     // but only when nothing had populated the global `--token` arg. That arg
@@ -366,13 +391,6 @@ fn build_service_command(svc: &ServiceSpec) -> Command {
         cmd = cmd.long_about(desc.clone());
     }
 
-    // Operations needing a scope nobody can hold are left out of the command
-    // surface entirely, so they answer exactly as a mistyped name does. An
-    // operation that can never succeed is not a feature to advertise, and a
-    // dedicated "this is disabled" reply told a caller which scopes exist
-    // without doing anything for them. See issue #9.
-    let exposed: Vec<&spec::Operation> =
-        svc.operations.iter().filter(|op| op.is_exposed()).collect();
     attach_operations(cmd, &svc.name, &exposed, 0)
 }
 
@@ -1116,43 +1134,59 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                 .find(|s| s.name == svc_name)
                 .expect("unknown service");
 
-            // Down to the leaf, since a command path may be more than one
-            // segment long — `styles draft get` is three matches deep. Every
-            // intermediate group sets `subcommand_required(true)`, so the
-            // walk can only stop on an operation.
-            let mut command_path: Vec<String> = vec![];
-            let mut op_matches = svc_matches;
-            while let Some((name, sub)) = op_matches.subcommand() {
-                command_path.push(name.to_string());
-                op_matches = sub;
-            }
+            // A `FLATTENED_SERVICES` service has no subcommand to walk down
+            // to: `svc_matches` already carries the one operation's own
+            // args, parsed directly onto the service-level command
+            // `build_service_command` built. See that function and
+            // `spec::FLATTENED_SERVICES`'s own doc comment.
+            let (op, op_matches) = if spec::FLATTENED_SERVICES.contains(&svc_name) {
+                let op = svc
+                    .operations
+                    .iter()
+                    .find(|o| o.is_exposed())
+                    .expect("a flattened service has exactly one exposed operation");
+                (op, svc_matches)
+            } else {
+                // Down to the leaf, since a command path may be more than one
+                // segment long — `styles draft get` is three matches deep.
+                // Every intermediate group sets `subcommand_required(true)`,
+                // so the walk can only stop on an operation.
+                let mut command_path: Vec<String> = vec![];
+                let mut op_matches = svc_matches;
+                while let Some((name, sub)) = op_matches.subcommand() {
+                    command_path.push(name.to_string());
+                    op_matches = sub;
+                }
 
-            if command_path.is_empty() {
-                // `subcommand_required` should have caught this; saying so
-                // beats the silent exit 0 that a gap here used to produce.
-                return Err(CliError::new(
-                    "missing_subcommand",
-                    format!(
-                        "`mapbox {svc_name}` needs an operation. Run `mapbox {svc_name} --help`."
-                    ),
-                )
-                // Same suggestion the clap path attaches, for the same
-                // code — see `help_for_missing_subcommand`.
-                .with_remedy(
-                    Remedy::default().with_action(Some(format!("mapbox {svc_name} --help"))),
-                )
-                .into());
-            }
+                if command_path.is_empty() {
+                    // `subcommand_required` should have caught this; saying so
+                    // beats the silent exit 0 that a gap here used to produce.
+                    return Err(CliError::new(
+                        "missing_subcommand",
+                        format!(
+                            "`mapbox {svc_name}` needs an operation. Run `mapbox {svc_name} --help`."
+                        ),
+                    )
+                    // Same suggestion the clap path attaches, for the same
+                    // code — see `help_for_missing_subcommand`.
+                    .with_remedy(
+                        Remedy::default().with_action(Some(format!("mapbox {svc_name} --help"))),
+                    )
+                    .into());
+                }
 
-            // Read before the credentials are touched, which is the whole
-            // reason the operation is resolved first: refreshing spends a
-            // single-use refresh token and rewrites the credentials file, and
-            // a command that promised to change nothing must not do that.
-            let op = svc
-                .operations
-                .iter()
-                .find(|o| o.command_path == command_path)
-                .expect("unknown operation");
+                // Read before the credentials are touched, which is the whole
+                // reason the operation is resolved first: refreshing spends a
+                // single-use refresh token and rewrites the credentials file,
+                // and a command that promised to change nothing must not do
+                // that.
+                let op = svc
+                    .operations
+                    .iter()
+                    .find(|o| o.command_path == command_path)
+                    .expect("unknown operation");
+                (op, op_matches)
+            };
 
             // Ahead of the credentials for the same reason `dry_run` is read
             // ahead of them: `load_fresh_credentials` spends a single-use
@@ -1882,6 +1916,39 @@ mod tests {
         spec::effective_services().expect("the bundled specs parse")
     }
 
+    /// A `FLATTENED_SERVICES` service takes its one operation's own args
+    /// directly, with no subcommand — and the old two-word form is gone,
+    /// not merely hidden: `route` there is read as this positional
+    /// spec's own value, which doesn't match `mapbox/driving-traffic`'s
+    /// enum, so it fails exactly the way an unrecognized profile would.
+    #[test]
+    fn a_flattened_service_takes_no_subcommand() {
+        let specs = bundled_specs();
+        let app = build_app(&specs);
+
+        let bare = app.clone().try_get_matches_from([
+            "mapbox",
+            "directions",
+            "mapbox/driving",
+            "-122.42,37.78;-122.45,37.91",
+            "--schema",
+        ]);
+        assert!(bare.is_ok(), "the flattened form must parse: {bare:?}");
+
+        let with_the_old_subcommand = app.try_get_matches_from([
+            "mapbox",
+            "directions",
+            "route",
+            "mapbox/driving",
+            "-122.42,37.78;-122.45,37.91",
+        ]);
+        assert!(
+            with_the_old_subcommand.is_err(),
+            "`route` is not a subcommand any more — it must fail to parse, \
+             not silently resolve to something else"
+        );
+    }
+
     /// A spec that says `enum: [created, modified]` used to say so only in
     /// the help text, so a typo travelled to the API and came back as
     /// whatever that endpoint says about bad input — often a 404 blaming
@@ -2144,7 +2211,12 @@ mod tests {
         op: &spec::Operation,
     ) -> ArgMatches {
         let mut argv = vec!["mapbox".to_string(), svc.name.clone()];
-        argv.extend(op.command_path.iter().cloned());
+        // A `FLATTENED_SERVICES` service has no subcommand to type — its one
+        // operation's args are parsed directly onto the service-level
+        // command, the same reason `run`'s own dispatch skips this walk.
+        if !spec::FLATTENED_SERVICES.contains(&svc.name.as_str()) {
+            argv.extend(op.command_path.iter().cloned());
+        }
         argv.extend(op.path_params.iter().map(a_value_for));
         // `--schema` so the relaxed tree answers. What matters here is the
         // positionals, not whether the rest of the line is complete.

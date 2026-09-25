@@ -9,7 +9,9 @@ use crate::http;
 use crate::link;
 use crate::output::{self, CliError, Mode};
 use crate::remedy::{self, Remedy};
-use crate::spec::{Operation, Parameter, RequestBody, ACCOUNT_PLACEHOLDERS, MULTIPART};
+use crate::spec::{
+    Operation, Parameter, RequestBody, ACCOUNT_PLACEHOLDERS, MULTIPART, UNESCAPED_PATH_PARAMS,
+};
 
 /// The query parameter the access token travels in, and what stands in for
 /// it anywhere the URL is shown. Named once because getting this wrong
@@ -151,7 +153,7 @@ fn dispatch(
 
     for param in &op.path_params {
         if let Some(val) = matches.get_one::<String>(&param.arg_name) {
-            let safe = path_segment_for(param, val)?;
+            let safe = path_segment_for(&op.service, param, val)?;
             path = substitute_path_param(&path, &param.name, &safe, param.required);
         }
     }
@@ -1219,24 +1221,27 @@ fn path_segment<'a>(name: &str, value: &'a str) -> Result<Cow<'a, str>> {
     Ok(Cow::Owned(encoded))
 }
 
-/// [`path_segment`], skipped for a parameter clap has already constrained to
-/// one of a fixed set of literal strings.
+/// [`path_segment`], skipped for a parameter named in
+/// [`UNESCAPED_PATH_PARAMS`].
 ///
-/// `path_segment`'s escaping exists for a value nobody has constrained — see
-/// its own doc comment. An enum-valued parameter is different: clap's
-/// `PossibleValuesParser` has already limited it to one of the spec's own
-/// literal strings before this runs, so there is nothing left for a caller
-/// to smuggle in. That distinction matters here specifically:
-/// `directions.yaml`'s `profile` enum is `mapbox/driving`, `mapbox/walking`,
-/// etc. — one path parameter whose only valid values contain a literal `/`,
-/// which the API's own routing depends on reaching it unescaped. Encoding it
+/// `path_segment`'s escaping exists for a value nobody has vouched for — see
+/// its own doc comment. This is what vouching looks like: a named decision
+/// that every legitimate value of this specific parameter already contains
+/// a character the escaping would otherwise mangle. `directions.yaml`'s
+/// `profile` is the reason this exists — `mapbox/driving`, `mapbox/cycling`,
+/// or an OEM account's own undocumented profile name, all sharing a literal
+/// `/` the API's own routing depends on reaching it unescaped. Encoding it
 /// to `%2F` is exactly the request-redirection fix `path_segment` exists
 /// for, misapplied to a value that was never free text.
-fn path_segment_for<'a>(param: &Parameter, value: &'a str) -> Result<Cow<'a, str>> {
-    if param.enum_values.is_empty() {
-        path_segment(&param.name, value)
-    } else {
+///
+/// Used to be inferred from the parameter having an `enum` instead of a
+/// named table — see `UNESCAPED_PATH_PARAMS`'s own doc comment for why an
+/// `enum` stopped being the right signal.
+fn path_segment_for<'a>(service: &str, param: &Parameter, value: &'a str) -> Result<Cow<'a, str>> {
+    if UNESCAPED_PATH_PARAMS.contains(&(service, param.name.as_str())) {
         Ok(Cow::Borrowed(value))
+    } else {
+        path_segment(&param.name, value)
     }
 }
 
@@ -2550,25 +2555,35 @@ mod tests {
     }
 
     /// `directions.yaml`'s `profile` is exactly this shape: a path parameter
-    /// whose only valid values, `mapbox/driving` and friends, carry a
-    /// literal `/` the API's routing depends on. Plain `path_segment` would
-    /// encode it to `%2F` and 404 — this is why `path_segment_for` exists.
+    /// whose every legitimate value, `mapbox/driving` and friends (plus
+    /// whatever an OEM account's own undocumented profiles are named),
+    /// carries a literal `/` the API's routing depends on. Plain
+    /// `path_segment` would encode it to `%2F` and 404 — this is why
+    /// `path_segment_for` exists.
     #[test]
-    fn an_enum_valued_path_parameter_keeps_its_slash() {
-        let mut profile = param("profile");
-        profile.enum_values = vec!["mapbox/driving".to_string(), "mapbox/walking".to_string()];
-
-        let safe = path_segment_for(&profile, "mapbox/driving").expect("not refused");
+    fn a_named_unescaped_path_parameter_keeps_its_slash() {
+        let profile = param("profile");
+        let safe = path_segment_for("directions", &profile, "mapbox/driving").expect("not refused");
         assert_eq!(safe, "mapbox/driving", "the slash must survive, unencoded");
     }
 
-    /// The bypass is keyed on the parameter carrying an enum, not on its
-    /// name or its value's shape — a non-enum parameter goes through the
-    /// same escaping as ever, `/` included.
+    /// The bypass is keyed on `(service, name)` being in
+    /// `UNESCAPED_PATH_PARAMS`, not on the parameter's name alone or its
+    /// value's shape — the same parameter name on a different, unlisted
+    /// service goes through the same escaping as ever, `/` included.
     #[test]
-    fn a_non_enum_path_parameter_is_still_escaped() {
+    fn an_unlisted_service_still_escapes_the_same_parameter_name() {
+        let profile = param("profile");
+        let safe =
+            path_segment_for("some-other-service", &profile, "a/b").expect("encoded, not refused");
+        assert_eq!(safe, "a%2Fb");
+    }
+
+    #[test]
+    fn a_path_parameter_not_in_the_table_is_still_escaped() {
         let style_id = param("style_id");
-        let safe = path_segment_for(&style_id, "../../tokens/v2/victim").expect("encoded");
+        let safe =
+            path_segment_for("styles", &style_id, "../../tokens/v2/victim").expect("encoded");
         assert_eq!(safe, "..%2F..%2Ftokens%2Fv2%2Fvictim");
     }
 }

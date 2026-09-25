@@ -71,8 +71,7 @@ nests, and is typed `mapbox styles draft get`.
 [accounts.retrieve-token](#mapbox-accounts-retrieve-token) ·
 [accounts.list-scopes](#mapbox-accounts-list-scopes)
 
-**[Directions](#directions)** —
-[directions.route](#mapbox-directions-route)
+**[Directions](#directions)** — [directions](#mapbox-directions)
 
 **[Fonts](#fonts)** — [fonts.list](#mapbox-fonts-list) ·
 [fonts.upload](#mapbox-fonts-upload) · [fonts.delete](#mapbox-fonts-delete)
@@ -818,18 +817,22 @@ here: those describe a vehicle's charging curve down to the watt, which is
 data an integration passes in from a vehicle profile, not something to
 hand-type as CLI flags.
 
-### `mapbox directions route`
+### `mapbox directions`
 
 A route between 2-25 waypoints, in the order given — a route through fixed
-stops, not a traveling-salesman solve (see the future Optimization API
-command for that).
+stops, not a traveling-salesman solve. No subcommand: this API has one
+operation, so there's nothing a second word would disambiguate — the same
+reason `mapbox usage` has none either.
 
 #### Parameters
 
 `<routing-profile>` and `<coordinates>` (both positional) are required.
-`<routing-profile>` is one of `mapbox/driving-traffic`, `mapbox/driving`,
-`mapbox/walking`, `mapbox/cycling`. `<coordinates>` is 2-25
-`{longitude},{latitude}` pairs, semicolon-separated.
+`<routing-profile>` is sent exactly as typed, not checked against a fixed
+list: `mapbox/driving-traffic`, `mapbox/driving`, `mapbox/walking` and
+`mapbox/cycling` are documented, but some accounts (OEM agreements, mainly)
+have additional profiles of their own that were never published — the API
+is the authority on whether a value is valid, not this page. `<coordinates>`
+is 2-25 `{longitude},{latitude}` pairs, semicolon-separated.
 
 | Parameter | Effect |
 | --- | --- |
@@ -866,8 +869,8 @@ command for that).
 #### Examples
 
 ```sh
-mapbox directions route mapbox/driving "-122.42,37.78;-122.45,37.91"
-mapbox directions route mapbox/walking "-122.42,37.78;-122.43,37.79" \
+mapbox directions mapbox/driving "-122.42,37.78;-122.45,37.91"
+mapbox directions mapbox/walking "-122.42,37.78;-122.43,37.79" \
   --steps --geometries geojson --overview full --annotations distance,duration
 ```
 

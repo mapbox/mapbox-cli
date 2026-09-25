@@ -231,3 +231,27 @@ fn completion_records_nothing() {
         config_dir(&home).display()
     );
 }
+
+#[test]
+fn a_run_started_by_a_workflow_step_records_its_parent() {
+    let parent = "5f0c1e9a-7b2d-4c1e-9f3a-2d8e6b1a0c47";
+    let home = scratch("parent");
+    let out = command(&home)
+        .env("MAPBOX_CLI_PARENT_EVENT", parent)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    // Anything that isn't an event id is ignored rather than recorded.
+    let _ = command(&home)
+        .env("MAPBOX_CLI_PARENT_EVENT", "/Users/someone/secret")
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+
+    let events = events(&home);
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["parentEventId"], parent);
+    assert_ne!(events[0]["eventId"], parent);
+    assert!(events[1].get("parentEventId").is_none(), "{:?}", events[1]);
+}

@@ -42,6 +42,10 @@ const CURRENT: &str = env!("CARGO_PKG_VERSION");
 /// it, only the size is recorded.
 const MAX_DATA_TO_PARSE: u64 = 256 * 1024;
 
+/// Set by a workflow on each step it launches, to its own [`event_id`], so
+/// a `mapbox` run inside a workflow step records which run started it.
+const PARENT_EVENT_ENV: &str = "MAPBOX_CLI_PARENT_EVENT";
+
 const USER_ID_FILE: &str = "user-id";
 const LAST_VERSION_FILE: &str = "last-version";
 
@@ -133,6 +137,34 @@ pub(crate) struct Param {
     keys: Option<Vec<String>>,
 }
 
+/// Where a workflow came from. Only Mapbox names its `Builtin` and
+/// `Marketplace` workflows; a `Custom` one is named by the user, so its name
+/// is never recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Used by the workflow commands, which don't exist yet.
+pub(crate) enum WorkflowSource {
+    Builtin,
+    Marketplace,
+    Custom,
+}
+
+impl WorkflowSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            WorkflowSource::Builtin => "builtin",
+            WorkflowSource::Marketplace => "marketplace",
+            WorkflowSource::Custom => "custom",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct Workflow {
+    source: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 struct Auth {
     source: &'static str,
@@ -188,6 +220,8 @@ struct Event {
     version: &'static str,
     created: String,
     event_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_event_id: Option<String>,
     user_id: String,
     sdk_identifier: &'static str,
     sdk_version: &'static str,
@@ -196,6 +230,8 @@ struct Event {
     command: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     invocation: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workflow: Option<Workflow>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     params: Vec<Param>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -251,6 +287,7 @@ struct Options {
 struct Run {
     command: Option<Vec<String>>,
     invocation: Option<&'static str>,
+    workflow: Option<Workflow>,
     params: Vec<Param>,
     usage_error: Option<String>,
     options: Option<Options>,
@@ -272,6 +309,7 @@ impl Run {
         Run {
             command: None,
             invocation: None,
+            workflow: None,
             params: Vec::new(),
             usage_error: None,
             options: None,
@@ -288,6 +326,7 @@ impl Run {
 
 static RUN: Mutex<Run> = Mutex::new(Run::new());
 static STARTED: OnceLock<Instant> = OnceLock::new();
+static EVENT_ID: OnceLock<String> = OnceLock::new();
 static ENABLED: OnceLock<bool> = OnceLock::new();
 
 /// Read once: the answer must not change halfway through a run.
@@ -310,6 +349,7 @@ fn with_run(f: impl FnOnce(&mut Run)) {
 /// hook that records a crash as `errorCode: "panic"`.
 pub fn start() {
     STARTED.get_or_init(Instant::now);
+    event_id();
 
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -390,6 +430,38 @@ pub fn set_resolved_token(matches: &ArgMatches, use_login: bool, token: &str) {
         auth::TokenSource::Login
     };
     set_token(source, token);
+}
+
+/// The workflow this run adds, removes or runs. `name` is dropped for a
+/// `Custom` workflow, whatever the caller passes.
+#[allow(dead_code)] // Called by the workflow commands, which don't exist yet.
+pub(crate) fn set_workflow(source: WorkflowSource, name: Option<&str>) {
+    with_run(|run| run.workflow = Some(workflow_field(source, name)));
+}
+
+fn workflow_field(source: WorkflowSource, name: Option<&str>) -> Workflow {
+    let name = match source {
+        WorkflowSource::Custom => None,
+        _ => name.map(|name| clip(name, MAX_NAME)),
+    };
+    Workflow {
+        source: source.as_str(),
+        name,
+    }
+}
+
+/// This run's event id, fixed at [`start`] so a workflow can hand it to the
+/// steps it launches before the event itself is built.
+pub(crate) fn event_id() -> &'static str {
+    EVENT_ID.get_or_init(|| uuid_v4(rand::random()))
+}
+
+/// The run that started this one, when a workflow step set it. Read back
+/// only when it has the shape of an event id.
+fn parent_event_id() -> Option<String> {
+    let value = std::env::var(PARENT_EVENT_ENV).ok()?;
+    let value = value.trim();
+    is_uuid(value).then(|| value.to_string())
 }
 
 pub fn set_error_code(code: &str) {
@@ -474,13 +546,15 @@ fn build(run: &Run, exit_code: Option<u32>) -> Event {
         event: EVENT,
         version: SCHEMA_VERSION,
         created: timestamp(SystemTime::now()),
-        event_id: uuid_v4(rand::random()),
+        event_id: event_id().to_string(),
+        parent_event_id: parent_event_id(),
         user_id: user_id(),
         sdk_identifier: SDK_IDENTIFIER,
         sdk_version: CURRENT,
         operating_system: std::env::consts::OS,
         command: run.command.clone(),
         invocation: run.invocation,
+        workflow: run.workflow.clone(),
         params: run.params.clone(),
         usage_error: run.usage_error.clone(),
         output: options.as_ref().map(|o| o.output),
@@ -907,6 +981,25 @@ fn timestamp(at: SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_custom_workflow_never_records_its_name() {
+        assert_eq!(
+            workflow_field(WorkflowSource::Custom, Some("acme-client-export")),
+            Workflow {
+                source: "custom",
+                name: None
+            }
+        );
+        assert_eq!(
+            workflow_field(WorkflowSource::Marketplace, Some("style-clone")),
+            Workflow {
+                source: "marketplace",
+                name: Some("style-clone".to_string())
+            }
+        );
+        assert_eq!(workflow_field(WorkflowSource::Builtin, None).name, None);
+    }
 
     #[test]
     fn a_uuid_is_version_4_and_well_formed() {

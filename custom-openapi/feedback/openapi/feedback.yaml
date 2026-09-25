@@ -1,0 +1,223 @@
+openapi: "3.0.0"
+# `parse_spec` turns `info.description` below into this service's clap
+# `long_about`, so it also reaches `mapbox feedback --help`, `--schema` and
+# `generate-skills` output. Keep it to API prose only — the provenance below
+# is for whoever edits this file, not for a CLI user:
+#
+# Hand-authored down to the parameters documented at
+# docs.mapbox.com/api/feedback. See `custom-openapi/README.md` for how a
+# file like this is wired in. `createFeedbackItem` is declared here but
+# never reaches the command surface: it needs `user-feedback:write`, which
+# `POST /oauth/register` silently drops from the granted scope — confirmed
+# directly against production (`curl -X POST
+# https://api.mapbox.com/oauth/register?scope=user-feedback:write ...`
+# returns a registration with that scope missing from the response, the
+# same shape `tokens:write` and `styles:download` already document in
+# `src/spec.rs`'s `UNSUPPORTED_OPERATIONS`). No `mapbox auth login` token
+# can ever carry it, so `feedback create` is not a command today.
+info:
+  title: "Mapbox Feedback API"
+  description: >-
+    Feedback submitted against Mapbox API responses — geocoding, search,
+    directions and the rest — filterable, sortable, and paginated.
+  version: "0.0.0"
+servers:
+  - url: https://api.mapbox.com
+    description: Feedback API
+paths:
+  /user-feedback/v1/feedback:
+    get:
+      operationId: list
+      summary: List feedback items.
+      description: >-
+        Every feedback item on the account, newest received first by
+        default — filterable by id, status, category, a free-text search
+        phrase, trace id, or a time window on when it was created,
+        received, or last updated. Paginated with `--after`/`start_cursor`/
+        `end_cursor` the way every other listing on this CLI is.
+      parameters:
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+        # Prose rather than an `enum`: several of these are comma-separated
+        # lists, and the command builder turns a spec `enum` into a clap
+        # `PossibleValuesParser`, which accepts one value and would refuse
+        # a list. Same reasoning as `directions.yaml`'s `annotations`.
+        - name: "feedback_id"
+          in: query
+          required: false
+          description: "One or more feedback ids to filter by, comma-separated."
+          schema:
+            type: string
+        - name: "after"
+          in: query
+          required: false
+          description: "A cursor from a previous response's `end_cursor`, to page forward."
+          schema:
+            type: string
+        - name: "limit"
+          in: query
+          required: false
+          description: "Maximum items to return, up to 1000."
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+        - name: "sort_by"
+          in: query
+          required: false
+          description: >-
+            Which timestamp to sort by. Defaults to `received_at`.
+          schema:
+            type: string
+            enum: ["received_at", "created_at", "updated_at"]
+        - name: "order"
+          in: query
+          required: false
+          description: "Sort direction. Defaults to `asc`."
+          schema:
+            type: string
+            enum: ["asc", "desc"]
+        - name: "status"
+          in: query
+          required: false
+          description: >-
+            Limit to one or more statuses, comma-separated. Options are
+            `received`, `fixed`, `reviewed`, `out_of_scope`.
+          schema:
+            type: string
+          example: "received,reviewed"
+        - name: "category"
+          in: query
+          required: false
+          description: >-
+            Limit to one or more feedback categories, comma-separated —
+            categories are account-specific, so there is no fixed list here.
+          schema:
+            type: string
+        - name: "search"
+          in: query
+          required: false
+          description: "A phrase to match against feedback text."
+          schema:
+            type: string
+        - name: "trace_id"
+          in: query
+          required: false
+          description: >-
+            Limit to one or more caller-provided trace ids, comma-separated.
+          schema:
+            type: string
+        # "ISO 8601" trails each of these six rather than leads them:
+        # `first_sentence` in `src/main.rs` cuts a `--help` line at the
+        # first `.`, and "ISO 8601." on its own left `--help` showing just
+        # that. `--schema` and `docs/commands.md` still show each in full.
+        - name: "created_before"
+          in: query
+          required: false
+          description: "Only items the caller created before this time, ISO 8601."
+          schema:
+            type: string
+        - name: "created_after"
+          in: query
+          required: false
+          description: "Only items the caller created after this time, ISO 8601."
+          schema:
+            type: string
+        - name: "received_before"
+          in: query
+          required: false
+          description: "Only items Mapbox received before this time, ISO 8601."
+          schema:
+            type: string
+        - name: "received_after"
+          in: query
+          required: false
+          description: "Only items Mapbox received after this time, ISO 8601."
+          schema:
+            type: string
+        - name: "updated_before"
+          in: query
+          required: false
+          description: "Only items last updated before this time, ISO 8601."
+          schema:
+            type: string
+        - name: "updated_after"
+          in: query
+          required: false
+          description: "Only items last updated after this time, ISO 8601."
+          schema:
+            type: string
+      responses:
+        "200":
+          description: >-
+            A JSON object with an `items` array (each a feedback item: `id`,
+            `status`, `category`, `feedback`, `location`, timestamps), plus
+            `has_after`/`end_cursor` and `has_before`/`start_cursor` for
+            paging either direction.
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+
+    post:
+      # Not `create`: this operation is never reachable (see below), so the
+      # user-facing name doesn't matter — but the withheld-operation guard
+      # in `generate_skills.rs` checks the bare command word against every
+      # generated file's text, and a bare `create` collides with the
+      # exposed, unrelated `styles create`. A multi-word operationId, the
+      # same shape every other disabled operation already has
+      # (`createToken`, `downloadStyleZip`, …), sidesteps that.
+      operationId: createFeedbackItem
+      summary: Submit a new feedback item.
+      description: >-
+        Not a command — see this file's own header comment for why.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: The created feedback item.
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+
+  /user-feedback/v1/feedback/{feedback_id}:
+    get:
+      operationId: get
+      summary: Retrieve one feedback item by id.
+      parameters:
+        - name: "feedback_id"
+          in: path
+          required: true
+          description: "The feedback item's id."
+          schema:
+            type: string
+            minLength: 1
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: >-
+            The feedback item: `id`, `status`, `category`, `feedback`,
+            `location` (`place_name`, `lon`, `lat`), and its
+            created/received/updated timestamps.
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Not Found — no feedback item with that id.

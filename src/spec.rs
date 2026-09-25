@@ -81,6 +81,91 @@ pub struct Operation {
 /// deleting a row.
 const BODY_CONTENT_TYPE_OVERRIDES: &[(&str, &str, &str)] = &[("styles", "starFile", "text/plain")];
 
+/// (service, parameter name, the `arg_name` to use instead) for a parameter
+/// whose spec name is also a global argument's id — `--profile`, `--token`,
+/// `--username`, `--id`, `--output`, `--schema`, `--dry-run`, `--yes`,
+/// `--timeout`, `--use-login`, `--debug`.
+///
+/// `directions.yaml`'s path parameter is genuinely named `profile` — that is
+/// the API's own name for it, and the path template substitutes on
+/// [`Parameter::name`], not `arg_name`, so the spec can't just rename it.
+/// But every `clap::Arg` is built from `arg_name`
+/// (`build_operation_command`), and clap has one namespace of ids per
+/// command: a second `Arg::new("profile")` on the same command silently
+/// replaces the global one instead of erring, so the routing profile this
+/// parameter means and the credentials profile the global flag means become
+/// one and the same id, whichever definition happened to be added last winning
+/// the help text while the *other* one's reader (`main.rs`, reading
+/// `matches.get_one::<String>("profile")` to pick a credentials file) still
+/// runs — `mapbox directions route mapbox/driving …` failed with
+/// `Invalid profile name "mapbox/driving"` this way before this table
+/// existed. `tests/source_guards.rs`'s `no_generated_flag_shadows_a_global`
+/// catches the `--flag`/`-short` half of this; it can't catch a positional,
+/// since a positional has neither.
+///
+/// Kept as a table rather than a branch, for the same reason
+/// [`BODY_CONTENT_TYPE_OVERRIDES`] is: the fix sits next to the operation
+/// it's for, and outgrowing a global name later is just deleting a row.
+const ARG_NAME_OVERRIDES: &[(&str, &str, &str)] = &[("directions", "profile", "routing-profile")];
+
+/// The `arg_name` a parameter should present as, when its spec name collides
+/// with a global argument's id. See [`ARG_NAME_OVERRIDES`].
+fn arg_name_override(service_name: &str, param_name: &str) -> Option<&'static str> {
+    ARG_NAME_OVERRIDES
+        .iter()
+        .find(|(svc, name, _)| *svc == service_name && *name == param_name)
+        .map(|(_, _, arg_name)| *arg_name)
+}
+
+/// A service with exactly one operation, typed with no subcommand at all —
+/// `mapbox directions <args>`, not `mapbox directions route <args>`.
+///
+/// Every other multi-operation service needs `<service> <operation>` to say
+/// which of several things to do; a one-operation service has nothing to
+/// disambiguate, and naming the single operation anyway is a word the
+/// caller has to know and type for no information it carries. `mapbox
+/// usage` already has this shape, hand-written outside the generic
+/// pipeline because it predates this table; these reuse the mechanism the
+/// generic pipeline builds every other command through instead of adding a
+/// second hand-written command per service.
+///
+/// Reached for deliberately, not inferred from "this service happens to
+/// have one operation": a future service could have exactly one operation
+/// and still read better with it named (a first operation before a second
+/// is added, say). Listed here is a decision, the same way
+/// `ARG_NAME_OVERRIDES` and `BODY_CONTENT_TYPE_OVERRIDES` are tables of
+/// decisions rather than something inferred from shape alone.
+///
+/// `build_service_command` and `run`'s dispatch in `main.rs` are the two
+/// places this changes anything: attaching the operation directly onto the
+/// service-level `Command` instead of as a subcommand, and skipping the
+/// subcommand walk that would otherwise expect one. Every other reader of a
+/// command's identity — `--schema`, `docs/commands.md`,
+/// `generate-skills`, this file's own `command()` above — reads a
+/// [`FLATTENED_SERVICES`] service correctly for free, because they all go
+/// through `command()` rather than reconstructing the string themselves.
+pub const FLATTENED_SERVICES: &[&str] = &["directions"];
+
+/// (service, path parameter name) pairs whose value is trusted to reach the
+/// URL unescaped, because every legitimate value already contains a
+/// character [`crate::executor::path_segment`]'s escaping would otherwise
+/// mangle.
+///
+/// Used to be inferred from the parameter having an `enum` — clap's
+/// `PossibleValuesParser` had already limited it to one of the spec's own
+/// literal strings, so there was nothing left to smuggle in. That stopped
+/// being true once `directions.yaml`'s own `profile` dropped its `enum`:
+/// the four documented routing profiles (`mapbox/driving` etc.) aren't
+/// exhaustive — some accounts have additional ones of their own that never
+/// reached docs.mapbox.com, and an `enum` rejected those client-side.
+/// Reported in review. So this is now a named decision instead of a
+/// side effect of another one — every entry here is a path parameter whose
+/// documented *and* undocumented values alike contain a literal `/`
+/// (`mapbox/driving`, `mapbox/cycling`, an OEM's own profile name, …), which
+/// the routing profile's own path segment depends on reaching the API
+/// unescaped regardless of which spelling was typed.
+pub const UNESCAPED_PATH_PARAMS: &[(&str, &str)] = &[("directions", "profile")];
+
 /// The media types an operation's request body may be sent as.
 ///
 /// This used to be a plain `has_body: bool`, which forced the executor to
@@ -378,9 +463,15 @@ impl Operation {
             .expect("a command path is never empty")
     }
 
-    /// The command as it is typed after `mapbox`: `styles draft get`.
+    /// The command as it is typed after `mapbox`: `styles draft get` — or,
+    /// for a [`FLATTENED_SERVICES`] service, just the service name, since
+    /// that service has exactly one operation and no subcommand at all.
     pub fn command(&self) -> String {
-        format!("{} {}", self.service, self.command_path.join(" "))
+        if FLATTENED_SERVICES.contains(&self.service.as_str()) {
+            self.service.clone()
+        } else {
+            format!("{} {}", self.service, self.command_path.join(" "))
+        }
     }
 
     /// Whether this is a service's own health check, rather than something
@@ -608,10 +699,16 @@ pub const MAPBOX_SPEC_ENTRIES: &[SpecEntry] = &[
 /// name here wins over the same name in [`MAPBOX_SPEC_ENTRIES`]. Delete the
 /// override once upstream ships the service — a drift check flags a name
 /// wired on both sides, for exactly this reason.
-pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[SpecEntry {
-    name: "search",
-    yaml: include_str!("../custom-openapi/search/openapi/search.yaml"),
-}];
+pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
+    SpecEntry {
+        name: "search",
+        yaml: include_str!("../custom-openapi/search/openapi/search.yaml"),
+    },
+    SpecEntry {
+        name: "directions",
+        yaml: include_str!("../custom-openapi/directions/openapi/directions.yaml"),
+    },
+];
 
 /// The list the CLI actually generates commands from: [`MAPBOX_SPEC_ENTRIES`],
 /// with each [`CUSTOM_SPEC_ENTRIES`] override swapped in and the
@@ -905,11 +1002,14 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
             let mut path_params = vec![];
             let mut query_params = vec![];
 
-            for p in op_params {
+            for mut p in op_params {
                 // Auto-filled from the global `--username`; see
                 // ACCOUNT_PLACEHOLDERS.
                 if ACCOUNT_PLACEHOLDERS.contains(&p.name.as_str()) {
                     continue;
+                }
+                if let Some(arg_name) = arg_name_override(service_name, &p.name) {
+                    p.arg_name = arg_name.to_string();
                 }
                 if path_str.contains(&format!("{{{}}}", p.name)) {
                     path_params.push(p);
@@ -1952,5 +2052,80 @@ paths:
         assert_eq!(name, generated());
         assert!(aliases.is_empty());
         assert!(hidden.is_empty());
+    }
+
+    /// `directions.yaml`'s `profile` path parameter is a real collision with
+    /// the global `--profile` (credentials profile) argument's id — clap has
+    /// one namespace of ids per command, and the generated positional would
+    /// otherwise silently replace the global one. This is the regression
+    /// test for `mapbox directions route mapbox/driving …` failing with
+    /// `Invalid profile name "mapbox/driving"` before [`ARG_NAME_OVERRIDES`]
+    /// existed: the parsed parameter's `arg_name` must differ from the
+    /// global's id, while `name` stays `profile` so the path template's
+    /// `{profile}` placeholder still resolves.
+    #[test]
+    fn the_directions_profile_parameter_does_not_collide_with_the_global_flag() {
+        let spec = parse_spec(
+            "directions",
+            include_str!("../custom-openapi/directions/openapi/directions.yaml"),
+        )
+        .expect("directions.yaml parses");
+
+        let route = spec
+            .operations
+            .iter()
+            .find(|op| op.command_path == ["route"])
+            .expect("the route operation exists");
+
+        let profile = route
+            .path_params
+            .iter()
+            .find(|p| p.name == "profile")
+            .expect("a path parameter named profile");
+
+        assert_ne!(
+            profile.arg_name, "profile",
+            "must not collide with the global --profile id"
+        );
+        // Deliberately not an `enum`: see `UNESCAPED_PATH_PARAMS`'s own doc
+        // comment for why a closed set was wrong here (OEM accounts have
+        // undocumented profiles of their own).
+        assert!(
+            profile.enum_values.is_empty(),
+            "profile must accept any value, not just the four documented ones"
+        );
+        assert!(
+            UNESCAPED_PATH_PARAMS.contains(&("directions", "profile")),
+            "profile's literal `/` must still reach the URL unescaped, \
+             now that it can't rely on being an enum to prove that"
+        );
+
+        // `directions` has exactly one operation and is in
+        // `FLATTENED_SERVICES` — `command()` must say so, dropping
+        // `command_path` from the string entirely, even though
+        // `command_path` itself stays `["route"]` for internal lookups
+        // (`op.command_name()`, the `command_path == …` matches above and
+        // in `main.rs`'s dispatch).
+        assert_eq!(route.command(), "directions");
+    }
+
+    /// A non-flattened operation's `command()` is unaffected — this is the
+    /// regression test for `FLATTENED_SERVICES` breaking every other
+    /// service's rendering along with the one it's meant for.
+    #[test]
+    fn command_only_drops_the_path_for_a_flattened_service() {
+        let svc = service(PAIRED);
+        let op = operation(&svc, "list-styles");
+        assert_eq!(op.command(), "svc list-styles");
+    }
+
+    #[test]
+    fn arg_name_override_only_fires_for_the_row_it_names() {
+        assert_eq!(
+            arg_name_override("directions", "profile"),
+            Some("routing-profile")
+        );
+        assert_eq!(arg_name_override("directions", "coordinates"), None);
+        assert_eq!(arg_name_override("styles", "profile"), None);
     }
 }

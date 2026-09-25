@@ -41,7 +41,7 @@ use std::path::PathBuf;
 
 use clap::Command;
 
-use crate::spec::{effective_services, ServiceSpec};
+use crate::spec::{effective_services, ServiceSpec, FLATTENED_SERVICES};
 
 const FIXTURE: &str = "tests/fixtures/api_command_surface.txt";
 
@@ -64,22 +64,26 @@ fn surface_lines(app: &Command, specs: &[ServiceSpec]) -> Vec<String> {
     for svc in specs {
         for op in svc.operations.iter().filter(|op| op.is_exposed()) {
             // Down the whole command path, since one can nest: `styles draft
-            // get` is three levels from the root.
-            let cmd = op
-                .command_path
-                .iter()
-                .try_fold(
-                    app.find_subcommand(&svc.name).unwrap_or_else(|| {
-                        panic!("`mapbox {}` has operations and is not a command", svc.name)
-                    }),
-                    |cmd, segment| cmd.find_subcommand(segment),
-                )
-                .unwrap_or_else(|| {
-                    panic!(
-                        "`mapbox {}` is an exposed operation and not a command",
-                        op.command()
-                    )
-                });
+            // get` is three levels from the root. A `FLATTENED_SERVICES`
+            // service has no subcommand to walk down to — its one operation
+            // *is* the service-level command — so the path is skipped for
+            // one of those, the same way `schema::declared_command` skips it.
+            let root = app.find_subcommand(&svc.name).unwrap_or_else(|| {
+                panic!("`mapbox {}` has operations and is not a command", svc.name)
+            });
+            let cmd = if FLATTENED_SERVICES.contains(&svc.name.as_str()) {
+                root
+            } else {
+                op.command_path
+                    .iter()
+                    .try_fold(root, |cmd, segment| cmd.find_subcommand(segment))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "`mapbox {}` is an exposed operation and not a command",
+                            op.command()
+                        )
+                    })
+            };
 
             // `(hidden)` on the ones nothing publishes, so flipping a
             // `COMMAND_ALIASES` row's `show_generated_name` — which swaps a

@@ -19,6 +19,25 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox ev-charge-finder search`/`get`/`list-operators`, EV charging
+  stations near a point — searchable by connector type, operator, charging
+  power, availability, amenities and payment method — plus one station's
+  full detail and the list of known operators. Hand-authored into
+  `custom-openapi/` for the same reason this session's other additions
+  were: no upstream spec exists yet. Not verified live: this API is
+  Private Preview and this account isn't enrolled — confirmed directly (a
+  plain `curl` gets `401 invalid access token` here and `200` on every
+  other service with the same token), not assumed.
+
+  Also fixes a real bug the new spec's `search`↔`get` pairing surfaced in
+  the detail/listing linker (`link_detail_operations` in `src/spec.rs`):
+  a listing with a required query parameter of its own — `search` needs
+  `latitude`/`longitude`/`distance` — was being suggested bare on a failed
+  detail lookup's 404, which `listing_command` (`remedy.rs`) has no way to
+  fill, since it only recovers path parameters. A listing with any
+  required query parameter is now excluded from that link entirely; no
+  other service had one, so nothing else changes.
+
 - `mapbox feedback list`/`get`, reading feedback submitted against Mapbox
   API responses — filterable, sortable, paginated. Hand-authored into
   `custom-openapi/` for the same reason the Navigation commands were: no

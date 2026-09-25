@@ -1,0 +1,265 @@
+openapi: "3.0.0"
+# `parse_spec` turns `info.description` below into this service's clap
+# `long_about`, so it also reaches `mapbox ev-charge-finder --help`,
+# `--schema` and `generate-skills` output. Keep it to API prose only — the
+# provenance below is for whoever edits this file, not for a CLI user:
+#
+# Hand-authored down to the parameters documented at
+# docs.mapbox.com/api/navigation/ev-charge-finder. See
+# `custom-openapi/README.md` for how a file like this is wired in. Private
+# Preview per docs.mapbox.com — access may be gated per-account on top of
+# whatever OAuth scope this CLI's login obtains; not yet verified against
+# production, unlike this session's other custom specs. See this file's own
+# tests for what was and wasn't checked.
+info:
+  title: "Mapbox EV Charge Finder API"
+  description: >-
+    EV charging stations near a point — searchable by connector type,
+    operator, charging power, availability, amenities and payment method —
+    plus the full detail (tariffs, opening hours) for one station and the
+    list of known charge-point operators.
+  version: "0.0.0"
+servers:
+  - url: https://api.mapbox.com
+    description: EV Charge Finder API
+paths:
+  /ev/v1/locations:
+    get:
+      operationId: search
+      summary: Charging stations near a point.
+      description: >-
+        A GeoJSON `FeatureCollection`, one feature per station, each
+        carrying an OCPI `location` object and a `proximity` object.
+      parameters:
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+        - name: "latitude"
+          in: query
+          required: true
+          description: "Search center latitude, -90 to 90."
+          schema:
+            type: number
+            minimum: -90
+            maximum: 90
+        - name: "longitude"
+          in: query
+          required: true
+          description: "Search center longitude, -180 to 180."
+          schema:
+            type: number
+            minimum: -180
+            maximum: 180
+        - name: "distance"
+          in: query
+          required: true
+          description: "Search radius in km, up to 100. Defaults to 10."
+          schema:
+            type: number
+            minimum: 0
+            maximum: 100
+        - name: "limit"
+          in: query
+          required: false
+          description: "Maximum results, up to 100. Defaults to 20."
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        # Prose rather than an `enum`: comma-delimited lists, and the
+        # command builder turns a spec `enum` into a clap
+        # `PossibleValuesParser`, which accepts one value and would refuse
+        # a list. Same reasoning as `directions.yaml`'s `annotations`.
+        - name: "connector_types"
+          in: query
+          required: false
+          # The docs link trails its own sentence, not the lead one: a
+          # period inside "docs.mapbox.com" is indistinguishable from a
+          # sentence break to `first_sentence` in `src/main.rs`, which cuts
+          # a `--help` line at the first `.` — this left `--help` showing
+          # "...comma-delimited — see docs" before the fix.
+          description: >-
+            Limit to one or more connector types, comma-delimited. See
+            docs.mapbox.com/api/navigation/ev-charge-finder for the full
+            list (CCS/CHAdeMO/Tesla/domestic-socket variants and more,
+            close to 40 values).
+          schema:
+            type: string
+          example: "IEC_62196_T2_COMBO,CHADEMO"
+        - name: "operators"
+          in: query
+          required: false
+          description: >-
+            Limit to one or more operator names, comma-delimited — see
+            `mapbox ev-charge-finder list-operators` for the account's own
+            list.
+          schema:
+            type: string
+        - name: "exclude_operators"
+          in: query
+          required: false
+          description: "Exclude one or more operator names, comma-delimited."
+          schema:
+            type: string
+        - name: "min_charging_power"
+          in: query
+          required: false
+          description: "Minimum power in watts. Defaults to 0."
+          schema:
+            type: number
+            minimum: 0
+        - name: "max_charging_power"
+          in: query
+          required: false
+          description: "Maximum power in watts. Defaults to 500000."
+          schema:
+            type: number
+            minimum: 0
+        - name: "availability"
+          in: query
+          required: false
+          description: >-
+            Limit to one or more EVSE statuses, comma-delimited. Options
+            are `AVAILABLE`, `CHARGING`, `BLOCKED`, `INOPERATIVE`,
+            `OUTOFORDER`, `PLANNED`, `REMOVED`, `RESERVED`, `UNKNOWN`.
+          schema:
+            type: string
+        - name: "amenities"
+          in: query
+          required: false
+          description: >-
+            Limit to stations near one or more amenities, comma-delimited.
+            See docs.mapbox.com/api/navigation/ev-charge-finder for the
+            full list (`restaurant`, `parking_lot`, `wifi`, and about 25
+            more).
+          schema:
+            type: string
+        - name: "exclude"
+          in: query
+          required: false
+          description: >-
+            Exclude stations with an attribute, comma-delimited. The only
+            documented value is `tesla_exclusive`.
+          schema:
+            type: string
+        - name: "payment_methods"
+          in: query
+          required: false
+          description: >-
+            Limit to one or more payment methods, comma-delimited. The
+            only documented value is `ad-hoc`.
+          schema:
+            type: string
+        - name: "opening_times"
+          in: query
+          required: false
+          description: >-
+            Limit by opening hours. The only documented value is
+            `twentyfourseven`.
+          schema:
+            type: string
+        - name: "eta_type"
+          in: query
+          required: false
+          description: >-
+            Enable a route-based ETA to each station, from `--origin-latitude`/
+            `--origin-longitude`. Adds latency and Matrix API cost on
+            Mapbox's side. The only allowed value is `navigation`.
+          schema:
+            type: string
+            enum: ["navigation"]
+        - name: "origin_latitude"
+          in: query
+          required: false
+          description: >-
+            Origin point latitude for the ETA, -90 to 90. Requires
+            `--eta-type navigation`.
+          schema:
+            type: number
+            minimum: -90
+            maximum: 90
+        - name: "origin_longitude"
+          in: query
+          required: false
+          description: >-
+            Origin point longitude for the ETA, -180 to 180. Requires
+            `--eta-type navigation`.
+          schema:
+            type: number
+            minimum: -180
+            maximum: 180
+      responses:
+        "200":
+          description: >-
+            A GeoJSON `FeatureCollection` — one feature per station, each
+            with an OCPI `location` and a `proximity` object in
+            `properties`.
+        "400":
+          description: >-
+            Bad Request — the feature isn't enabled for this account, or a
+            required parameter is missing.
+        "401":
+          description: Unauthorized
+
+  /ev/v1/locations/{location_id}:
+    get:
+      operationId: get
+      summary: One charging station's full detail.
+      description: >-
+        The same feature `search` returns, plus `tariffs` — pricing for
+        each connector.
+      parameters:
+        - name: "location_id"
+          in: path
+          required: true
+          # "location.id" contains a "." too, the same trap `connector_types`
+          # and `amenities` above hit with "docs.mapbox.com" — reworded to
+          # keep the id reference after the first real sentence break.
+          description: "A station id, as returned by `search`. Its OCPI `location.id` field."
+          schema:
+            type: string
+            minLength: 1
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: >-
+            A GeoJSON `Feature` with `location`, `proximity`, and
+            `tariffs` (an array of OCPI tariff objects) in `properties`.
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found — no station with that id.
+
+  /ev/v1/operators:
+    get:
+      operationId: listOperators
+      summary: Known charge-point operators.
+      description: >-
+        Every operator `search`/`get` results can name in `operators`,
+        for filtering `search` by `--operators`/`--exclude-operators`.
+      parameters:
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: >-
+            A JSON object with a `data` array of `{party_id, name,
+            country_code}` — `party_id` is a 3-letter OCPI code,
+            `country_code` ISO 3166-1 alpha-2.
+        "401":
+          description: Unauthorized

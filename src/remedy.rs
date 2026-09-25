@@ -79,6 +79,10 @@ const SERVICE_DOCS: &[(&str, &str)] = &[
         "directions",
         "https://docs.mapbox.com/api/navigation/directions/",
     ),
+    (
+        "ev-charge-finder",
+        "https://docs.mapbox.com/api/navigation/ev-charge-finder/",
+    ),
     ("feedback", "https://docs.mapbox.com/api/feedback/"),
     ("fonts", "https://docs.mapbox.com/api/maps/fonts/"),
     (

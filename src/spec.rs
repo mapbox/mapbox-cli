@@ -682,6 +682,10 @@ pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
         name: "feedback",
         yaml: include_str!("../custom-openapi/feedback/openapi/feedback.yaml"),
     },
+    SpecEntry {
+        name: "ev-charge-finder",
+        yaml: include_str!("../custom-openapi/ev-charge-finder/openapi/ev-charge-finder.yaml"),
+    },
 ];
 
 /// The list the CLI actually generates commands from: [`MAPBOX_SPEC_ENTRIES`],
@@ -1201,9 +1205,20 @@ fn link_detail_operations(operations: &mut [Operation]) {
     // real command gets named here — the pass above pairs on paths alone,
     // so an unexposed GET could otherwise hold a `detail` link while not
     // being runnable itself.
+    //
+    // Also excluded: a listing with a required query parameter of its own.
+    // `listing_command` (in `remedy.rs`) only ever fills path parameters it
+    // can recover from the failed detail call — a listing's required query
+    // parameters have no such source, so a bare `mapbox <listing>` command
+    // would parse as a usage error, not run the query the caller needed.
+    // `ev-charge-finder`'s `search` (required `latitude`/`longitude`/
+    // `distance`) is the first listing this repo has had that isn't safe to
+    // suggest bare; `every_suggestion_is_a_command_line_that_runs` is what
+    // caught it.
     let listings: Vec<(String, ListingOperation)> = operations
         .iter()
         .filter(|op| op.is_exposed())
+        .filter(|op| op.query_params.iter().all(|p| !p.required))
         .filter_map(|op| {
             let detail = op.detail.as_ref()?;
             Some((
@@ -1520,6 +1535,50 @@ paths:
         assert!(
             operation(&svc, "list-styles").listing.is_none(),
             "a listing has no listing of its own to be sent back to"
+        );
+    }
+
+    /// `listing_command` (`remedy.rs`) only ever fills a listing's path
+    /// parameters from the failed detail call — it has no source for a
+    /// listing's own required query parameters, so a listing that has any
+    /// must never be linked back to. The regression this guards:
+    /// `ev-charge-finder search` (required `latitude`/`longitude`) would
+    /// otherwise have been suggested, bare, for a failed
+    /// `ev-charge-finder get`, and `mapbox ev-charge-finder search` alone
+    /// is a usage error.
+    #[test]
+    fn a_listing_with_a_required_query_parameter_is_never_named() {
+        let svc = parse_spec(
+            "svc",
+            r#"
+openapi: 3.0.0
+info: { title: T }
+paths:
+  /locations:
+    get:
+      operationId: search
+      summary: Search
+      parameters:
+        - { name: latitude, in: query, required: true, schema: { type: number } }
+  /locations/{location_id}:
+    get: { operationId: get, summary: Get }
+"#,
+        )
+        .expect("fixture parses");
+
+        assert!(
+            operation(&svc, "get").listing.is_none(),
+            "search takes a required query parameter this 404 has no way to fill"
+        );
+        // The forward link is unaffected — it's informational, not
+        // something a caller is asked to run bare.
+        assert_eq!(
+            operation(&svc, "search")
+                .detail
+                .as_ref()
+                .expect("forward link still holds")
+                .command,
+            "svc get"
         );
     }
 

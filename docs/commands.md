@@ -1,6 +1,6 @@
 # Implemented commands
 
-Every command the CLI ships: four auth commands, 37 API operations across 13
+Every command the CLI ships: four auth commands, 40 API operations across 14
 command groups, the tilesets-cli proxy, `completion` and `generate-skills`. Each is
 shown in both of its renderings. Which one you get is decided by `--output`, whose default
 (`auto`) reads stdout: a terminal gets the left column, a pipe or redirect
@@ -10,7 +10,7 @@ gets the right one. See
 Account names, style ids and tokens in the examples are replaced; everything
 else is as the API sent it.
 
-**33 of the 37 were run against the live API and show what came back:**
+**33 of the 40 were run against the live API and show what came back:**
 `directions route`, `isochrone contours`, `map-matching match`, `matrix
 compute`, `feedback list` and `feedback get` on 2026-09-24, once those
 command groups existed at all, and the rest earlier — `fonts list`,
@@ -32,10 +32,14 @@ commands and the flags they take — is held to `mapbox --schema` on every
 `cargo test` run by `tests/docs_contract.rs`, so the half of this page that
 can be checked cannot fall behind the binary.
 
-The remaining 4 give the response shape from the spec or the docs instead
-of a live capture: they're all `search`'s — read-only and safe to run, but
-the credentials used to write this page have no Search Box API access, so
-every call answers 401 rather than a result.
+The remaining 7 give the response shape from the spec or the docs instead
+of a live capture. Four are `search`'s — read-only and safe to run, but the
+credentials used to write this page have no Search Box API access, so
+every call answers 401 rather than a result. The other three are
+`ev-charge-finder`'s: that API is Private Preview, and this account isn't
+enrolled — confirmed directly (a plain `curl` gets `401 invalid access
+token` there and `200` on every other service with the same token), not
+assumed.
 
 Each **Parameters** section lists only what is specific to its command. The
 globals every API command takes are
@@ -76,6 +80,11 @@ nests, and is typed `mapbox styles draft get`.
 
 **[Directions](#directions)** —
 [directions.route](#mapbox-directions-route)
+
+**[EV Charge Finder](#ev-charge-finder)** —
+[ev-charge-finder.search](#mapbox-ev-charge-finder-search) ·
+[ev-charge-finder.get](#mapbox-ev-charge-finder-get) ·
+[ev-charge-finder.list-operators](#mapbox-ev-charge-finder-list-operators)
 
 **[Feedback](#feedback)** — [feedback.list](#mapbox-feedback-list) ·
 [feedback.get](#mapbox-feedback-get)
@@ -943,6 +952,143 @@ print the same JSON, `-o text` pretty-printed and `-o json` on one line:
 Both trimmed to one leg for length — the real response also carries
 `admins` (administrative boundaries traversed) and `notifications` (three
 tunnel alerts, on this particular route) per leg.
+
+---
+## EV Charge Finder
+
+EV charging stations near a point — searchable by connector type,
+operator, charging power, availability, amenities and payment method —
+plus the full detail (tariffs, opening hours) for one station and the list
+of known charge-point operators. Curated by hand down to the parameters
+documented at docs.mapbox.com/api/navigation/ev-charge-finder — see
+`custom-openapi/README.md` for why this command group doesn't come from
+the vendored specs the way most others do.
+
+**Private Preview, and not verified live.** Every other command group this
+session shipped was checked against a real response; this one wasn't —
+the credentials used to write this page get `401 invalid access token` on
+all three operations here, and the same token succeeds immediately against
+every other service (confirmed directly, not assumed: a plain `curl` to
+this API and to `isochrone` side by side, one 401 and one 200). That
+reads as this account not being enrolled in the Private Preview, a
+different kind of gate than an OAuth scope — nothing in this CLI's own
+token handling can get around it. The commands below are built faithfully
+to the documented request/response shape; treat the **Outputs** blocks as
+what the docs say the shape is, not a captured response.
+
+### `mapbox ev-charge-finder search`
+
+Charging stations near a point, as GeoJSON — one feature per station, each
+carrying an OCPI `location` object and a `proximity` object.
+
+#### Parameters
+
+`--latitude`, `--longitude` and `--distance` are required.
+
+| Parameter | Effect |
+| --- | --- |
+| `--latitude <deg>` / `--longitude <deg>` | Search center. |
+| `--distance <km>` | Search radius, up to 100. Defaults to 10. |
+| `--limit <n>` | Maximum results, up to 100. Defaults to 20. |
+| `--connector-types <types>` | One or more connector types, comma-delimited — see the docs for the full list (close to 40 values). |
+| `--operators <names>` | One or more operator names, comma-delimited — see `list-operators` for the account's own list. |
+| `--exclude-operators <names>` | Exclude one or more operator names, comma-delimited. |
+| `--min-charging-power` / `--max-charging-power <watts>` | Power range. Defaults 0 / 500000. |
+| `--availability <statuses>` | One or more EVSE statuses, comma-delimited (`AVAILABLE`, `CHARGING`, `BLOCKED`, `INOPERATIVE`, `OUTOFORDER`, `PLANNED`, `REMOVED`, `RESERVED`, `UNKNOWN`). |
+| `--amenities <list>` | One or more nearby amenities, comma-delimited — see the docs for the full list (about 28 values). |
+| `--exclude <attr>` | Exclude an attribute. Only `tesla_exclusive` is documented. |
+| `--payment-methods <methods>` | Only `ad-hoc` is documented. |
+| `--opening-times <value>` | Only `twentyfourseven` is documented. |
+| `--eta-type navigation` + `--origin-latitude`/`--origin-longitude` | Add a route-based ETA to each station. Adds latency and Matrix API cost on Mapbox's side. |
+
+#### Examples
+
+```sh
+mapbox ev-charge-finder search --latitude 37.78 --longitude -122.42 --distance 10
+mapbox ev-charge-finder search --latitude 37.78 --longitude -122.42 --distance 25 \
+  --connector-types IEC_62196_T2_COMBO,CHADEMO --min-charging-power 50000
+```
+
+#### Outputs
+
+Not captured live — see this section's own note above. Per the docs, a
+GeoJSON `FeatureCollection`:
+
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": ["…"] },
+      "properties": {
+        "location": "{ OCPI location object }",
+        "proximity": "{ distance from the search point }"
+      }
+    }
+  ]
+}
+```
+
+### `mapbox ev-charge-finder get`
+
+One charging station's full detail — the same feature `search` returns,
+plus `tariffs`.
+
+#### Parameters
+
+`<location-id>` (positional) is required — a station id, as returned by
+`search`.
+
+#### Examples
+
+```sh
+mapbox ev-charge-finder get <LOCATION_ID>
+```
+
+#### Outputs
+
+Not captured live — see this section's own note above. Per the docs, a
+GeoJSON `Feature` with `tariffs` alongside `location`/`proximity`:
+
+```json
+{
+  "type": "Feature",
+  "geometry": { "type": "Point", "coordinates": ["…"] },
+  "properties": {
+    "location": "{ OCPI location object }",
+    "proximity": "{ distance from the search point }",
+    "tariffs": ["{ OCPI tariff objects }"]
+  }
+}
+```
+
+### `mapbox ev-charge-finder list-operators`
+
+Every charge-point operator this account's `search`/`get` results can
+name — for filtering `search` by `--operators`/`--exclude-operators`.
+
+#### Parameters
+
+None.
+
+#### Examples
+
+```sh
+mapbox ev-charge-finder list-operators
+```
+
+#### Outputs
+
+Not captured live — see this section's own note above. Per the docs:
+
+```json
+{
+  "data": [
+    { "party_id": "ABC", "name": "Example Networks", "country_code": "US" }
+  ]
+}
+```
 
 ---
 ## Feedback

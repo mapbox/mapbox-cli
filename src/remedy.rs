@@ -88,6 +88,10 @@ const SERVICE_DOCS: &[(&str, &str)] = &[
         "isochrone",
         "https://docs.mapbox.com/api/navigation/isochrone/",
     ),
+    (
+        "map-matching",
+        "https://docs.mapbox.com/api/navigation/map-matching/",
+    ),
     ("search", "https://docs.mapbox.com/api/search/search-box/"),
     // Static Images and Static Tiles merged into one `static` command group
     // (#116); neither upstream page covers both, so this points at Static

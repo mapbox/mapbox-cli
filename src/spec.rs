@@ -106,7 +106,10 @@ const BODY_CONTENT_TYPE_OVERRIDES: &[(&str, &str, &str)] = &[("styles", "starFil
 /// Kept as a table rather than a branch, for the same reason
 /// [`BODY_CONTENT_TYPE_OVERRIDES`] is: the fix sits next to the operation
 /// it's for, and outgrowing a global name later is just deleting a row.
-const ARG_NAME_OVERRIDES: &[(&str, &str, &str)] = &[("directions", "profile", "routing-profile")];
+const ARG_NAME_OVERRIDES: &[(&str, &str, &str)] = &[
+    ("directions", "profile", "routing-profile"),
+    ("isochrone", "profile", "routing-profile"),
+];
 
 /// The `arg_name` a parameter should present as, when its spec name collides
 /// with a global argument's id. See [`ARG_NAME_OVERRIDES`].
@@ -144,7 +147,7 @@ fn arg_name_override(service_name: &str, param_name: &str) -> Option<&'static st
 /// `generate-skills`, this file's own `command()` above — reads a
 /// [`FLATTENED_SERVICES`] service correctly for free, because they all go
 /// through `command()` rather than reconstructing the string themselves.
-pub const FLATTENED_SERVICES: &[&str] = &["directions"];
+pub const FLATTENED_SERVICES: &[&str] = &["directions", "isochrone"];
 
 /// (service, path parameter name) pairs whose value is trusted to reach the
 /// URL unescaped, because every legitimate value already contains a
@@ -164,7 +167,8 @@ pub const FLATTENED_SERVICES: &[&str] = &["directions"];
 /// (`mapbox/driving`, `mapbox/cycling`, an OEM's own profile name, …), which
 /// the routing profile's own path segment depends on reaching the API
 /// unescaped regardless of which spelling was typed.
-pub const UNESCAPED_PATH_PARAMS: &[(&str, &str)] = &[("directions", "profile")];
+pub const UNESCAPED_PATH_PARAMS: &[(&str, &str)] =
+    &[("directions", "profile"), ("isochrone", "profile")];
 
 /// The media types an operation's request body may be sent as.
 ///
@@ -707,6 +711,10 @@ pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
     SpecEntry {
         name: "directions",
         yaml: include_str!("../custom-openapi/directions/openapi/directions.yaml"),
+    },
+    SpecEntry {
+        name: "isochrone",
+        yaml: include_str!("../custom-openapi/isochrone/openapi/isochrone.yaml"),
     },
 ];
 
@@ -2119,10 +2127,62 @@ paths:
         assert_eq!(op.command(), "svc list-styles");
     }
 
+    /// Same regression as `the_directions_profile_parameter_does_not_collide…`
+    /// above, for the second spec that ran into it — `ARG_NAME_OVERRIDES`
+    /// taking effect is per-row, so a second entry earns its own proof
+    /// rather than trusting the first test to cover it.
+    #[test]
+    fn the_isochrone_profile_parameter_does_not_collide_with_the_global_flag() {
+        let spec = parse_spec(
+            "isochrone",
+            include_str!("../custom-openapi/isochrone/openapi/isochrone.yaml"),
+        )
+        .expect("isochrone.yaml parses");
+
+        let contours = spec
+            .operations
+            .iter()
+            .find(|op| op.command_path == ["contours"])
+            .expect("the contours operation exists");
+
+        let profile = contours
+            .path_params
+            .iter()
+            .find(|p| p.name == "profile")
+            .expect("a path parameter named profile");
+
+        assert_ne!(
+            profile.arg_name, "profile",
+            "must not collide with the global --profile id"
+        );
+        // Deliberately not an `enum`: see `UNESCAPED_PATH_PARAMS`'s own doc
+        // comment for why a closed set was wrong here (OEM accounts have
+        // undocumented profiles of their own).
+        assert!(
+            profile.enum_values.is_empty(),
+            "profile must accept any value, not just the four documented ones"
+        );
+        assert!(
+            UNESCAPED_PATH_PARAMS.contains(&("isochrone", "profile")),
+            "profile's literal `/` must still reach the URL unescaped, \
+             now that it can't rely on being an enum to prove that"
+        );
+
+        // `isochrone` has exactly one operation and is in
+        // `FLATTENED_SERVICES` — `command()` must say so, dropping
+        // `command_path` from the string entirely, even though
+        // `command_path` itself stays `["contours"]` for internal lookups.
+        assert_eq!(contours.command(), "isochrone");
+    }
+
     #[test]
     fn arg_name_override_only_fires_for_the_row_it_names() {
         assert_eq!(
             arg_name_override("directions", "profile"),
+            Some("routing-profile")
+        );
+        assert_eq!(
+            arg_name_override("isochrone", "profile"),
             Some("routing-profile")
         );
         assert_eq!(arg_name_override("directions", "coordinates"), None);

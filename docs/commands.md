@@ -81,6 +81,8 @@ nests, and is typed `mapbox styles draft get`.
 [geocoder.reverse](#mapbox-geocoder-reverse) ·
 [geocoder.batch](#mapbox-geocoder-batch)
 
+**[Isochrone](#isochrone)** — [isochrone](#mapbox-isochrone)
+
 **[Search](#search)** — [search.forward](#mapbox-search-forward) ·
 [search.reverse](#mapbox-search-reverse) ·
 [search.category](#mapbox-search-category) ·
@@ -1234,6 +1236,103 @@ would both be shown.
 A query malformed enough that its own list can't be built falls the whole
 batch back to pretty-printed JSON, same as one broken feature does for a
 single query.
+
+---
+## Isochrone
+
+How far you can get from a point in a given time or distance, for driving
+(with or without live traffic), walking, or cycling. Curated by hand down to
+the parameters documented at docs.mapbox.com/api/navigation/isochrone — see
+`custom-openapi/README.md` for why this command group doesn't come from the
+vendored specs the way most others do.
+
+### `mapbox isochrone`
+
+One contour per value in `--contours-minutes` or `--contours-meters`, as
+GeoJSON around the given center point. No subcommand: this API has one
+operation, so there's nothing a second word would disambiguate, the same
+reason `mapbox directions` has none either.
+
+#### Parameters
+
+`<routing-profile>` and `<coordinates>` (both positional) are required.
+`<routing-profile>` is sent exactly as typed, not checked against a fixed
+list: `mapbox/driving-traffic`, `mapbox/driving`, `mapbox/walking` and
+`mapbox/cycling` are documented, but some accounts (OEM agreements, mainly)
+have additional profiles of their own that were never published, the API
+is the authority on whether a value is valid, not this page. `<coordinates>`
+is one `{longitude},{latitude}` pair, unlike `mapbox directions`, this
+command takes a single center point, not a list of waypoints.
+
+Exactly one of `--contours-minutes` or `--contours-meters` is required by
+the API, though nothing here enforces it before the request goes out.
+
+| Parameter | Effect |
+| --- | --- |
+| `--contours-minutes <mins>` | Up to 4 times in minutes, 1-60, comma-separated and increasing. One contour per value. |
+| `--contours-meters <meters>` | Up to 4 distances in meters, 1-100000, comma-separated and increasing. One contour per value. |
+| `--contours-colors <hex,...>` | A hex color per contour (no `#`), comma-separated — must match the contour count. |
+| `--polygons` | Return each contour as a GeoJSON polygon instead of a linestring. |
+| `--denoise <0.0-1.0>` | A smaller value removes more of the smaller contours. Defaults to 1.0. |
+| `--generalize <meters>` | Douglas-Peucker simplification tolerance — a higher value is a coarser, smaller contour. |
+| `--exclude <types>` | Road types to route around, comma-separated (`motorway`, `toll`, `ferry`, `unpaved`, `cash_only_tolls`). |
+| `--depart-at <ISO 8601>` | For `mapbox/driving-traffic`, which live traffic conditions to route against. |
+
+#### Examples
+
+```sh
+mapbox isochrone mapbox/driving "-122.42,37.78" --contours-minutes 5,10,15
+mapbox isochrone mapbox/walking "-122.42,37.78" --contours-minutes 5,10 --polygons
+```
+
+#### Outputs
+
+Captured live against `mapbox/walking`, two 5- and 10-minute contours as
+polygons. This response is a real GeoJSON `FeatureCollection`, unlike
+`mapbox directions`'s response, but isochrone isn't one of the three
+services (`search`, `geocoder`, `tilequery`) this CLI has a bespoke
+list-per-feature rendering for yet (`output.rs`'s `list_rendering` is an
+exact service allow-list, not a "looks like GeoJSON" test), so both output
+modes print the same JSON, `-o text` pretty-printed and `-o json` on one
+line, same shape as `mapbox directions`'s Outputs section above:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "color": "#bf4040",
+        "contour": 10,
+        "fill": "#bf4040",
+        "fill-opacity": 0.33,
+        "fillColor": "#bf4040",
+        "fillOpacity": 0.33,
+        "metric": "time",
+        "opacity": 0.33
+      },
+      "geometry": { "type": "Polygon", "coordinates": "…" }
+    }
+  ]
+}
+```
+
+</td><td>
+
+```json
+{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"color":"#bf4040","contour":10,"fill":"#bf4040","fill-opacity":0.33,"fillColor":"#bf4040","fillOpacity":0.33,"metric":"time","opacity":0.33},"geometry":{"type":"Polygon","coordinates":"…"}}]}
+```
+
+</td></tr>
+</table>
+
+Trimmed to one of the two features (the response has one per
+`--contours-minutes` value) and the polygon's coordinates, for length.
 
 ---
 

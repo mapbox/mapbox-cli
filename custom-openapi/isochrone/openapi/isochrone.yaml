@@ -1,0 +1,170 @@
+openapi: "3.0.0"
+# `parse_spec` turns `info.description` below into this service's clap
+# `long_about`, so it also reaches `mapbox isochrone --help`, `--schema` and
+# `generate-skills` output. Keep it to API prose only — the provenance below
+# is for whoever edits this file, not for a CLI user:
+#
+# Hand-authored down to the parameters documented at
+# docs.mapbox.com/api/navigation/isochrone. See `custom-openapi/README.md`
+# for how a file like this is wired in, and `directions.yaml`'s header for
+# why `profile` needs `ARG_NAME_OVERRIDES` in `src/spec.rs` — the same
+# reason applies here.
+info:
+  title: "Mapbox Isochrone API"
+  description: >-
+    How far you can get from a point in a given time or distance, for
+    driving (with or without live traffic), walking, or cycling — as a
+    GeoJSON polygon or line per contour.
+  version: "0.0.0"
+servers:
+  - url: https://api.mapbox.com
+    description: Isochrone API
+paths:
+  /isochrone/v1/{profile}/{coordinates}:
+    get:
+      operationId: contours
+      summary: Isochrone contours around one point.
+      description: >-
+        Returns one contour per value in `--contours-minutes` or
+        `--contours-meters` (exactly one of the two is required; not
+        enforced before the request goes out — the API answers 422 if both
+        or neither are given), as GeoJSON linestrings or, with `--polygons`,
+        polygons.
+      parameters:
+        - name: "profile"
+          in: path
+          required: true
+          # Not an `enum`: the four documented values are what's public, but
+          # not what's exhaustive — some customers (OEM agreements, mainly)
+          # have additional profiles never published to docs.mapbox.com.
+          # An `enum` here becomes a clap `PossibleValuesParser` that
+          # rejects anything else client-side, which would break this CLI
+          # for exactly the accounts that most need a routing profile
+          # named beyond `driving`/`walking`/`cycling`. Same fix as
+          # `directions.yaml`'s `profile`.
+          description: >-
+            The routing profile — `mapbox/driving-traffic` (accounts for
+            live traffic), `mapbox/driving`, `mapbox/walking`, or
+            `mapbox/cycling` are documented, but not necessarily
+            exhaustive: some accounts have additional profiles of their
+            own. Sent exactly as typed; the API is the authority on
+            whether a value is valid, not this description.
+          schema:
+            type: string
+            minLength: 1
+          example: "mapbox/driving"
+        - name: "coordinates"
+          in: path
+          required: true
+          description: "The isochrone center, `{longitude},{latitude}`."
+          schema:
+            type: string
+            minLength: 1
+          example: "-122.42,37.78"
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+        # Prose rather than an `enum`: up to 4 comma-separated integers, and
+        # the command builder turns a spec `enum` into a clap
+        # `PossibleValuesParser`, which accepts one value and would refuse a
+        # list. Same reasoning as `directions.yaml`'s `annotations`.
+        - name: "contours_minutes"
+          in: query
+          required: false
+          description: >-
+            Up to 4 times in minutes, 1-60, comma-separated and increasing —
+            one contour per value. Exactly one of this or
+            `--contours-meters` is required.
+          schema:
+            type: string
+          example: "5,10,15,20"
+        - name: "contours_meters"
+          in: query
+          required: false
+          description: >-
+            Up to 4 distances in meters, 1-100000, comma-separated and
+            increasing — one contour per value. Exactly one of this or
+            `--contours-minutes` is required.
+          schema:
+            type: string
+          example: "1000,5000"
+        - name: "contours_colors"
+          in: query
+          required: false
+          description: >-
+            A hex color per contour (no `#`), comma-separated — must match
+            the contour count.
+          schema:
+            type: string
+          example: "ff0000,00ff00"
+        - name: "polygons"
+          in: query
+          required: false
+          description: >-
+            Return each contour as a GeoJSON polygon instead of a
+            linestring.
+          schema:
+            type: boolean
+        - name: "denoise"
+          in: query
+          required: false
+          # A number before the range, not after: `first_sentence` in
+          # `src/main.rs` cuts a `--help` line at the first `.`, and
+          # `0.0-1.0:` on its own left `--help` showing just `0`.
+          # `--schema` and `docs/commands.md` still show it in full.
+          description: >-
+            A smaller value removes more of the smaller contours, 0.0-1.0,
+            defaulting to 1.0.
+          schema:
+            type: number
+            minimum: 0
+            maximum: 1
+        - name: "generalize"
+          in: query
+          required: false
+          description: >-
+            Douglas-Peucker simplification tolerance in meters. A higher
+            value is a coarser, smaller contour.
+          schema:
+            type: number
+        # Prose rather than an `enum`, for the reason given on
+        # `contours_minutes` above.
+        - name: "exclude"
+          in: query
+          required: false
+          description: >-
+            Road types to route around, comma-separated. Options are
+            `motorway`, `toll`, `ferry`, `unpaved`, `cash_only_tolls`.
+          schema:
+            type: string
+          example: "motorway,toll"
+        - name: "depart_at"
+          in: query
+          required: false
+          description: >-
+            Departure time, ISO 8601 — for `mapbox/driving-traffic`, which
+            live traffic conditions to route against.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: >-
+            A GeoJSON `FeatureCollection`, one feature per contour, each
+            carrying `contour` (the minute or meter value), `metric`
+            (`time` or `distance`), and rendering hints (`color`,
+            `opacity`, and — with `--polygons` — `fill`/`fill-opacity`).
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Not Found — an invalid profile.
+        "422":
+          description: >-
+            Unprocessable Entity — invalid coordinates, an out-of-range
+            contour value, or neither/both of `contours_minutes` and
+            `contours_meters` given.

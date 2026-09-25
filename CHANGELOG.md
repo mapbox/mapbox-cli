@@ -19,6 +19,13 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- Each run records one `cli.command` telemetry event, appended to
+  `~/.mapbox/.telemetry/<date>.jsonl` and kept for 7 days. Nothing is sent
+  anywhere by default. It never touches stdout, the exit code or how long a
+  command takes, so a script sees no difference; a CI job does find a
+  `.mapbox/.telemetry` directory it didn't before. `MAPBOX_CLI_NO_TELEMETRY=1`
+  turns it off.
+
 - `MAPBOX_CLI_EXTRA_QUERY` appends raw query parameters to every request, in
   the same `k1=v1&k2=v2` shape as a URL's own query string — for an API
   parameter this CLI's specs don't declare a flag for.

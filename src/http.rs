@@ -20,7 +20,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::ArgMatches;
 
-use crate::telemetry;
+use crate::{executor, telemetry, telemetry_event};
 
 /// The flag and the variable a caller moves the budget with.
 pub const TIMEOUT_ARG: &str = "timeout";
@@ -238,6 +238,49 @@ fn build(timeout: Duration, command_group: Option<&str>) -> Result<reqwest::bloc
         .timeout(timeout)
         .build()
         .context("Could not start an HTTP client")
+}
+
+/// Sends `request`, recording it for the run's telemetry event.
+///
+/// Every request goes through here rather than `RequestBuilder::send`,
+/// because a `reqwest` client has no response hook: a request sent anywhere
+/// else is one `network` does not count. `only_http_sends_requests` in
+/// `tests/source_guards.rs` holds that.
+///
+/// The request id is kept only for a Mapbox host — it is what joins a row to
+/// Mapbox's own logs, and another service's id joins to nothing we hold.
+pub fn send(
+    request: reqwest::blocking::RequestBuilder,
+) -> reqwest::Result<reqwest::blocking::Response> {
+    let (client, request) = request.build_split();
+    let request = request?;
+    let body_bytes = request
+        .body()
+        .and_then(|body| body.as_bytes())
+        .map(|bytes| bytes.len() as u64);
+    let mapbox = request.url().host_str().is_some_and(is_mapbox_host);
+
+    let started = std::time::Instant::now();
+    let result = client.execute(request);
+    let elapsed = started.elapsed();
+
+    match &result {
+        Ok(response) => telemetry_event::add_request(
+            Some(response.status().as_u16()),
+            response.content_length(),
+            body_bytes,
+            elapsed,
+            mapbox
+                .then(|| executor::request_id(response.headers()))
+                .flatten(),
+        ),
+        Err(_) => telemetry_event::add_request(None, None, body_bytes, elapsed, None),
+    }
+    result
+}
+
+fn is_mapbox_host(host: &str) -> bool {
+    host == "mapbox.com" || host.ends_with(".mapbox.com")
 }
 
 #[cfg(test)]

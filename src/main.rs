@@ -31,6 +31,8 @@ mod schema;
 mod skill_dest;
 mod spec;
 mod telemetry;
+mod telemetry_event;
+mod telemetry_sink;
 mod tilesets_cli;
 mod uninstall;
 mod update_check;
@@ -664,13 +666,14 @@ fn no_stored_credentials(profile: Option<&str>) -> anyhow::Error {
 }
 
 /// Answers `--schema`, from either of the two places it can be noticed.
-fn emit_schema(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches) -> ExitCode {
+fn emit_schema(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches) -> u8 {
+    telemetry_event::set_parsed(app, specs, matches, "schema");
     let mode = Mode::from_matches(matches);
     match schema::emit(mode, app, specs, matches) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => 0,
         Err(e) => {
             output::emit_error(mode, &e);
-            ExitCode::FAILURE
+            1
         }
     }
 }
@@ -693,15 +696,21 @@ fn main() -> ExitCode {
         return update_check::run_refresh_child();
     }
 
+    telemetry_event::start();
     let code = cli();
     update_check::notify();
-    code
+    // After the notice, which the event reports.
+    telemetry_event::finish(Some(u32::from(code)));
+    ExitCode::from(code)
 }
 
 /// Every failure leaves through here, so that one `--output` decision covers
 /// results and errors alike. `run` does the work; `cli` only chooses how
 /// what comes back is rendered.
-fn cli() -> ExitCode {
+///
+/// The exit code is returned as a number rather than an `ExitCode`, which
+/// cannot be read back, so `main` can report it.
+fn cli() -> u8 {
     // Kept whole for the pre-parse fallback: `escape_passthrough_args`
     // rewrites the line for clap, and a failure needs to see what the caller
     // actually typed.
@@ -713,7 +722,7 @@ fn cli() -> ExitCode {
         // cannot be until the specs it is parsed against exist.
         Err(e) => {
             output::emit_error(Mode::early(&raw_argv), &e);
-            return ExitCode::FAILURE;
+            return 1;
         }
     };
 
@@ -730,7 +739,10 @@ fn cli() -> ExitCode {
         // scan of argv — say whether `--schema` was really what was written.
         Err(e) => match schema::requested(&app, argv) {
             Some(matches) => return emit_schema(&app, &specs, &matches),
-            None => return report_parse_result(e, &raw_argv),
+            None => {
+                telemetry_event::set_unparsed(&app, &raw_argv, e.kind());
+                return report_parse_result(e, &raw_argv);
+            }
         },
     };
 
@@ -741,12 +753,13 @@ fn cli() -> ExitCode {
         return emit_schema(&app, &specs, &matches);
     }
 
+    telemetry_event::set_parsed(&app, &specs, &matches, "execute");
     let mode = Mode::from_matches(&matches);
     match run(&app, &specs, &matches, mode) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => 0,
         Err(e) => {
             output::emit_error(mode, &e);
-            ExitCode::FAILURE
+            1
         }
     }
 }
@@ -762,7 +775,7 @@ fn cli() -> ExitCode {
 /// The mode cannot come from the parse that just failed, so `Mode::early`
 /// reads `--output` off argv itself — an explicit choice has to survive the
 /// error that makes it matter most.
-fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> ExitCode {
+fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> u8 {
     let err = drop_subcommand_from_short_circuit_usage(err);
 
     // Clap uses 2 for a usage error and 0 for help/version; preserving that
@@ -789,8 +802,12 @@ fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> Exi
     // says nothing the message above it didn't. Text mode deserves the same
     // one-line-plus-suggestion treatment json already gets.
     if is_help || (!mode.is_json() && err.kind() != ErrorKind::MissingSubcommand) {
+        if !err.use_stderr() {
+            // Help and the version: clap writes these to stdout itself.
+            telemetry_event::add_stdout_bytes(err.render().to_string().len());
+        }
         let _ = err.print();
-        return ExitCode::from(code);
+        return code;
     }
 
     // Clap's rendering is an error paragraph, then a blank line, then usage
@@ -840,7 +857,7 @@ fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> Exi
     });
 
     output::emit_error(mode, &error.into());
-    ExitCode::from(code)
+    code
 }
 
 /// The `tip: …` line clap's own suggester renders for an unrecognized
@@ -1016,6 +1033,19 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             if use_login && token.is_none() {
                 return Err(no_stored_credentials(profile));
             }
+            match &token {
+                Some(tilesets_cli::ChildToken::Flag(t)) => {
+                    telemetry_event::set_token(auth::TokenSource::Flag, t)
+                }
+                Some(tilesets_cli::ChildToken::Stored(t)) => {
+                    telemetry_event::set_token(auth::TokenSource::Login, t)
+                }
+                None => {
+                    if let Some((_, t)) = auth::environment_token() {
+                        telemetry_event::set_token(auth::TokenSource::Environment, &t);
+                    }
+                }
+            }
             if token.is_none() {
                 // Falling through to whatever the environment holds. If that
                 // shadows a login for a different account, say so: the
@@ -1095,6 +1125,9 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
 
             if use_login && token.is_none() {
                 return Err(no_stored_credentials(profile));
+            }
+            if let Some(token) = &token {
+                telemetry_event::set_resolved_token(matches, use_login, token);
             }
 
             account_usage::run(
@@ -1208,6 +1241,9 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
 
             if use_login && token.is_none() {
                 return Err(no_stored_credentials(profile));
+            }
+            if let Some(token) = &token {
+                telemetry_event::set_resolved_token(matches, use_login, token);
             }
             let username: Option<String> = matches
                 .get_one::<String>("username")

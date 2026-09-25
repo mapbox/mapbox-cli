@@ -392,12 +392,7 @@ pub fn run_refresh_child() -> ExitCode {
 /// The channel manifest documents the shape; `version` is the only field
 /// this reads, and it carries no leading `v`.
 fn fetch_latest(url: &str) -> Option<String> {
-    let response = http::client()
-        .ok()?
-        .get(url)
-        .timeout(FETCH_TIMEOUT)
-        .send()
-        .ok()?;
+    let response = http::send(http::client().ok()?.get(url).timeout(FETCH_TIMEOUT)).ok()?;
     if !response.status().is_success() {
         return None;
     }
@@ -432,6 +427,7 @@ pub fn notify() {
     // it had, rather than racing a child that may finish first.
     if let Some(latest) = should_notify(cache.as_ref(), CURRENT, now) {
         output::progress(&notice(latest, CURRENT, cfg!(windows)));
+        crate::telemetry_event::set_update_notice(latest);
         let mut updated = cache.clone().unwrap_or_default();
         updated.notified_at = now;
         write_cache(&updated);

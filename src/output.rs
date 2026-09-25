@@ -1483,6 +1483,7 @@ fn error_payload(e: &CliError) -> Value {
 /// no `state` field: the streams already separate the two cases.
 pub fn emit_error(mode: Mode, err: &anyhow::Error) {
     let cli = err.downcast_ref::<CliError>();
+    crate::telemetry_event::set_error_code(cli.map_or(GENERIC_CODE, |e| e.code.as_str()));
 
     if mode.is_json() {
         let payload = match cli {
@@ -1588,6 +1589,8 @@ fn adds_detail(body: &Value) -> bool {
 }
 
 fn write_stdout(line: &str) -> Result<()> {
+    // The line and its newline.
+    crate::telemetry_event::add_stdout_bytes(line.len() + 1);
     let mut out = std::io::stdout().lock();
     writeln!(out, "{line}")?;
     out.flush()?;

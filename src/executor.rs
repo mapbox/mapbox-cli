@@ -283,9 +283,7 @@ fn dispatch(
         req = attach_body(req, source)?;
     }
 
-    let response = req
-        .send()
-        .map_err(|e| transport_failure("Request failed", e))?;
+    let response = crate::http::send(req).map_err(|e| transport_failure("Request failed", e))?;
     let status = response.status();
     // Must read headers before `bytes()` consumes the response — anything
     // not taken here is gone after. For a long time only `Content-Type`
@@ -348,6 +346,9 @@ fn dispatch(
         .next_page
         .as_deref()
         .map(|next| NextPage::of(&op.query_params, next));
+    if next_page.is_some() {
+        crate::telemetry_event::set_more_pages();
+    }
 
     match as_text {
         Some(text) => match serde_json::from_str::<serde_json::Value>(&text) {
@@ -1392,6 +1393,7 @@ fn write_binary(body: &[u8], content_type: &str) -> Result<()> {
         .into());
     }
 
+    crate::telemetry_event::add_stdout_bytes(body.len());
     stdout
         .write_all(body)
         .and_then(|()| stdout.flush())
@@ -1882,12 +1884,13 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
         let addr = listener.local_addr().expect("the bound address");
 
-        let failure = crate::http::client()
-            .expect("a client")
-            .get(format!("http://{addr}/"))
-            .timeout(std::time::Duration::from_millis(250))
-            .send()
-            .expect_err("a server that never answers cannot have answered");
+        let failure = crate::http::send(
+            crate::http::client()
+                .expect("a client")
+                .get(format!("http://{addr}/"))
+                .timeout(std::time::Duration::from_millis(250)),
+        )
+        .expect_err("a server that never answers cannot have answered");
 
         let reported = super::transport_failure("Request failed", failure);
         assert_eq!(reported.code, "request_timed_out");

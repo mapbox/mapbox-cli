@@ -1,8 +1,8 @@
 # Implemented commands
 
-Every command the CLI ships, including five auth commands, 39 API operations (35 across 9
-command groups, plus `directions`, `isochrone`, `map-match` and `matrix`), the
-tilesets-cli proxy, `completion` and `generate-skills`. Each is
+Every command the CLI ships, including five auth commands, 40 API operations (35 across 9
+command groups, plus `directions`, `isochrone`, `map-match`, `matrix` and
+`places`), the tilesets-cli proxy, `completion` and `generate-skills`. Each is
 shown in both of its renderings. Which one you get is decided by `--output`, whose default
 (`auto`) reads stdout: a terminal gets the left column, a pipe or redirect
 gets the right one. See
@@ -11,12 +11,12 @@ gets the right one. See
 Account names, style ids and tokens in the examples are replaced; everything
 else is as the API sent it.
 
-**35 of the 39 were run against the live API and show what came back:** 24
+**36 of the 40 were run against the live API and show what came back:** 24
 on 2026-09-01, `styles download` by 2026-10-01, `fonts list`, `fonts upload` and `fonts delete` on
 2026-09-08, once `fonts:list`/`fonts:write` became registrable,
-`directions`, `isochrone` and `map-match` on 2026-09-23, `matrix`,
-`feedback list` and `feedback get` on 2026-09-24, and `feedback create` on
-2026-10-02.
+`directions`, `isochrone` and `map-match` on 2026-09-23, `matrix` and
+`feedback list`/`feedback get` on 2026-09-24, `feedback create` on
+2026-10-02, and `places` on 2026-10-09.
 The write operations were exercised as round trips on throwaway objects —
 a style created, updated, drafted and deleted; icons uploaded to a sprite
 and taken out again; a font uploaded and deleted — leaving the account as
@@ -34,9 +34,12 @@ commands and the flags they take — is held to `mapbox --schema` on every
 can be checked cannot fall behind the binary.
 
 The remaining 4 give the response shape from the spec or the docs instead
-of a live capture: they're all `search`'s — read-only and safe to run, but
-the credentials used to write this page have no Search Box API access, so
-every call answers 401 rather than a result.
+of a live capture. All four are `search`'s, marked as no-access when this
+page was first written — no longer true, discovered while writing `places
+get`'s example above, which needed a real `search forward` result to test
+against and got one. `search`'s own four sections below haven't been
+re-captured with this pass, since that's a different command group's page
+to touch; a worthwhile follow-up, not done here.
 
 Each **Parameters** section lists only what is specific to its command. The
 globals every API command takes are
@@ -102,6 +105,9 @@ nests, and is typed `mapbox styles draft get`.
 **[Map Match](#map-match)** — [map-match](#mapbox-map-match)
 
 **[Matrix](#matrix)** — [matrix](#mapbox-matrix)
+
+**[Places](#places)** — [places.get](#mapbox-places-get) ·
+[places.batch](#mapbox-places-batch)
 
 **[Search](#search)** — [search.forward](#mapbox-search-forward) ·
 [search.reverse](#mapbox-search-reverse) ·
@@ -1808,7 +1814,6 @@ is the authority on whether a value is valid, not this page.
 | `--destinations <indices>` | Which coordinates are matrix columns — same rules as `--sources`. |
 | `--fallback-speed <km/h>` | Replaces a `null` (unreachable) cell with a straight-line estimate at this speed, rather than leaving it `null`. Legacy. |
 | `--depart-at <ISO 8601>` | For future traffic conditions and time-dependent road restrictions. |
-
 #### Examples
 
 ```sh
@@ -1864,6 +1869,139 @@ Captured live: a full 3×3 matrix between three San Francisco points, both
 Neither output mode has a bespoke rendering for this response, same as
 `mapbox directions` and `mapbox map-match` — both print the same JSON,
 `-o text` pretty-printed and `-o json` on one line.
+
+---
+
+## Places
+
+Full detail for a place — hours, phone, website, photos, address,
+coordinates, activity data — by the `mapbox_id` a Search Box API result
+already returned. Curated by hand down to the parameters documented at
+docs.mapbox.com/api/search/places — see `custom-openapi/README.md` for why
+this command group doesn't come from the vendored specs the way most
+others do.
+
+**This API has no search or suggest of its own.** It only resolves ids
+`search forward`/`reverse`/`category` already returned — the detail-view
+follow-up to a search result, not a way to find places by name or location.
+
+### `mapbox places get`
+
+Full detail for one place.
+
+#### Parameters
+
+`<mapbox-id>` (positional) is required — from a Search Box API result.
+
+#### Examples
+
+```sh
+mapbox places get dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA
+```
+
+#### Outputs
+
+Captured live, a real place found via `search forward --q "Ferry Building
+San Francisco"`:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```json
+{
+  "mapbox_id": "dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA",
+  "name": "Ferry Building",
+  "full_address": "San Francisco, California, 94105, United States",
+  "primary_category": "food",
+  "categories": ["cafe", "food", "food_and_drink"],
+  "status": "active",
+  "permanently_closed": false,
+  "opening_hours": "Sa 08:00-14:00",
+  "phone": "+14152373318",
+  "website": "http://crumbleandwhisk.com/",
+  "score": { "closed": 0, "reality": 0.973, "popularity": 0.275 },
+  "coordinates": {
+    "latitude": 37.79557765,
+    "longitude": -122.39332918,
+    "source": "poi",
+    "routable_points": [
+      { "name": "driving", "latitude": 37.795594, "longitude": -122.393338 }
+    ]
+  },
+  "address": {
+    "city": "San Francisco",
+    "neighborhood": "Financial District",
+    "postcode": "94105",
+    "region": "California",
+    "region_code_full": "US-CA",
+    "country": "United States",
+    "country_code": "US"
+  }
+}
+```
+
+</td><td>
+
+```json
+{"mapbox_id":"dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA","name":"Ferry Building","full_address":"San Francisco, California, 94105, United States","primary_category":"food","categories":["cafe","food","food_and_drink"],"status":"active","permanently_closed":false,"opening_hours":"Sa 08:00-14:00","phone":"+14152373318","website":"http://crumbleandwhisk.com/","score":{"closed":0,"reality":0.973,"popularity":0.275},"coordinates":{"latitude":37.79557765,"longitude":-122.39332918,"source":"poi","routable_points":[{"name":"driving","latitude":37.795594,"longitude":-122.393338}]},"address":{"city":"San Francisco","neighborhood":"Financial District","postcode":"94105","region":"California","region_code_full":"US-CA","country":"United States","country_code":"US"}}
+```
+
+</td></tr>
+</table>
+
+Dropped `attributes` (14 boolean amenity flags — wheelchair access, payment
+types, and the like), `created_at`/`updated_at`, and most `address` fields
+that were `null` for this place, for length; the real response carries
+them too. `brand` is `null` here since this isn't a chain location.
+
+### `mapbox places batch`
+
+Full detail for up to 100 places in one call — hydrates a whole list of
+search results in one round trip instead of one `get` per id.
+
+#### Parameters
+
+`--data`/`-d` carries `{"ids": [...]}`, up to 100 `mapbox_id` strings.
+
+#### Examples
+
+```sh
+mapbox places batch -d '{"ids": ["dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA", "dXJuOm1ieHBvaTo4N2YzMmY2YS00MjkwLTQzNmItYWQyMi1hMzBhMzcxNWVmNzM"]}'
+```
+
+#### Outputs
+
+Captured live, the same Ferry Building above plus a second real place:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```json
+{
+  "results": [
+    { "mapbox_id": "…fa19cca0…", "name": "Ferry Building" },
+    { "mapbox_id": "…87f32f6a…", "name": "Golden Gate Bridge" }
+  ]
+}
+```
+
+</td><td>
+
+```json
+{"results":[{"mapbox_id":"…fa19cca0…","name":"Ferry Building"},{"mapbox_id":"…87f32f6a…","name":"Golden Gate Bridge"}]}
+```
+
+</td></tr>
+</table>
+
+Each entry in `results` is the full record `get` returns, trimmed to
+`mapbox_id`/`name` here for length. Not captured live: `206` with
+`missing`/`unprocessed` alongside `results` — the documented shape for a
+batch where some ids didn't resolve. Both ids used to write this page were
+real and resolved, so triggering it would have meant fabricating a
+plausibly-shaped but fake id, which defeats the point of a live capture.
 
 ---
 

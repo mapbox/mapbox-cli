@@ -745,6 +745,7 @@ pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
         yaml: include_str!("../custom-openapi/feedback/openapi/feedback.yaml"),
     },
     SpecEntry {
+<<<<<<< HEAD
         name: "isochrone",
         yaml: include_str!("../custom-openapi/isochrone/openapi/isochrone.yaml"),
     },
@@ -755,6 +756,10 @@ pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
     SpecEntry {
         name: "matrix",
         yaml: include_str!("../custom-openapi/matrix/openapi/matrix.yaml"),
+=======
+        name: "places",
+        yaml: include_str!("../custom-openapi/places/openapi/places.yaml"),
+>>>>>>> e697465 (Add mapbox places get/batch)
     },
 ];
 

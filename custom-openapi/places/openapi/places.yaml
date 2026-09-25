@@ -1,0 +1,107 @@
+openapi: "3.0.0"
+# `parse_spec` turns `info.description` below into this service's clap
+# `long_about`, so it also reaches `mapbox places --help`, `--schema` and
+# `generate-skills` output. Keep it to API prose only — the provenance
+# below is for whoever edits this file, not for a CLI user:
+#
+# Hand-authored down to the parameters documented at
+# docs.mapbox.com/api/search/places. See `custom-openapi/README.md` for
+# how a file like this is wired in.
+info:
+  title: "Mapbox Places API"
+  description: >-
+    Full detail for a place — hours, phone, website, photos, address,
+    coordinates, activity data — by the `mapbox_id` a Search Box API result
+    already returned. This API has no search or suggest of its own; it only
+    resolves ids something else found.
+  version: "0.0.0"
+servers:
+  - url: https://api.mapbox.com
+    description: Places API
+paths:
+  /places/v1/details/retrieve/{mapbox_id}:
+    get:
+      operationId: get
+      summary: Full detail for one place.
+      description: >-
+        `mapbox_id` comes from a Search Box API result (`search forward`/
+        `reverse`/`category`) — this API does not look places up by name
+        or location itself.
+      parameters:
+        - name: "mapbox_id"
+          in: path
+          required: true
+          description: "The place's Mapbox ID, from a Search Box API result."
+          schema:
+            type: string
+            minLength: 1
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: >-
+            A place record: `name`, `full_address`, `primary_category`/
+            `categories`, `coordinates` (with `routable_points`),
+            structured `address`, `score` (`closed`/`reality`/
+            `popularity`, each 0-1), and where available `brand`,
+            `opening_hours`, `phone`, `photos`, `website`, `building`, and
+            `telemetry` (hourly activity by day of week).
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not Found — no place with that Mapbox ID.
+        "422":
+          description: Unprocessable Entity — `mapbox_id` isn't validly formed.
+        "429":
+          description: >-
+            Too Many Requests — the per-second rate limit, or the Public
+            Preview's monthly quota (1000 records/account), was exceeded.
+
+  /places/v1/details/retrieve:
+    post:
+      operationId: batch
+      summary: Full detail for up to 100 places in one call.
+      description: >-
+        Hydrates a whole list of Search Box API results in one round trip
+        instead of one `get` per id. `--data` carries `{"ids": [...]}` —
+        up to 100 `mapbox_id` strings.
+      parameters:
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: >-
+            Every id resolved: `{"results": [<place record>, ...]}`, same
+            shape as `get`'s own response, one entry per id.
+        "206":
+          description: >-
+            Partial Content — some ids didn't resolve. Same body as 200,
+            plus `missing` (ids with no such place) and/or `unprocessed`
+            (ids that couldn't be processed) alongside `results`.
+        "400":
+          description: >-
+            Bad Request — `ids` isn't a non-empty array of at most 100
+            entries.
+        "401":
+          description: Unauthorized
+        "429":
+          description: >-
+            Too Many Requests — the per-second rate limit (batch is
+            charged by id count) or the Public Preview's monthly quota was
+            exceeded.

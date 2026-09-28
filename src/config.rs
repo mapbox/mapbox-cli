@@ -31,7 +31,8 @@ const CONFIG_FILE: &str = "config.json";
 
 const UPDATE_CHECK_KEY: &str = "update-check";
 const HISTORY_KEY: &str = "history";
-const KEYS: &[&str] = &[UPDATE_CHECK_KEY, HISTORY_KEY];
+const TELEMETRY_KEY: &str = "telemetry";
+const KEYS: &[&str] = &[UPDATE_CHECK_KEY, HISTORY_KEY, TELEMETRY_KEY];
 
 const ON: &str = "on";
 const OFF: &str = "off";
@@ -46,6 +47,8 @@ struct Config {
     update_check: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     history: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    telemetry: Option<bool>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -92,6 +95,12 @@ pub fn history_enabled() -> bool {
     read_config().history.unwrap_or(true)
 }
 
+/// Whether the run's telemetry event may be recorded, per the persisted
+/// setting. [`crate::telemetry_event`] checks it alongside `MAPBOX_CLI_NO_TELEMETRY`.
+pub fn telemetry_enabled() -> bool {
+    read_config().telemetry.unwrap_or(true)
+}
+
 fn on_off(enabled: bool) -> &'static str {
     if enabled {
         ON
@@ -107,6 +116,7 @@ fn resolve(config: &Config, key: &str) -> bool {
     match key {
         UPDATE_CHECK_KEY => update_check_setting(config),
         HISTORY_KEY => config.history.unwrap_or(true),
+        TELEMETRY_KEY => config.telemetry.unwrap_or(true),
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
 }
@@ -120,6 +130,7 @@ fn clear(config: &mut Config, key: &str) {
     match key {
         UPDATE_CHECK_KEY => config.update_check = None,
         HISTORY_KEY => config.history = None,
+        TELEMETRY_KEY => config.telemetry = None,
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
 }
@@ -185,6 +196,7 @@ pub fn set(matches: &ArgMatches, mode: Mode) -> Result<()> {
     match key.as_str() {
         UPDATE_CHECK_KEY => config.update_check = Some(enabled),
         HISTORY_KEY => config.history = Some(enabled),
+        TELEMETRY_KEY => config.telemetry = Some(enabled),
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
     write_config(&config)?;

@@ -3205,6 +3205,7 @@ was set in, and stays in every future shell instead.
 | --- | --- | --- |
 | `update-check` | `on` | The update notice; mirrors `MAPBOX_NO_UPDATE_CHECK` (see [Update notices](../README.md#update-notices)) |
 | `history` | `on` | [Command history](../README.md#command-history), read by `mapbox history`; `MAPBOX_HISTORY=0` or `=1` overrides it for a session |
+| `telemetry` | `on` | The run's telemetry event; mirrors `MAPBOX_CLI_NO_TELEMETRY` (see [Privacy](../README.md#privacy)) |
 
 ### `mapbox config get`
 
@@ -3216,7 +3217,7 @@ than failing, the same forgiving read the update-check cache itself uses.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to read: `update-check` or `history`. |
+| `<key>` | Which setting to read: `update-check`, `history` or `telemetry`. |
 
 #### Examples
 
@@ -3255,7 +3256,7 @@ without an environment variable.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to change: `update-check` or `history`. |
+| `<key>` | Which setting to change: `update-check`, `history` or `telemetry`. |
 | `<value>` | `on` or `off`. |
 
 #### Examples
@@ -3313,6 +3314,7 @@ mapbox config list
 ```
 update-check	on
 history	on
+telemetry	on
 ```
 
 </td><td>
@@ -3325,6 +3327,10 @@ history	on
   },
   {
     "key": "history",
+    "value": true
+  },
+  {
+    "key": "telemetry",
     "value": true
   }
 ]
@@ -3344,7 +3350,7 @@ default, a key explicitly set to the old default value does not.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to clear: `update-check` or `history`. |
+| `<key>` | Which setting to clear: `update-check`, `history` or `telemetry`. |
 
 #### Examples
 

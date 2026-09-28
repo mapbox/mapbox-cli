@@ -28,6 +28,10 @@ that may never merge. They are not releases and are not listed here.
   code; it does find a `~/.mapbox/history` directory it didn't before, and
   `mapbox config list` now reports a second key, `history`.
 
+- `mapbox config set telemetry off` turns the telemetry event off for good,
+  in every shell, the way `MAPBOX_CLI_NO_TELEMETRY=1` does for one. The run
+  that turns it off records nothing either. `mapbox config list` now also
+  reports `telemetry`.
 - Each run records one `cli.command` telemetry event, appended to
   `~/.mapbox/.telemetry/<date>.jsonl` and kept for 7 days. Nothing is sent
   anywhere by default. It never touches stdout, the exit code or how long a

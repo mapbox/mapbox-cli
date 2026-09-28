@@ -19,12 +19,19 @@ pub const PRODUCT_TOKEN: &str = concat!("mapbox-cli/", env!("CARGO_PKG_VERSION")
 
 /// Whether anything past [`PRODUCT_TOKEN`] may be sent.
 pub(crate) fn telemetry_allowed() -> bool {
-    match std::env::var_os(MAPBOX_CLI_NO_TELEMETRY_ENV) {
-        None => true,
-        Some(value) => {
-            let value = value.to_string_lossy().trim().to_ascii_lowercase();
-            value.is_empty() || NOT_AN_OPT_OUT.contains(&value.as_str())
-        }
+    env_switch(MAPBOX_CLI_NO_TELEMETRY_ENV) != Some(true)
+}
+
+/// A boolean environment variable by this CLI's convention: `None` when
+/// unset or empty, `Some(false)` for one of [`NOT_AN_OPT_OUT`], `Some(true)`
+/// for anything else.
+pub(crate) fn env_switch(name: &str) -> Option<bool> {
+    let value = std::env::var_os(name)?;
+    let value = value.to_string_lossy().trim().to_ascii_lowercase();
+    if value.is_empty() {
+        None
+    } else {
+        Some(!NOT_AN_OPT_OUT.contains(&value.as_str()))
     }
 }
 
@@ -49,6 +56,21 @@ fn os_marker() -> String {
 /// on macOS say `arm64`.
 fn arch_marker() -> String {
     format!("arch/{}", spelled_arch(std::env::consts::ARCH))
+}
+
+/// The CPU architecture as the event's `env.arch` spells it.
+pub(crate) fn arch() -> &'static str {
+    spelled_arch(std::env::consts::ARCH)
+}
+
+/// Whether this run is in CI, by the same rule as the `env/ci` marker.
+pub(crate) fn in_ci() -> bool {
+    ci_marker().is_some()
+}
+
+/// For `crate::telemetry_event`, which may not reach for stdout itself.
+pub(crate) fn stdout_is_terminal() -> bool {
+    std::io::stdout().is_terminal()
 }
 
 fn spelled_arch(arch: &str) -> &str {

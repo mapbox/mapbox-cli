@@ -37,6 +37,9 @@ fn command(home: &Path) -> Command {
         .env_remove("MapboxAccessToken")
         .env_remove("MAPBOX_USERNAME")
         .env_remove("MAPBOX_OUTPUT")
+        // Off: these tests hold a run to leaving nothing on disk; what
+        // history leaves is `tests/history.rs`'s to check.
+        .env("MAPBOX_HISTORY", "0")
         .env_remove("MAPBOX_YES")
         .env_remove("MAPBOX_CONFIG_DIR")
         .env("HOME", home);

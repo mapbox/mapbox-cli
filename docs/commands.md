@@ -64,6 +64,9 @@ nests, and is typed `mapbox styles draft get`.
 [config.set](#mapbox-config-set) · [config.list](#mapbox-config-list) ·
 [config.unset](#mapbox-config-unset)
 
+**[History](#history)** — [history.list](#mapbox-history-list) ·
+[history.show](#mapbox-history-show)
+
 **[Doctor](#doctor)** — [doctor](#mapbox-doctor)
 
 **[Usage](#usage)** — [usage](#mapbox-usage)
@@ -3194,10 +3197,14 @@ Removed /home/user/.local/bin/mapbox.
 ## Config
 
 Settings that persist across shells and sessions — `~/.mapbox/config.json`
-(or `$MAPBOX_CONFIG_DIR`), written the same way credentials are. One setting
-today, `update-check`, which mirrors `MAPBOX_NO_UPDATE_CHECK` (see [Update
-notices](../README.md#update-notices)) but stays off in every future shell
-rather than only the one the environment variable was set in.
+(or `$MAPBOX_CONFIG_DIR`), written the same way credentials are. Each is the
+persisted form of an environment variable that only lasts for the shell it
+was set in, and stays in every future shell instead.
+
+| Key | Default | What it controls |
+| --- | --- | --- |
+| `update-check` | `on` | The update notice; mirrors `MAPBOX_NO_UPDATE_CHECK` (see [Update notices](../README.md#update-notices)) |
+| `history` | `on` | [Command history](../README.md#command-history), read by `mapbox history`; `MAPBOX_HISTORY=0` or `=1` overrides it for a session |
 
 ### `mapbox config get`
 
@@ -3209,7 +3216,7 @@ than failing, the same forgiving read the update-check cache itself uses.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to read. Only `update-check` exists today. |
+| `<key>` | Which setting to read: `update-check` or `history`. |
 
 #### Examples
 
@@ -3248,7 +3255,7 @@ without an environment variable.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to change. Only `update-check` exists today. |
+| `<key>` | Which setting to change: `update-check` or `history`. |
 | `<value>` | `on` or `off`. |
 
 #### Examples
@@ -3305,6 +3312,7 @@ mapbox config list
 
 ```
 update-check	on
+history	on
 ```
 
 </td><td>
@@ -3313,6 +3321,10 @@ update-check	on
 [
   {
     "key": "update-check",
+    "value": true
+  },
+  {
+    "key": "history",
     "value": true
   }
 ]
@@ -3332,7 +3344,7 @@ default, a key explicitly set to the old default value does not.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to clear. Only `update-check` exists today. |
+| `<key>` | Which setting to clear: `update-check` or `history`. |
 
 #### Examples
 
@@ -3356,6 +3368,147 @@ update-check cleared, now on (default).
 {
   "key": "update-check",
   "value": true
+}
+```
+
+</td></tr>
+</table>
+
+---
+
+## History
+
+The runs [command history](../README.md#command-history) recorded on this
+machine over the last 30 days, up to 10 MB: which command ran, how it ended, how long it
+took and the request ids support can look up. Argument values are never
+recorded, so a run shows as its command path — `mapbox search forward`,
+not what was searched for. History is on by default; with it off
+(`mapbox config set history off`), both commands find nothing and say why
+on stderr. Neither makes a request or needs a token, and neither is itself
+recorded — nor are `--help`, `--version`, `completion` or a run under
+`sudo`.
+
+### `mapbox history list`
+
+The most recent runs, newest first: a short id, when it ran (UTC), its exit
+code and its command path. `json` gives each run's full `id`, which
+`history show` also accepts shortened to any prefix that names one run.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `--limit <n>` | How many runs to list. Defaults to `20`; `0` lists every recorded run. |
+
+#### Examples
+
+```sh
+mapbox history list
+
+mapbox history list --limit 0
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+ID        TIME                      EXIT  COMMAND
+d05b3f4d  2026-09-28T11:20:03.095Z     2  mapbox styles
+be40d711  2026-09-28T11:20:03.045Z     1  mapbox styles list
+```
+
+</td><td>
+
+```json
+[
+  {
+    "command": [
+      "styles"
+    ],
+    "durationMs": 41,
+    "errorCode": "usage",
+    "exitCode": 2,
+    "id": "d05b3f4d-9947-4662-a037-3d00b68d1d6e",
+    "time": "2026-09-28T11:20:03.095Z"
+  },
+  {
+    "command": [
+      "styles",
+      "list"
+    ],
+    "durationMs": 157,
+    "errorCode": "http_401",
+    "exitCode": 1,
+    "id": "be40d711-3d62-4e9b-8dde-23535020b368",
+    "time": "2026-09-28T11:20:03.045Z"
+  }
+]
+```
+
+</td></tr>
+</table>
+
+### `mapbox history show`
+
+Everything recorded about one run: its command path, how it ended, its
+error code, how many requests it made and the ids of the last five. `json`
+gives the record as it was written. An id that names no run fails with
+`history_not_found`; a prefix shared by several fails with
+`history_ambiguous_id`; with nothing recorded yet, `show` with no id fails
+with `history_empty`.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `[id]` | The run's id, or any prefix of it that names one run. The newest run when left out. |
+
+#### Examples
+
+```sh
+mapbox history show
+
+mapbox history show be40d711
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+Run       be40d711-3d62-4e9b-8dde-23535020b368
+Time      2026-09-28T11:20:03.045Z (mapbox 0.3.0)
+Command   mapbox styles list
+Exit      1 after 157 ms
+Error     http_401
+Requests  1
+  request id 7ovbf8wEjg4S_uS-u8SNW0OHb64pCVgD5fThd2C2q9ZlE7bDY-s0yw==
+```
+
+</td><td>
+
+```json
+{
+  "command": [
+    "styles",
+    "list"
+  ],
+  "durationMs": 157,
+  "errorCode": "http_401",
+  "exitCode": 1,
+  "id": "be40d711-3d62-4e9b-8dde-23535020b368",
+  "invocation": "execute",
+  "requestCount": 1,
+  "requestIds": [
+    "7ovbf8wEjg4S_uS-u8SNW0OHb64pCVgD5fThd2C2q9ZlE7bDY-s0yw=="
+  ],
+  "time": "2026-09-28T11:20:03.045Z",
+  "version": "0.3.0"
 }
 ```
 

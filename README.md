@@ -23,6 +23,7 @@ time from OpenAPI specs, so they always match the specs.
   - [`--schema`](#--schema)
   - [Confirmation and `--yes`](#confirmation-and---yes)
   - [Update notices](#update-notices)
+  - [Command history](#command-history)
  - [Privacy](#privacy)
 - [Uninstall](#uninstall)
 - [Contributing](#contributing)
@@ -203,6 +204,12 @@ mapbox styles create --data '{"name": "My Style", "version": 8, ...}'
 Every request sends `User-Agent: mapbox-cli/<version>` and nothing else
 about you or your machine. `MAPBOX_CLI_NO_TELEMETRY=1` keeps even future markers
 out of that header.
+
+Each run also appends one event to `~/.mapbox/.telemetry/<date>.jsonl`
+(kept for 7 days): the command's name, its options (a value only when it
+comes from a fixed list, otherwise just its length or size), how it ended,
+and how long it took — never a token, a file path or free text you typed.
+It stays on this machine. `MAPBOX_CLI_NO_TELEMETRY=1` turns it off.
 
 ### Agent skills
 
@@ -437,6 +444,28 @@ between runs. A build that names no release channel never checks at all, and
 `mapbox config set update-check off` turns it off for good, in every shell —
 see [Config](docs/commands.md#config) — rather than just the session an
 environment variable happens to be set in.
+
+### Command history
+
+Each run appends one line to `~/.mapbox/history/<UTC date>.jsonl` (or under
+`$MAPBOX_CONFIG_DIR`), kept for 30 days and at most 10 MB, oldest dropped
+first: which command ran (its command path,
+like `search forward`), how it ended, how long it took and the request ids
+support can look up. Argument values are never recorded — not what you
+searched for, not a file path, not a token. The files are readable only by
+you and never leave your machine.
+
+```sh
+mapbox history list             # the most recent runs, newest first
+mapbox history show             # everything recorded about the newest run
+mapbox history show be40d711    # or one run, by any prefix of its id
+```
+
+`--help`, `--version`, `completion`, `history` itself and runs under `sudo`
+are not recorded. `mapbox config set history off` turns history off for
+good, and `MAPBOX_HISTORY=0` for one shell; with it off, nothing is written
+and no directory is created, but what was already recorded stays until you
+delete `~/.mapbox/history`. `MAPBOX_CLI_NO_TELEMETRY` does not affect it.
 
 ### Privacy
 

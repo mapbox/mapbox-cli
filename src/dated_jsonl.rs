@@ -1,8 +1,9 @@
 //! Private, append-only, one-file-per-UTC-day JSONL directories under the
-//! config directory, pruned to a fixed number of days, for the consumers of
-//! [`crate::run_record`] that keep records on disk. The only files this
-//! deletes are ones named exactly `YYYY-MM-DD.jsonl` inside the directory
-//! it was handed.
+//! config directory, pruned to a fixed number of days and held to a total
+//! size, for the consumers of [`crate::run_record`] that keep records on
+//! disk. The only files this deletes or replaces are ones named exactly
+//! `YYYY-MM-DD.jsonl` inside the directory it was handed, and the scratch
+//! file a trim writes beside one.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -56,17 +57,51 @@ pub(crate) fn append(dir: &Path, line: &str, keep_days: u64) {
     }
 }
 
-/// Every line in `dir`'s dated files, oldest first. A missing directory is
-/// no lines.
-pub(crate) fn read_all(dir: &Path) -> Vec<String> {
+/// Holds `dir`'s dated files, together, to `limit` bytes by dropping the
+/// oldest lines first — whole days while a day is all that has to go, then
+/// the oldest lines of the oldest day left. Sheds down to nine tenths of
+/// `limit`, so the next run does not have to shed again.
+pub(crate) fn shed(dir: &Path, limit: u64) {
+    let mut files: Vec<(String, u64)> = dated_names(dir)
+        .into_iter()
+        .filter_map(|name| Some((name.clone(), std::fs::metadata(dir.join(&name)).ok()?.len())))
+        .collect();
+    let total: u64 = files.iter().map(|(_, size)| size).sum();
+    if total <= limit {
+        return;
+    }
+    let mut excess = total - limit / 10 * 9;
+    files.sort();
+    for (name, size) in files {
+        if excess == 0 {
+            break;
+        }
+        let path = dir.join(&name);
+        if size <= excess {
+            let _ = std::fs::remove_file(&path);
+            excess -= size;
+        } else {
+            trim(&path, size - excess);
+            excess = 0;
+        }
+    }
+}
+
+fn dated_names(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return vec![];
     };
-    let mut names: Vec<String> = entries
+    entries
         .flatten()
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| dated_file(name).is_some())
-        .collect();
+        .collect()
+}
+
+/// Every line in `dir`'s dated files, oldest first. A missing directory is
+/// no lines.
+pub(crate) fn read_all(dir: &Path) -> Vec<String> {
+    let mut names = dated_names(dir);
     names.sort();
     names
         .iter()
@@ -84,6 +119,69 @@ pub(crate) fn read_all(dir: &Path) -> Vec<String> {
 fn open_private(path: &Path) -> std::io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
     options.append(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
+/// Keeps the newest whole lines of `path` that fit in `limit` bytes.
+///
+/// Written to a scratch file and renamed over the original. A parallel run
+/// that appends between the read and the rename loses its line: these files
+/// are best-effort, and a lock would make every run pay for a rare race.
+fn trim(path: &Path, limit: u64) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let kept = newest_lines(&text, limit as usize);
+    if kept.is_empty() {
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+    let Some(name) = path.file_name() else {
+        return;
+    };
+    let scratch = path.with_file_name(format!(
+        ".{}.trim-{}",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    let written = create_private(&scratch)
+        .and_then(|mut file| file.write_all(kept.as_bytes()))
+        .and_then(|()| std::fs::rename(&scratch, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&scratch);
+    }
+}
+
+/// The longest suffix of `text` made of whole lines and no longer than
+/// `target` bytes.
+fn newest_lines(text: &str, target: usize) -> &str {
+    if text.len() <= target {
+        return text;
+    }
+    let from = text.len() - target;
+    let bytes = text.as_bytes();
+    // The first line that starts at or after `from`. Always just past a
+    // `\n`, so never inside a character.
+    let start = if bytes[from - 1] == b'\n' {
+        from
+    } else {
+        bytes[from..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(text.len(), |p| from + p + 1)
+    };
+    &text[start..]
+}
+
+/// Creates `path` `0600`, failing if it exists.
+fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -191,6 +289,50 @@ mod tests {
                 "2026-09-24.jsonl",
                 "user-id"
             ]
+        );
+    }
+
+    #[test]
+    fn a_trim_keeps_the_newest_whole_lines() {
+        let text = "aaaa\nbbbb\ncccc\n";
+        assert_eq!(newest_lines(text, 100), text);
+        assert_eq!(newest_lines(text, 10), "bbbb\ncccc\n");
+        assert_eq!(newest_lines(text, 9), "cccc\n");
+        assert_eq!(newest_lines(text, 4), "");
+    }
+
+    #[test]
+    fn shedding_drops_the_oldest_days_then_the_oldest_lines() {
+        let dir = std::env::temp_dir().join(format!("mapbox-dated-shed-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let day = |n: u32| format!("2026-09-{n:02}.jsonl");
+        // Three days of ten 100-byte lines each.
+        for n in 1..=3 {
+            let text: String = (0..10).map(|i| format!("{n}-{i:<96}\n")).collect();
+            std::fs::write(dir.join(day(n)), text).unwrap();
+        }
+        let mine = dir.join("notes.txt");
+        std::fs::write(&mine, "x".repeat(5000)).unwrap();
+
+        shed(&dir, 2000);
+        let left = read_all(&dir);
+        let total: usize = left.iter().map(|l| l.len() + 1).sum();
+        let mine_kept = mine.exists();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert!(mine_kept, "only dated files are shed");
+        assert!(total <= 1800, "{total}");
+        assert!(
+            left.iter().all(|l| !l.starts_with("1-")),
+            "the oldest day went first"
+        );
+        assert!(
+            left.iter().any(|l| l.starts_with("2-")),
+            "only as much as needed"
+        );
+        assert!(
+            left.last().unwrap().starts_with("3-9"),
+            "the newest line stays"
         );
     }
 }

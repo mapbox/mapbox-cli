@@ -3379,7 +3379,7 @@ update-check cleared, now on (default).
 ## History
 
 The runs [command history](../README.md#command-history) recorded on this
-machine over the last 30 days: which command ran, how it ended, how long it
+machine over the last 30 days, up to 10 MB: which command ran, how it ended, how long it
 took and the request ids support can look up. Argument values are never
 recorded, so a run shows as its command path — `mapbox search forward`,
 not what was searched for. History is on by default; with it off

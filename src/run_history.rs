@@ -1,6 +1,7 @@
 //! Command history: one line of execution metadata per run in
 //! `~/.mapbox/history/<UTC date>.jsonl` (or under `$MAPBOX_CONFIG_DIR`),
-//! kept for [`RETENTION_DAYS`] days and read back by `mapbox history`.
+//! kept for [`RETENTION_DAYS`] days and at most [`LIMIT_BYTES`], oldest
+//! first, and read back by `mapbox history`.
 //!
 //! On by default, so it keeps only what is safe to keep without anyone
 //! having asked: the command path from the command tree (`search forward`,
@@ -33,6 +34,9 @@ use crate::{auth, config, dated_jsonl, history, telemetry};
 const DIR: &str = "history";
 const HISTORY_ENV: &str = "MAPBOX_HISTORY";
 pub(crate) const RETENTION_DAYS: u64 = 30;
+/// Tens of thousands of runs: a script calling this in a loop must not fill
+/// the disk before thirty days are up.
+const LIMIT_BYTES: u64 = 10 * 1024 * 1024;
 /// The last few are enough to hand to support; a paginated run can make
 /// hundreds of requests.
 const MAX_REQUEST_IDS: usize = 5;
@@ -73,6 +77,7 @@ pub(crate) fn write(record: &Record) {
     };
     if let Some(dir) = dated_jsonl::private_dir(DIR) {
         dated_jsonl::append(&dir, &text, RETENTION_DAYS);
+        dated_jsonl::shed(&dir, LIMIT_BYTES);
     }
 }
 

@@ -20,7 +20,7 @@ that may never merge. They are not releases and are not listed here.
 ## Unreleased
 
 - Command history, on by default: each run appends one line to
-  `~/.mapbox/history/<date>.jsonl`, kept 30 days, with its command path, exit
+  `~/.mapbox/history/<date>.jsonl`, kept 30 days and at most 10 MB, with its command path, exit
   code, error code, duration and request ids — never an argument value. It
   stays on your machine. `mapbox history list` and `mapbox history show`
   read it back. Turn it off with `mapbox config set history off` or

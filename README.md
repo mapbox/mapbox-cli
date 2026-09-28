@@ -442,7 +442,8 @@ environment variable happens to be set in.
 ### Command history
 
 Each run appends one line to `~/.mapbox/history/<UTC date>.jsonl` (or under
-`$MAPBOX_CONFIG_DIR`), kept for 30 days: which command ran (its command path,
+`$MAPBOX_CONFIG_DIR`), kept for 30 days and at most 10 MB, oldest dropped
+first: which command ran (its command path,
 like `search forward`), how it ended, how long it took and the request ids
 support can look up. Argument values are never recorded — not what you
 searched for, not a file path, not a token. The files are readable only by

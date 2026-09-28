@@ -35,6 +35,8 @@ mod schema;
 mod skill_dest;
 mod spec;
 mod telemetry;
+mod telemetry_event;
+mod telemetry_sink;
 mod tilesets_cli;
 mod uninstall;
 mod update_check;

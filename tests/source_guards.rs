@@ -47,6 +47,7 @@ fn sources() -> Vec<(String, String)> {
 ///   size limit, matched by exact `YYYY-MM-DD.jsonl` names inside the
 ///   directory it writes to, and the scratch file a trim leaves when its
 ///   rename fails.
+/// - `telemetry_sink` — a state file in `~/.mapbox/.telemetry` it replaces.
 /// - `executor` — nothing durable; the temp file a `--file` upload streams.
 /// - `generate_skills` — the staged skill directory it renames into place.
 /// - `skill_dest` — a test scratch directory.
@@ -58,6 +59,7 @@ const MAY_DELETE: &[&str] = &[
     "executor.rs",
     "generate_skills.rs",
     "skill_dest.rs",
+    "telemetry_sink.rs",
     "uninstall.rs",
 ];
 

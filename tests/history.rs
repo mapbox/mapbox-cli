@@ -47,6 +47,8 @@ fn command(home: &Path) -> Command {
         .env_remove("NO_PROXY")
         .env_remove("no_proxy")
         .env("MAPBOX_NO_UPDATE_CHECK", "1")
+        // Telemetry keeps its own directory beside `history/`.
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("MAPBOX_CONFIG_DIR", config_dir(home));

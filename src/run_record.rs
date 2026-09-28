@@ -20,7 +20,9 @@ use clap::parser::ValueSource;
 use clap::{ArgMatches, Command};
 
 use crate::spec::ServiceSpec;
-use crate::{auth, completion, confirm, executor, http, output, run_history, tilesets_cli};
+use crate::{
+    auth, completion, confirm, executor, http, output, run_history, telemetry_event, tilesets_cli,
+};
 
 const TILESETS: &str = tilesets_cli::COMMAND;
 
@@ -338,9 +340,10 @@ fn finish_locked(record: &mut Record, exit_code: Option<u32>) {
     record.duration = STARTED.get().map_or(Duration::ZERO, Instant::elapsed);
     record.exit_code = exit_code;
     run_history::write(record);
+    telemetry_event::deliver(record);
 }
 
-fn uuid_v4(mut bytes: [u8; 16]) -> String {
+pub(crate) fn uuid_v4(mut bytes: [u8; 16]) -> String {
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
@@ -389,7 +392,7 @@ fn command_from_argv(app: &Command, argv: &[OsString]) -> Vec<String> {
 /// Subcommand names from `words`, in order, for as long as each word names
 /// a subcommand of the one before. Flags and their values are skipped; the
 /// first word that is neither ends the walk.
-fn tree_path(app: &Command, words: impl IntoIterator<Item = String>) -> Vec<String> {
+pub(crate) fn tree_path(app: &Command, words: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut path = vec![];
     let mut command = app;
     for word in words {

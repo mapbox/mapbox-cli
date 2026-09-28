@@ -1,6 +1,7 @@
 mapbox accounts list-scopes | aliases: (none)
 mapbox accounts list-tokens | aliases: (none)
 mapbox accounts retrieve-token | aliases: (none)
+mapbox directions | aliases: (none)
 mapbox fonts delete | aliases: (none)
 mapbox fonts list | aliases: (none)
 mapbox fonts upload | aliases: (none)

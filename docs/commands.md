@@ -73,6 +73,8 @@ nests, and is typed `mapbox styles draft get`.
 [accounts.retrieve-token](#mapbox-accounts-retrieve-token) ·
 [accounts.list-scopes](#mapbox-accounts-list-scopes)
 
+**[Directions](#directions)** — [directions](#mapbox-directions)
+
 **[Fonts](#fonts)** — [fonts.list](#mapbox-fonts-list) ·
 [fonts.upload](#mapbox-fonts-upload) · [fonts.delete](#mapbox-fonts-delete)
 
@@ -885,6 +887,135 @@ styles:list    List styles.
 
 What this lists is what the account is *allowed* to hold, which is not the
 same as what the current token holds — `retrieve-token` answers that.
+
+---
+## Directions
+
+Turn-by-turn routes between 2-25 waypoints, for driving (with or without
+live traffic), walking, or cycling. Curated by hand down to the parameters
+documented at docs.mapbox.com/api/navigation/directions — see
+`custom-openapi/README.md` for why this command group doesn't come from the
+vendored specs the way most others do. The ~30 electric-vehicle-routing
+parameters (`engine=electric` and everything under it) are deliberately not
+here: those describe a vehicle's charging curve down to the watt, which is
+data an integration passes in from a vehicle profile, not something to
+hand-type as CLI flags.
+
+### `mapbox directions`
+
+A route between 2-25 waypoints, in the order given — a route through fixed
+stops, not a traveling-salesman solve. No subcommand: this API has one
+operation, so there's nothing a second word would disambiguate — the same
+reason `mapbox usage` has none either.
+
+#### Parameters
+
+`<routing-profile>` and `<coordinates>` (both positional) are required.
+`<routing-profile>` is sent exactly as typed, not checked against a fixed
+list: `mapbox/driving-traffic`, `mapbox/driving`, `mapbox/walking` and
+`mapbox/cycling` are documented, but some accounts (OEM agreements, mainly)
+have additional profiles of their own that were never published — the API
+is the authority on whether a value is valid, not this page. `<coordinates>`
+is 2-25 `{longitude},{latitude}` pairs, semicolon-separated.
+
+| Parameter | Effect |
+| --- | --- |
+| `--alternatives` | Return up to 2 alternative routes alongside the primary one. |
+| `--annotations <fields>` | Segment-level metadata per leg, comma-separated (`distance`, `duration`, `speed`, `congestion`, `congestion_numeric`, `maxspeed`, `closure`, `state_of_charge`). Requires `--overview full`. |
+| `--avoid-maneuver-radius <1-1000>` | Meters around the start to avoid a significant maneuver within. |
+| `--bearings <angle,degrees;...>` | Filter road segments by direction of travel, one entry per coordinate. |
+| `--layers <int;...>` | A road layer (Z-order) per waypoint, for multi-level roads. |
+| `--continue-straight` | Keep going straight at an intermediate waypoint rather than u-turning back to it. |
+| `--exclude <types>` | Road types or `point(lon lat)` values to route around, comma-separated (`motorway`, `toll`, `ferry`, `unpaved`, `cash_only_tolls`, `country_border`, `state_border`, `tunnel`). |
+| `--geometries <geojson\|polyline\|polyline6>` | Route geometry format. Defaults to `polyline`. |
+| `--include <types>` | Special road types to allow, comma-separated (`hov2`, `hov3`, `hot`). |
+| `--overview <full\|simplified\|false>` | Geometry detail level. Defaults to `simplified`. |
+| `--radiuses <meters\|unlimited;...>` | Max snap distance to the road network, one per coordinate. |
+| `--approaches <unrestricted\|curb;...>` | Which side of the road to approach each waypoint from. |
+| `--steps` | Return turn-by-turn instructions. Several flags below only take effect with this set. |
+| `--banner-instructions` | Return banner objects for display. Requires `--steps`. |
+| `--language <tag>` | Instruction language. Defaults to `en`. Requires `--steps`. |
+| `--roundabout-exits` | Separate entry/exit instructions for a roundabout. Requires `--steps`. |
+| `--voice-instructions` | Return SSML-marked voice guidance. Requires `--steps`. |
+| `--voice-units <imperial\|british_imperial\|metric>` | Requires `--steps` and `--voice-instructions`. |
+| `--waypoints <indices>` | Which coordinates get their own arrival instruction — must include `0` and the last index. Requires `--steps`. |
+| `--waypoints-per-route` | Nest each route's waypoints under that route object instead of once at the top level. |
+| `--waypoint-names <names;...>` | A name per waypoint for its arrival instruction. Requires `--steps`. |
+| `--waypoint-targets <lon,lat;...>` | A drop-off point per waypoint, when it differs from the routed-to coordinate. Requires `--steps`. |
+| `--notifications <all\|none>` | Whether to return route notification/warning metadata. |
+| `--alley-bias <-1..1>` | `mapbox/driving` only. |
+| `--arrive-by <ISO 8601>` | `mapbox/driving` only. |
+| `--depart-at <ISO 8601>` | `mapbox/driving` and `mapbox/driving-traffic`. |
+| `--max-height <0-10>` / `--max-width <0-10>` / `--max-weight <0-100>` | `mapbox/driving` and `mapbox/driving-traffic`. Meters, meters, metric tons. |
+| `--snapping-include-closures` / `--snapping-include-static-closures` | `mapbox/driving-traffic` only. |
+| `--walking-speed <0.14-6.94>` / `--walkway-bias <-1..1>` | `mapbox/walking` only. |
+
+#### Examples
+
+```sh
+mapbox directions mapbox/driving "-122.42,37.78;-122.45,37.91"
+mapbox directions mapbox/walking "-122.42,37.78;-122.43,37.79" \
+  --steps --geometries geojson --overview full --annotations distance,duration
+```
+
+The negative longitude is not treated as a flag here, even without `--`
+before it — `coordinates` is one of the parameters this CLI recognizes a
+leading `-` on and lets through, the same way `search`'s `--proximity` and
+`--bbox` already do (see `HYPHEN_LEADING_VALUE_PARAMS` in `src/main.rs`).
+
+#### Outputs
+
+Captured live against `mapbox/driving` between two San Francisco points.
+`routes`/`legs`/`waypoints` are nested arrays of objects, which
+`output::emit`'s text mode has no bespoke summary for (unlike the GeoJSON
+`FeatureCollection` responses `search` and `geocoder` return) — both modes
+print the same JSON, `-o text` pretty-printed and `-o json` on one line:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```json
+{
+  "code": "Ok",
+  "routes": [
+    {
+      "distance": 26966.74,
+      "duration": 2552.258,
+      "geometry": "{{qeFvdejVqdChZ…",
+      "legs": [
+        {
+          "distance": 26966.74,
+          "duration": 2552.258,
+          "steps": [],
+          "summary": "US 101 North, Paradise Drive",
+          "weight": 3068.861
+        }
+      ],
+      "weight": 3068.861,
+      "weight_name": "auto"
+    }
+  ],
+  "uuid": "…",
+  "waypoints": [
+    { "distance": 11.034, "location": [-122.420122, 37.779978], "name": "US 101 North" },
+    { "distance": 1820.457, "location": [-122.453429, 37.893872], "name": "" }
+  ]
+}
+```
+
+</td><td>
+
+```json
+{"code":"Ok","routes":[{"distance":26966.74,"duration":2552.258,"geometry":"{{qeFvdejVqdChZ…","legs":[{"distance":26966.74,"duration":2552.258,"steps":[],"summary":"US 101 North, Paradise Drive","weight":3068.861}],"weight":3068.861,"weight_name":"auto"}],"uuid":"…","waypoints":[{"distance":11.034,"location":[-122.420122,37.779978],"name":"US 101 North"},{"distance":1820.457,"location":[-122.453429,37.893872],"name":""}]}
+```
+
+</td></tr>
+</table>
+
+Both trimmed to one leg for length — the real response also carries
+`admins` (administrative boundaries traversed) and `notifications` (three
+tunnel alerts, on this particular route) per leg.
 
 ---
 ## Fonts

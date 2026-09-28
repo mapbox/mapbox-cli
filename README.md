@@ -172,15 +172,17 @@ Each API is a top-level subcommand, one sub-subcommand per operation:
 mapbox accounts *
 mapbox fonts *
 mapbox geocoder *
-mapbox rasterarrays *
 mapbox search *
 mapbox sprites *
-mapbox static-images *
-mapbox static-tiles *
+mapbox static *
 mapbox styles *
-mapbox tilequery *
 mapbox tilesets *
 ```
+
+`mapbox directions` is the one exception: its API has a single operation,
+so there's a bare command with no subcommand at all, the same shape
+`mapbox usage` already has — see [docs/commands.md](./docs/commands.md) for
+its own parameters.
 
 A command group is not the same thing as a spec file: which one an operation
 belongs to is decided per operation. So `sprites` and `tilesets` are each

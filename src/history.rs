@@ -168,7 +168,7 @@ fn diagnostics(entry: &Value) -> Diagnostics {
         Some(mut log) => {
             // Already in the record it belongs to.
             if let Some(object) = log.as_object_mut() {
-                for key in ["id", "time", "version"] {
+                for key in ["id", "time"] {
                     object.remove(key);
                 }
             }

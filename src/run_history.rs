@@ -79,12 +79,12 @@ pub(crate) fn will_record(record: &Record) -> bool {
 
 /// Appends the run's line. The caller has checked [`will_record`];
 /// `diagnostics` says whether a diagnostic log is written for it too.
-pub(crate) fn write(record: &Record, diagnostics: bool) {
-    let Ok(text) = serde_json::to_string(&line(record, diagnostics)) else {
+pub(crate) fn write(record: &Record, diagnostics: bool, at: SystemTime) {
+    let Ok(text) = serde_json::to_string(&line(record, diagnostics, at)) else {
         return;
     };
     if let Some(dir) = dated_jsonl::private_dir(DIR) {
-        dated_jsonl::append(&dir, &text, RETENTION_DAYS);
+        dated_jsonl::append(&dir, &text, at, RETENTION_DAYS);
         dated_jsonl::shed(&dir, LIMIT_BYTES);
     }
 }
@@ -104,7 +104,7 @@ fn recorded(record: &Record, under_sudo: bool) -> bool {
         && record.command.first().map(String::as_str) != Some(history::COMMAND)
 }
 
-fn line(record: &Record, diagnostics: bool) -> Line {
+fn line(record: &Record, diagnostics: bool, at: SystemTime) -> Line {
     let ids: Vec<String> = record
         .requests
         .iter()
@@ -112,7 +112,7 @@ fn line(record: &Record, diagnostics: bool) -> Line {
         .collect();
     Line {
         id: record.id.clone(),
-        time: dated_jsonl::timestamp(SystemTime::now()),
+        time: dated_jsonl::timestamp(at),
         version: env!("CARGO_PKG_VERSION"),
         command: record.command.clone(),
         invocation: record.invocation.map(Invocation::as_str),
@@ -177,7 +177,7 @@ mod tests {
             .iter()
             .map(std::ffi::OsString::from)
             .collect();
-        let text = serde_json::to_string(&line(&run, false)).unwrap();
+        let text = serde_json::to_string(&line(&run, false, SystemTime::now())).unwrap();
         assert!(text.contains(r#""command":["search","forward"]"#), "{text}");
         assert!(!text.contains("Pennsylvania"), "{text}");
     }

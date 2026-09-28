@@ -283,8 +283,8 @@ fn a_log_goes_when_its_history_does() {
     std::fs::write(&expired_log, "{}\n").expect("an expired log");
 
     // With logging off, so the cleanup is not a side effect of writing.
-    // History itself prunes on the first run of a day (`tests/history.rs`),
-    // so `expired_history` may still be there; its log goes regardless.
+    // History prunes itself only on the first run of a day, so the expired
+    // history file may still be there; its log goes regardless.
     run(&home, &["styles", "lsit"]);
     assert!(!orphan.exists(), "a log outlived its history");
     assert!(!expired_log.exists(), "a log outlived 30 days");

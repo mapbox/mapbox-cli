@@ -33,8 +33,8 @@ use crate::{auth, config, dated_jsonl, run_history, telemetry, tilesets_cli};
 
 const DIR: &str = "logs";
 const LOG_ENV: &str = "MAPBOX_LOG";
-pub(crate) const RETENTION_DAYS: u64 = run_history::RETENTION_DAYS;
-pub(crate) const LIMIT_BYTES: u64 = 100 * 1024 * 1024;
+const RETENTION_DAYS: u64 = run_history::RETENTION_DAYS;
+const LIMIT_BYTES: u64 = 100 * 1024 * 1024;
 
 /// A `--all` run can page hundreds of times; past this, requests are counted
 /// rather than listed.
@@ -46,18 +46,12 @@ const REDACTED: &str = "<redacted>";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Only what the history record lacks, plus the `id` and `time` that find
+/// that record.
 struct Line {
     id: String,
     time: String,
-    version: &'static str,
     argv: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    command: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    invocation: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    exit_code: Option<u32>,
-    duration_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     auth: Option<Auth>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -109,13 +103,13 @@ fn is_zero(n: &usize) -> bool {
 }
 
 /// Appends the run's line. The caller has checked [`enabled`] and that
-/// history recorded the run.
-pub(crate) fn write(record: &Record) {
-    let Ok(text) = serde_json::to_string(&line(record)) else {
+/// history recorded the run at `at`.
+pub(crate) fn write(record: &Record, at: SystemTime) {
+    let Ok(text) = serde_json::to_string(&line(record, at)) else {
         return;
     };
     if let Some(dir) = dated_jsonl::private_dir(DIR) {
-        dated_jsonl::append(&dir, &text, RETENTION_DAYS);
+        dated_jsonl::append(&dir, &text, at, RETENTION_DAYS);
         dated_jsonl::shed(&dir, LIMIT_BYTES);
     }
 }
@@ -145,33 +139,23 @@ pub(crate) fn expire_with_history() {
 }
 
 /// The detail logged for the run `id` that history recorded at `time`.
-/// Only that day's file is read — and the next, for a run that finished
-/// across midnight.
+/// Only that day's file is read: both lines carry the same time.
 pub(crate) fn find(id: &str, time: &str) -> Option<Value> {
     let dir = dir_path()?;
-    let date = time.get(..10)?;
-    let next = dated_jsonl::next_date(date);
-    [Some(date.to_string()), next]
+    dated_jsonl::read_day(&dir, time.get(..10)?)
         .into_iter()
-        .flatten()
-        .flat_map(|day| dated_jsonl::read_day(&dir, &day))
         .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
         .find(|entry| entry.get("id").and_then(Value::as_str) == Some(id))
 }
 
-fn line(record: &Record) -> Line {
+fn line(record: &Record, at: SystemTime) -> Line {
     Line {
         id: record.id.clone(),
-        time: dated_jsonl::timestamp(SystemTime::now()),
-        version: env!("CARGO_PKG_VERSION"),
+        time: dated_jsonl::timestamp(at),
         argv: tilesets_cli::redacted_argv(&record.argv)
             .iter()
             .map(|arg| clean(arg))
             .collect(),
-        command: record.command.clone(),
-        invocation: record.invocation.map(run_record::Invocation::as_str),
-        exit_code: record.exit_code,
-        duration_ms: record.duration.as_millis() as u64,
         auth: record.token.as_ref().map(|token| Auth {
             source: token.source.as_str(),
             kind: token.kind,
@@ -217,7 +201,9 @@ fn clean(text: &str) -> String {
 
 /// `text` with every word that looks like a Mapbox token replaced. A word
 /// here is a run of the characters a token is made of, so a token inside a
-/// URL, after `=`, or in quotes is still found.
+/// URL, after `=`, or in quotes is still found. The token may start inside
+/// the word, as after a percent-encoded `=` (`%3Dpk.`) or in a short-flag
+/// cluster (`-ytpk.`); the word is redacted from there.
 fn scrub_tokens(text: &str) -> String {
     let is_token_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
     let mut out = String::with_capacity(text.len());
@@ -228,10 +214,13 @@ fn scrub_tokens(text: &str) -> String {
             .find(|c: char| !is_token_char(c))
             .unwrap_or(rest.len() - start);
         let word = &rest[start..start + word_len];
-        if tilesets_cli::looks_like_a_token(word) {
-            out.push_str(REDACTED);
-        } else {
-            out.push_str(word);
+        // Every token character is ASCII, so every index is a boundary.
+        match (0..word.len()).find(|&i| tilesets_cli::looks_like_a_token(&word[i..])) {
+            Some(at) => {
+                out.push_str(&word[..at]);
+                out.push_str(REDACTED);
+            }
+            None => out.push_str(word),
         }
         rest = &rest[start + word_len..];
     }
@@ -257,6 +246,11 @@ mod tests {
                 "token \"<redacted>\".".to_string(),
             ),
             (TOKEN.to_string(), REDACTED.to_string()),
+            (
+                format!("url-https%3A%2F%2Fh%2Fm.png%3Faccess_token%3D{TOKEN}"),
+                "url-https%3A%2F%2Fh%2Fm.png%3Faccess_token%3D<redacted>".to_string(),
+            ),
+            (format!("-yt{TOKEN}"), "-yt<redacted>".to_string()),
         ] {
             assert_eq!(scrub_tokens(&text), expected);
         }

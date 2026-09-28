@@ -475,8 +475,9 @@ never leave your machine.
 `mapbox history show` includes a run's log, or says it was not captured
 (logging was off) or is no longer available. Logs are kept up to 30 days and
 100 MB in total; past that the oldest go first, and the run's history record
-stays. A log goes when its history record does. Logging needs history:
-with history off it never runs, and `config set log on` refuses.
+stays. A day of logs goes when that day of history does. Logging needs
+history: with history off it never runs, and with the `history` setting off
+`config set log on` refuses.
 
 ### Privacy
 

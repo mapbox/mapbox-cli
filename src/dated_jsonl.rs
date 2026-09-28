@@ -39,10 +39,11 @@ pub(crate) fn private_dir(name: &str) -> Option<PathBuf> {
     Some(dir)
 }
 
-/// Appends `line` to today's file in `dir`, and on the first write of a day
-/// deletes files older than `keep_days` (today included). Best-effort.
-pub(crate) fn append(dir: &Path, line: &str, keep_days: u64) {
-    let now = now_secs();
+/// Appends `line` to the file in `dir` for `at`'s UTC day, and on the first
+/// write of a day deletes files older than `keep_days` (that day included).
+/// Best-effort.
+pub(crate) fn append(dir: &Path, line: &str, at: SystemTime, keep_days: u64) {
+    let now = unix_secs(at);
     let (today, _) = utc_date(now);
     let path = dir.join(format!("{today}.jsonl"));
     let is_new_day = !path.exists();
@@ -111,19 +112,13 @@ pub(crate) fn read_day(dir: &Path, date: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The day after `date` (`YYYY-MM-DD`), or `None` when it isn't one.
-pub(crate) fn next_date(date: &str) -> Option<String> {
-    dated_file(&format!("{date}.jsonl"))?;
-    let y = date.get(0..4)?.parse().ok()?;
-    let m = date.get(5..7)?.parse().ok()?;
-    let d = date.get(8..10)?.parse().ok()?;
-    let days = crate::account_usage::days_from_civil(y, m, d);
-    Some(utc_date((days as u64 + 1) * 86_400).0)
-}
-
 /// The oldest date kept by a window of `days` (today included), as of now.
 pub(crate) fn oldest_kept(days: u64) -> String {
-    utc_date(now_secs().saturating_sub(days.saturating_sub(1) * 86_400)).0
+    oldest_kept_at(unix_secs(SystemTime::now()), days)
+}
+
+fn oldest_kept_at(now: u64, days: u64) -> String {
+    utc_date(now.saturating_sub(days.saturating_sub(1) * 86_400)).0
 }
 
 fn dated_names(dir: &Path) -> Vec<String> {
@@ -230,7 +225,7 @@ fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
 }
 
 fn prune(dir: &Path, now: u64, keep_days: u64) {
-    let (oldest_kept, _) = utc_date(now.saturating_sub(keep_days.saturating_sub(1) * 86_400));
+    let oldest_kept = oldest_kept_at(now, keep_days);
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -274,10 +269,8 @@ pub(crate) fn timestamp(at: SystemTime) -> String {
     )
 }
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+fn unix_secs(at: SystemTime) -> u64 {
+    at.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 #[cfg(test)]
@@ -373,14 +366,5 @@ mod tests {
             left.last().unwrap().starts_with("3-9"),
             "the newest line stays"
         );
-    }
-
-    #[test]
-    fn the_next_date_crosses_months_and_years() {
-        assert_eq!(next_date("2026-09-28").as_deref(), Some("2026-09-29"));
-        assert_eq!(next_date("2026-09-30").as_deref(), Some("2026-10-01"));
-        assert_eq!(next_date("2026-12-31").as_deref(), Some("2027-01-01"));
-        assert_eq!(next_date("2028-02-28").as_deref(), Some("2028-02-29"));
-        assert_eq!(next_date("not-a-date"), None);
     }
 }

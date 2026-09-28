@@ -3540,17 +3540,10 @@ Log       mapbox styles list --username example --token <redacted>
         "source": "flag",
         "type": "pk"
       },
-      "command": [
-        "styles",
-        "list"
-      ],
-      "durationMs": 191,
       "error": {
         "code": "http_401",
         "message": "Not Authorized - Invalid Token"
       },
-      "exitCode": 1,
-      "invocation": "execute",
       "requests": [
         {
           "durationMs": 149,

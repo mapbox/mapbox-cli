@@ -45,6 +45,7 @@ fn command() -> Command {
         .env_remove("MapboxAccessToken")
         .env_remove("MAPBOX_USERNAME")
         .env_remove("MAPBOX_OUTPUT")
+        .env_remove("MAPBOX_HISTORY")
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("MAPBOX_CONFIG_DIR", home.join(".mapbox"));
@@ -354,11 +355,22 @@ fn a_missing_or_unknown_shell_is_a_usage_error() {
 /// refresh round-trip would be unusable.
 #[test]
 fn it_needs_no_token_and_touches_no_credentials() {
-    let home = sandbox_home();
+    // A home of its own: every other test here shares `sandbox_home`, and
+    // any of them — a usage error, `--schema` — records command history in
+    // its `.mapbox` while this one is looking. `completion` itself records
+    // nothing, history on or off.
+    let home = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("completion-home-untouched");
     let config = home.join(".mapbox");
     let _ = std::fs::remove_dir_all(&config);
+    std::fs::create_dir_all(&home).expect("create the home");
 
-    let out = run(&["completion", "zsh"]);
+    let out = command()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("MAPBOX_CONFIG_DIR", &config)
+        .args(["completion", "zsh"])
+        .output()
+        .expect("run mapbox");
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(
         !config.exists(),

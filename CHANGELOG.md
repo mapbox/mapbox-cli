@@ -19,6 +19,15 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- Command history, on by default: each run appends one line to
+  `~/.mapbox/history/<date>.jsonl`, kept 30 days, with its command path, exit
+  code, error code, duration and request ids — never an argument value. It
+  stays on your machine. `mapbox history list` and `mapbox history show`
+  read it back. Turn it off with `mapbox config set history off` or
+  `MAPBOX_HISTORY=0`. A script sees no change on stdout, stderr or the exit
+  code; it does find a `~/.mapbox/history` directory it didn't before, and
+  `mapbox config list` now reports a second key, `history`.
+
 - `MAPBOX_CLI_EXTRA_QUERY` appends raw query parameters to every request, in
   the same `k1=v1&k2=v2` shape as a URL's own query string — for an API
   parameter this CLI's specs don't declare a flag for.

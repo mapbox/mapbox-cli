@@ -43,6 +43,8 @@ fn sources() -> Vec<(String, String)> {
 /// - `agent_skills` — the staging directory it renames skills out of, and the
 ///   skill directory `install --force` replaces.
 /// - `auth` — `logout`, and the scratch file `write_private` renames from.
+/// - `dated_jsonl` — its own dated files past the retention window, matched
+///   by exact `YYYY-MM-DD.jsonl` names inside the directory it writes to.
 /// - `executor` — nothing durable; the temp file a `--file` upload streams.
 /// - `generate_skills` — the staged skill directory it renames into place.
 /// - `skill_dest` — a test scratch directory.
@@ -50,6 +52,7 @@ fn sources() -> Vec<(String, String)> {
 const MAY_DELETE: &[&str] = &[
     "agent_skills.rs",
     "auth.rs",
+    "dated_jsonl.rs",
     "executor.rs",
     "generate_skills.rs",
     "skill_dest.rs",

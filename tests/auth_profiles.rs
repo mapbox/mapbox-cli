@@ -49,6 +49,7 @@ fn command(home: &Path) -> Command {
         .env_remove("MapboxAccessToken")
         .env_remove("MAPBOX_USERNAME")
         .env_remove("MAPBOX_OUTPUT")
+        .env_remove("MAPBOX_HISTORY")
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("MAPBOX_CONFIG_DIR", config_dir(home));
@@ -267,24 +268,49 @@ fn listing_existing_profiles_does_not_touch_directory_permissions() {
     );
 }
 
+/// Listing creates no credential store. Command history, on by default,
+/// may create the config directory to hold `history/`; with history off,
+/// nothing is created at all.
 #[test]
 fn an_absent_config_directory_lists_nothing_and_creates_none() {
-    let home = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("auth-profiles-absent");
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).expect("create the scratch home, with no .mapbox inside it");
+    for (history, allowed) in [("1", &["history"][..]), ("0", &[][..])] {
+        let home = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("auth-profiles-absent-{history}"));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("create the scratch home, with no .mapbox inside it");
 
-    let json = command(&home)
-        .args(["-o", "json", "auth", "profiles"])
-        .output()
-        .expect("run mapbox auth profiles -o json");
-    assert!(
-        json.status.success(),
-        "{}",
-        String::from_utf8_lossy(&json.stderr)
-    );
-    assert_eq!(stdout(&json), "[]");
-    assert!(
-        !config_dir(&home).exists(),
-        "listing profiles must not create the config directory"
-    );
+        let json = command(&home)
+            .env("MAPBOX_HISTORY", history)
+            .args(["-o", "json", "auth", "profiles"])
+            .output()
+            .expect("run mapbox auth profiles -o json");
+        assert!(
+            json.status.success(),
+            "{}",
+            String::from_utf8_lossy(&json.stderr)
+        );
+        assert_eq!(stdout(&json), "[]");
+        let created: Vec<String> = std::fs::read_dir(config_dir(&home))
+            .map(|entries| {
+                entries
+                    .map(|e| {
+                        e.expect("an entry")
+                            .file_name()
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            created.iter().all(|name| allowed.contains(&name.as_str())),
+            "with MAPBOX_HISTORY={history}, listing profiles created {created:?}"
+        );
+        if history == "0" {
+            assert!(
+                !config_dir(&home).exists(),
+                "history off created the directory"
+            );
+        }
+    }
 }

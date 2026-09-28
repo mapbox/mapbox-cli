@@ -19,14 +19,17 @@ mod auth;
 mod completion;
 mod config;
 mod confirm;
+mod dated_jsonl;
 mod deprecation;
 mod doctor;
 mod executor;
 mod generate_skills;
+mod history;
 mod http;
 mod link;
 mod output;
 mod remedy;
+mod run_history;
 mod run_record;
 mod schema;
 mod skill_dest;
@@ -609,6 +612,9 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
     // machine, never the network.
     app = app.subcommand(config::command());
 
+    // Beside `config`, which turns the history it reads on and off.
+    app = app.subcommand(history::command());
+
     // Reads what the other hand-written commands above also read — the
     // token store, the proxy environment, the config and telemetry
     // switches — so it belongs beside them rather than the API surface
@@ -1107,6 +1113,13 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             Some(("list", _)) => config::list(mode)?,
             Some(("unset", unset_matches)) => config::unset(unset_matches, mode)?,
             _ => unreachable!("`config` sets subcommand_required(true)"),
+        },
+        // Ahead of the generic service arm too: it reads local history and
+        // makes no request.
+        Some((history::COMMAND, history_matches)) => match history_matches.subcommand() {
+            Some(("list", list_matches)) => history::list(list_matches, mode)?,
+            Some(("show", show_matches)) => history::show(show_matches, mode)?,
+            _ => unreachable!("`history` sets subcommand_required(true)"),
         },
         // Also ahead of the generic service arm: read-only except for the
         // opt-in `--verify` request, and needs no credential load of its own

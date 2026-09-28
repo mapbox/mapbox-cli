@@ -1483,6 +1483,8 @@ fn error_payload(e: &CliError) -> Value {
 /// no `state` field: the streams already separate the two cases.
 pub fn emit_error(mode: Mode, err: &anyhow::Error) {
     let cli = err.downcast_ref::<CliError>();
+    let code = cli.map_or(GENERIC_CODE, |e| e.code.as_str());
+    crate::run_record::set_error(code, &format!("{err:#}"));
 
     if mode.is_json() {
         let payload = match cli {
@@ -1588,6 +1590,7 @@ fn adds_detail(body: &Value) -> bool {
 }
 
 fn write_stdout(line: &str) -> Result<()> {
+    crate::run_record::add_stdout_bytes(line.len() + 1);
     let mut out = std::io::stdout().lock();
     writeln!(out, "{line}")?;
     out.flush()?;

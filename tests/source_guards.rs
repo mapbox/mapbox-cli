@@ -171,6 +171,30 @@ fn only_output_completion_and_binary_responses_write_to_stdout() {
     );
 }
 
+/// Every request goes through `http::send`, which is what adds it to the
+/// run's record.
+///
+/// A `reqwest` client has no response hook, so a request sent with
+/// `RequestBuilder::send` anywhere else is one the record never holds —
+/// silently, since nothing fails. `http.rs` is exempt: it is where `send` is
+/// defined, and its own tests call the builder directly.
+#[test]
+fn only_http_sends_requests() {
+    let unexpected: Vec<String> = sources()
+        .into_iter()
+        .filter(|(name, source)| name != "http.rs" && source.contains(".send()"))
+        .map(|(name, _)| format!("src/{name}"))
+        .collect();
+
+    assert!(
+        unexpected.is_empty(),
+        "these modules call `.send()` directly:\n  {}\n\n\
+         Wrap the request builder in `http::send(...)` instead, so the request is \
+         in the run's record.",
+        unexpected.join("\n  ")
+    );
+}
+
 /// Modules that turn a Mapbox API failure into a `CliError::http`, and so
 /// must carry the response's `X-Request-Id` into it.
 const CARRIES_A_REQUEST_ID: &[&str] = &["account_usage.rs", "auth.rs", "executor.rs"];

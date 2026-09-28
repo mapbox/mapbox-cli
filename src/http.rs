@@ -20,7 +20,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::ArgMatches;
 
-use crate::telemetry;
+use crate::{executor, run_record, telemetry};
 
 /// The flag and the variable a caller moves the budget with.
 pub const TIMEOUT_ARG: &str = "timeout";
@@ -238,6 +238,76 @@ fn build(timeout: Duration, command_group: Option<&str>) -> Result<reqwest::bloc
         .timeout(timeout)
         .build()
         .context("Could not start an HTTP client")
+}
+
+/// Sends `request`, recording it in the run's [`run_record`].
+///
+/// Every request goes through here rather than `RequestBuilder::send`,
+/// because a `reqwest` client has no response hook: a request sent anywhere
+/// else is one the record never lists. `only_http_sends_requests` in
+/// `tests/source_guards.rs` holds that.
+///
+/// The request id is kept only for a Mapbox host — it is what joins a record
+/// to Mapbox's own logs, and another service's id joins to nothing we hold.
+pub fn send(
+    request: reqwest::blocking::RequestBuilder,
+) -> reqwest::Result<reqwest::blocking::Response> {
+    let (client, request) = request.build_split();
+    let request = request?;
+    let method = request.method().to_string();
+    let url = executor::redacted_request_url(request.url());
+    let body_bytes = request
+        .body()
+        .and_then(|body| body.as_bytes())
+        .map(|bytes| bytes.len() as u64);
+    let mapbox = request.url().host_str().is_some_and(is_mapbox_host);
+
+    let started = std::time::Instant::now();
+    let result = client.execute(request);
+    let elapsed = started.elapsed();
+
+    let (status, response_bytes, request_id, error) = match &result {
+        Ok(response) => (
+            Some(response.status().as_u16()),
+            response.content_length(),
+            mapbox
+                .then(|| executor::request_id(response.headers()))
+                .flatten(),
+            None,
+        ),
+        Err(err) => (None, None, None, Some(failure(err))),
+    };
+    run_record::add_request(run_record::Request {
+        method,
+        url,
+        status,
+        request_id,
+        request_body_bytes: body_bytes,
+        response_bytes,
+        elapsed,
+        error,
+    });
+    result
+}
+
+/// What went wrong with a request that got no response. Not `err`'s own
+/// `Display`, which appends the URL — token and all.
+fn failure(err: &reqwest::Error) -> String {
+    let kind = if err.is_timeout() {
+        "timed out"
+    } else if err.is_connect() {
+        "could not connect"
+    } else {
+        "failed"
+    };
+    match std::error::Error::source(err) {
+        Some(source) => format!("{kind}: {source}"),
+        None => kind.to_string(),
+    }
+}
+
+fn is_mapbox_host(host: &str) -> bool {
+    host == "mapbox.com" || host.ends_with(".mapbox.com")
 }
 
 #[cfg(test)]

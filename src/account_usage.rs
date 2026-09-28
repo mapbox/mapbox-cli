@@ -599,12 +599,13 @@ fn fetch(
         eprintln!("[debug] GET {}", redacted_url(&url, &query));
     }
 
-    let response = client
-        .get(&url)
-        .query(&query)
-        .timeout(http::budget(timeout, http::Payload::Bounded))
-        .send()
-        .map_err(|e| executor::transport_failure("Request failed", e))?;
+    let response = http::send(
+        client
+            .get(&url)
+            .query(&query)
+            .timeout(http::budget(timeout, http::Payload::Bounded)),
+    )
+    .map_err(|e| executor::transport_failure("Request failed", e))?;
 
     let status = response.status();
     // Before `text()` consumes the response: a 5xx here is worth escalating,

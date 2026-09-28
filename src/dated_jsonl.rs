@@ -87,6 +87,45 @@ pub(crate) fn shed(dir: &Path, limit: u64) {
     }
 }
 
+/// Deletes the dated files in `dir` whose date `keep` refuses.
+pub(crate) fn prune_where(dir: &Path, keep: impl Fn(&str) -> bool) {
+    for name in dated_names(dir) {
+        if let Some(date) = dated_file(&name) {
+            if !keep(date) {
+                let _ = std::fs::remove_file(dir.join(&name));
+            }
+        }
+    }
+}
+
+/// The lines of `dir`'s file for `date` (`YYYY-MM-DD`), oldest first.
+pub(crate) fn read_day(dir: &Path, date: &str) -> Vec<String> {
+    let path = dir.join(format!("{date}.jsonl"));
+    std::fs::read_to_string(path)
+        .map(|text| {
+            text.lines()
+                .filter(|line| !line.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The day after `date` (`YYYY-MM-DD`), or `None` when it isn't one.
+pub(crate) fn next_date(date: &str) -> Option<String> {
+    dated_file(&format!("{date}.jsonl"))?;
+    let y = date.get(0..4)?.parse().ok()?;
+    let m = date.get(5..7)?.parse().ok()?;
+    let d = date.get(8..10)?.parse().ok()?;
+    let days = crate::account_usage::days_from_civil(y, m, d);
+    Some(utc_date((days as u64 + 1) * 86_400).0)
+}
+
+/// The oldest date kept by a window of `days` (today included), as of now.
+pub(crate) fn oldest_kept(days: u64) -> String {
+    utc_date(now_secs().saturating_sub(days.saturating_sub(1) * 86_400)).0
+}
+
 fn dated_names(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return vec![];
@@ -334,5 +373,14 @@ mod tests {
             left.last().unwrap().starts_with("3-9"),
             "the newest line stays"
         );
+    }
+
+    #[test]
+    fn the_next_date_crosses_months_and_years() {
+        assert_eq!(next_date("2026-09-28").as_deref(), Some("2026-09-29"));
+        assert_eq!(next_date("2026-09-30").as_deref(), Some("2026-10-01"));
+        assert_eq!(next_date("2026-12-31").as_deref(), Some("2027-01-01"));
+        assert_eq!(next_date("2028-02-28").as_deref(), Some("2028-02-29"));
+        assert_eq!(next_date("not-a-date"), None);
     }
 }

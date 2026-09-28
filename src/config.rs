@@ -23,7 +23,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::auth;
-use crate::output::{self, Mode};
+use crate::output::{self, CliError, Mode};
+use crate::remedy::Remedy;
 
 pub const COMMAND: &str = "config";
 
@@ -31,7 +32,8 @@ const CONFIG_FILE: &str = "config.json";
 
 const UPDATE_CHECK_KEY: &str = "update-check";
 const HISTORY_KEY: &str = "history";
-const KEYS: &[&str] = &[UPDATE_CHECK_KEY, HISTORY_KEY];
+const LOG_KEY: &str = "log";
+const KEYS: &[&str] = &[UPDATE_CHECK_KEY, HISTORY_KEY, LOG_KEY];
 
 const ON: &str = "on";
 const OFF: &str = "off";
@@ -46,6 +48,8 @@ struct Config {
     update_check: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     history: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    log: Option<bool>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -92,6 +96,12 @@ pub fn history_enabled() -> bool {
     read_config().history.unwrap_or(true)
 }
 
+/// Whether [`crate::run_log`] writes diagnostics, per the persisted setting.
+/// Off unless turned on, and it has no effect while history is off.
+pub fn log_enabled() -> bool {
+    read_config().log.unwrap_or(false)
+}
+
 fn on_off(enabled: bool) -> &'static str {
     if enabled {
         ON
@@ -107,6 +117,7 @@ fn resolve(config: &Config, key: &str) -> bool {
     match key {
         UPDATE_CHECK_KEY => update_check_setting(config),
         HISTORY_KEY => config.history.unwrap_or(true),
+        LOG_KEY => config.log.unwrap_or(false),
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
 }
@@ -120,6 +131,7 @@ fn clear(config: &mut Config, key: &str) {
     match key {
         UPDATE_CHECK_KEY => config.update_check = None,
         HISTORY_KEY => config.history = None,
+        LOG_KEY => config.log = None,
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
 }
@@ -182,9 +194,26 @@ pub fn set(matches: &ArgMatches, mode: Mode) -> Result<()> {
     let enabled = value == ON;
 
     let mut config = read_config();
+    // Diagnostics belong to history records, so they need history on.
+    // Refused rather than stored: a setting that reads `on` and does
+    // nothing would be worse than an error that says why.
+    if key == LOG_KEY && enabled && !resolve(&config, HISTORY_KEY) {
+        return Err(CliError::new(
+            "history_required",
+            "Diagnostic logging needs command history, which is off.",
+        )
+        .with_remedy(
+            Remedy::default().with_action(Some("mapbox config set history on".to_string())),
+        )
+        .into());
+    }
+    if key == HISTORY_KEY && !enabled && resolve(&config, LOG_KEY) {
+        output::progress("Diagnostic logging (`log`) stays off while history is off.");
+    }
     match key.as_str() {
         UPDATE_CHECK_KEY => config.update_check = Some(enabled),
         HISTORY_KEY => config.history = Some(enabled),
+        LOG_KEY => config.log = Some(enabled),
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
     write_config(&config)?;

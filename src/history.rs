@@ -1,19 +1,22 @@
 //! `mapbox history` — the runs [`crate::run_history`] recorded.
 //!
 //! `list` is one line per run, newest first; `show` is everything recorded
-//! about one run, the newest when no id is given. An id can be shortened to
-//! any prefix that names one run, the way `list` prints them.
+//! about one run, the newest when no id is given, with its diagnostic log
+//! when one was captured and is still kept ([`crate::run_log`]). An id can
+//! be shortened to any prefix that names one run, the way `list` prints
+//! them. There is no separate command for the logs: history is the one way
+//! in to both.
 //!
 //! Reads history and nothing else: no token, no request, and nothing
 //! created on disk. It is not itself recorded.
 
 use anyhow::Result;
 use clap::{value_parser, Arg, ArgMatches, Command};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::output::{self, CliError, Mode};
 use crate::remedy::Remedy;
-use crate::run_history;
+use crate::{run_history, run_log};
 
 pub const COMMAND: &str = "history";
 
@@ -64,13 +67,17 @@ pub fn list(matches: &ArgMatches, mode: Mode) -> Result<()> {
     }
 
     let rows = entries.iter().map(|entry| {
-        format!(
+        let mut line = format!(
             "{:SHORT_ID$}  {:24}  {:>4}  {}",
             short_id(entry),
             field(entry, "time"),
             exit_code(entry),
             command_line(entry)
-        )
+        );
+        if captured(entry) {
+            line.push_str("  [log]");
+        }
+        line
     });
     let text = if entries.is_empty() {
         String::new()
@@ -94,6 +101,7 @@ pub fn list(matches: &ArgMatches, mode: Mode) -> Result<()> {
                 "exitCode",
                 "errorCode",
                 "durationMs",
+                "diagnosticsCaptured",
             ] {
                 if let Some(value) = entry.get(key) {
                     summary.insert(key.to_string(), value.clone());
@@ -115,7 +123,128 @@ pub fn show(matches: &ArgMatches, mode: Mode) -> Result<()> {
         })?,
         Some(prefix) => find(&entries, prefix)?,
     };
-    output::emit(mode, &detail(&entry), entry)
+    let diagnostics = diagnostics(&entry);
+    let mut text = detail(&entry);
+    text.push('\n');
+    text.push_str(&diagnostics_detail(&diagnostics));
+    let mut json = entry;
+    if let Some(object) = json.as_object_mut() {
+        object.remove("diagnosticsCaptured");
+        object.insert("diagnostics".to_string(), diagnostics.json());
+    }
+    output::emit(mode, &text, json)
+}
+
+/// What became of a run's diagnostic log.
+enum Diagnostics {
+    /// Logging was off for the run.
+    NotCaptured,
+    /// Captured, then expired or dropped to stay under the size limit.
+    Unavailable,
+    Captured(Value),
+}
+
+impl Diagnostics {
+    /// `status` is a machine-readable value: `not_captured`, `unavailable`
+    /// or `captured`.
+    fn json(&self) -> Value {
+        match self {
+            Diagnostics::NotCaptured => json!({ "status": "not_captured" }),
+            Diagnostics::Unavailable => json!({ "status": "unavailable" }),
+            Diagnostics::Captured(log) => json!({ "status": "captured", "log": log }),
+        }
+    }
+}
+
+fn captured(entry: &Value) -> bool {
+    entry.get("diagnosticsCaptured").and_then(Value::as_bool) == Some(true)
+}
+
+fn diagnostics(entry: &Value) -> Diagnostics {
+    if !captured(entry) {
+        return Diagnostics::NotCaptured;
+    }
+    match run_log::find(field(entry, "id"), field(entry, "time")) {
+        Some(mut log) => {
+            // Already in the record it belongs to.
+            if let Some(object) = log.as_object_mut() {
+                for key in ["id", "time", "version"] {
+                    object.remove(key);
+                }
+            }
+            Diagnostics::Captured(log)
+        }
+        None => Diagnostics::Unavailable,
+    }
+}
+
+fn diagnostics_detail(diagnostics: &Diagnostics) -> String {
+    let log = match diagnostics {
+        Diagnostics::NotCaptured => {
+            return "Log       not captured: diagnostic logging was off for this run \
+                    (`mapbox config set log on` captures the next ones)"
+                .to_string()
+        }
+        Diagnostics::Unavailable => {
+            return "Log       no longer available: it expired or was removed to keep \
+                    diagnostic logs under 100 MB"
+                .to_string()
+        }
+        Diagnostics::Captured(log) => log,
+    };
+    let argv: Vec<&str> = log["argv"]
+        .as_array()
+        .map(|args| args.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let mut out = vec![format!("Log       mapbox {}", argv.join(" "))];
+    if let Some(auth) = log.get("auth") {
+        let mut line = format!("  token {}, {}", field(auth, "source"), field(auth, "type"));
+        if let Some(account) = auth.get("account").and_then(Value::as_str) {
+            line.push_str(&format!(", account {account}"));
+        }
+        out.push(line);
+    }
+    if let Some(step) = log.get("authStep").and_then(Value::as_str) {
+        out.push(format!("  auth step {step}"));
+    }
+    for request in log["requests"].as_array().into_iter().flatten() {
+        let outcome = match request.get("status").and_then(Value::as_u64) {
+            Some(status) => status.to_string(),
+            None => field(request, "error").to_string(),
+        };
+        let mut line = format!(
+            "  {} {} -> {} in {} ms",
+            field(request, "method"),
+            field(request, "url"),
+            outcome,
+            request["durationMs"].as_u64().unwrap_or(0)
+        );
+        if let Some(id) = request.get("requestId").and_then(Value::as_str) {
+            line.push_str(&format!(" (request id {id})"));
+        }
+        out.push(line);
+    }
+    if let Some(n) = log.get("requestsNotListed").and_then(Value::as_u64) {
+        out.push(format!("  and {n} more requests not listed"));
+    }
+    if log.get("morePages").and_then(Value::as_bool) == Some(true) {
+        out.push("  stopped with pages left".to_string());
+    }
+    out.push(format!(
+        "  {} bytes to stdout",
+        log["stdoutBytes"].as_u64().unwrap_or(0)
+    ));
+    if let Some(version) = log.get("updateNotice").and_then(Value::as_str) {
+        out.push(format!("  update notice for {version}"));
+    }
+    if let Some(error) = log.get("error") {
+        out.push(format!(
+            "  error {}: {}",
+            field(error, "code"),
+            field(error, "message")
+        ));
+    }
+    out.join("\n")
 }
 
 /// The one run whose id starts with `prefix`.
@@ -214,7 +343,6 @@ fn command_line(entry: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     fn runs() -> Vec<Value> {
         vec![

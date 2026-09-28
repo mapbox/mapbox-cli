@@ -135,7 +135,7 @@ fn list_reports_every_setting_including_an_unset_one() {
     assert!(empty.status.success());
     assert_eq!(
         stdout(&empty),
-        r#"[{"key":"update-check","value":true},{"key":"history","value":true}]"#
+        r#"[{"key":"update-check","value":true},{"key":"history","value":true},{"key":"log","value":false}]"#
     );
 
     let set = command(&home)
@@ -151,7 +151,7 @@ fn list_reports_every_setting_including_an_unset_one() {
     assert!(after.status.success());
     assert_eq!(
         stdout(&after),
-        r#"[{"key":"update-check","value":false},{"key":"history","value":true}]"#
+        r#"[{"key":"update-check","value":false},{"key":"history","value":true},{"key":"log","value":false}]"#
     );
 
     let text = command(&home)
@@ -159,7 +159,7 @@ fn list_reports_every_setting_including_an_unset_one() {
         .output()
         .expect("run mapbox config list");
     assert!(text.status.success());
-    assert_eq!(stdout(&text), "update-check\toff\nhistory\ton");
+    assert_eq!(stdout(&text), "update-check\toff\nhistory\ton\nlog\toff");
 }
 
 #[test]

@@ -24,6 +24,7 @@ time from OpenAPI specs, so they always match the specs.
   - [Confirmation and `--yes`](#confirmation-and---yes)
   - [Update notices](#update-notices)
   - [Command history](#command-history)
+  - [Diagnostic logs](#diagnostic-logs)
  - [Privacy](#privacy)
 - [Uninstall](#uninstall)
 - [Contributing](#contributing)
@@ -460,6 +461,22 @@ are not recorded. `mapbox config set history off` turns history off for
 good, and `MAPBOX_HISTORY=0` for one shell; with it off, nothing is written
 and no directory is created, but what was already recorded stays until you
 delete `~/.mapbox/history`. `MAPBOX_CLI_NO_TELEMETRY` does not affect it.
+
+### Diagnostic logs
+
+Off by default. `mapbox config set log on` (or `MAPBOX_LOG=1` for one shell)
+adds, for each run history records, a line of detail in
+`~/.mapbox/logs/<UTC date>.jsonl`: the command line, each request's method,
+URL, status, request id and timing, which token was used (where it came
+from, its type and account, never the token itself) and the error message.
+Tokens are replaced with `<redacted>` wherever they appear, and the files
+never leave your machine.
+
+`mapbox history show` includes a run's log, or says it was not captured
+(logging was off) or is no longer available. Logs are kept up to 30 days and
+100 MB in total; past that the oldest go first, and the run's history record
+stays. A log goes when its history record does. Logging needs history:
+with history off it never runs, and `config set log on` refuses.
 
 ### Privacy
 

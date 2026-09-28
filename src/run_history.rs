@@ -60,19 +60,27 @@ struct Line {
     request_count: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     request_ids: Vec<String>,
+    /// Whether a diagnostic log was written for this run. Kept with the
+    /// record so that detail dropped later reads as "no longer available",
+    /// not "never captured".
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    diagnostics_captured: bool,
 }
 
 fn is_zero(n: &usize) -> bool {
     *n == 0
 }
 
-/// Appends the run's line, unless history is off or the run is one it
-/// does not record.
-pub(crate) fn write(record: &Record) {
-    if !enabled() || !recorded(record, std::env::var_os("SUDO_USER").is_some()) {
-        return;
-    }
-    let Ok(text) = serde_json::to_string(&line(record)) else {
+/// Whether this run gets a history line: history is on and the run is one
+/// it records.
+pub(crate) fn will_record(record: &Record) -> bool {
+    enabled() && recorded(record, std::env::var_os("SUDO_USER").is_some())
+}
+
+/// Appends the run's line. The caller has checked [`will_record`];
+/// `diagnostics` says whether a diagnostic log is written for it too.
+pub(crate) fn write(record: &Record, diagnostics: bool) {
+    let Ok(text) = serde_json::to_string(&line(record, diagnostics)) else {
         return;
     };
     if let Some(dir) = dated_jsonl::private_dir(DIR) {
@@ -96,7 +104,7 @@ fn recorded(record: &Record, under_sudo: bool) -> bool {
         && record.command.first().map(String::as_str) != Some(history::COMMAND)
 }
 
-fn line(record: &Record) -> Line {
+fn line(record: &Record, diagnostics: bool) -> Line {
     let ids: Vec<String> = record
         .requests
         .iter()
@@ -113,12 +121,18 @@ fn line(record: &Record) -> Line {
         duration_ms: record.duration.as_millis() as u64,
         request_count: record.requests.len(),
         request_ids: ids[ids.len().saturating_sub(MAX_REQUEST_IDS)..].to_vec(),
+        diagnostics_captured: diagnostics,
     }
 }
 
 /// Where history lives, without creating it.
 fn dir_path() -> Option<PathBuf> {
     Some(auth::config_dir_path()?.join(DIR))
+}
+
+/// Whether history still has a file for `date` (`YYYY-MM-DD`).
+pub(crate) fn has_day(date: &str) -> bool {
+    dir_path().is_some_and(|dir| dir.join(format!("{date}.jsonl")).is_file())
 }
 
 /// Every run in history, oldest first, skipping any line that doesn't parse.
@@ -163,7 +177,7 @@ mod tests {
             .iter()
             .map(std::ffi::OsString::from)
             .collect();
-        let text = serde_json::to_string(&line(&run)).unwrap();
+        let text = serde_json::to_string(&line(&run, false)).unwrap();
         assert!(text.contains(r#""command":["search","forward"]"#), "{text}");
         assert!(!text.contains("Pennsylvania"), "{text}");
     }

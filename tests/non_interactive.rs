@@ -37,9 +37,11 @@ fn command(home: &Path) -> Command {
         .env_remove("MapboxAccessToken")
         .env_remove("MAPBOX_USERNAME")
         .env_remove("MAPBOX_OUTPUT")
+        // Off: these tests hold a run to leaving nothing on disk; what
+        // history leaves is `tests/history.rs`'s to check.
+        .env("MAPBOX_HISTORY", "0")
         .env_remove("MAPBOX_YES")
         .env_remove("MAPBOX_CONFIG_DIR")
-        .env_remove("MAPBOX_HISTORY")
         .env("HOME", home);
     cmd
 }
@@ -166,43 +168,20 @@ fn the_refusal_carries_a_code_and_a_fix() {
 }
 
 /// The check runs before `config_dir`, which creates the store as a side
-/// effect. A CI job that tried to log in should leave nothing behind but
-/// its command history — and with history off, nothing at all.
+/// effect. A CI job that tried to log in should leave nothing behind.
 #[test]
 fn the_refusal_creates_no_credential_directory() {
-    for history in ["1", "0"] {
-        let home = scratch(&format!("no-dir-{history}"));
-        let out = command(&home)
-            .env("MAPBOX_HISTORY", history)
-            .args(["auth", "login"])
-            .output()
-            .expect("run mapbox");
+    let home = scratch("no-dir");
+    let out = command(&home)
+        .args(["auth", "login"])
+        .output()
+        .expect("run mapbox");
 
-        assert!(!out.status.success());
-        let left: Vec<String> = std::fs::read_dir(home.join(".mapbox"))
-            .map(|entries| {
-                entries
-                    .map(|e| {
-                        e.expect("an entry")
-                            .file_name()
-                            .to_string_lossy()
-                            .into_owned()
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let allowed: &[&str] = if history == "1" { &["history"] } else { &[] };
-        assert!(
-            left.iter().all(|name| allowed.contains(&name.as_str())),
-            "with MAPBOX_HISTORY={history}, the refusal created {left:?}"
-        );
-        if history == "0" {
-            assert!(
-                !home.join(".mapbox").exists(),
-                "history off created the directory"
-            );
-        }
-    }
+    assert!(!out.status.success());
+    assert!(
+        !home.join(".mapbox").exists(),
+        "the refusal created the credential store anyway"
+    );
 }
 
 /// One way of saying yes, as a case: a scratch-directory name, the arguments

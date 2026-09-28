@@ -63,19 +63,26 @@ pub fn list(matches: &ArgMatches, mode: Mode) -> Result<()> {
         hint_when_off();
     }
 
-    let text = entries
-        .iter()
-        .map(|entry| {
-            format!(
-                "{}  {}  {:>4}  {}",
-                short_id(entry),
-                field(entry, "time"),
-                exit_code(entry),
-                command_line(entry)
-            )
-        })
+    let rows = entries.iter().map(|entry| {
+        format!(
+            "{:SHORT_ID$}  {:24}  {:>4}  {}",
+            short_id(entry),
+            field(entry, "time"),
+            exit_code(entry),
+            command_line(entry)
+        )
+    });
+    let text = if entries.is_empty() {
+        String::new()
+    } else {
+        std::iter::once(format!(
+            "{:SHORT_ID$}  {:24}  {:>4}  COMMAND",
+            "ID", "TIME", "EXIT"
+        ))
+        .chain(rows)
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\n")
+    };
     let json = entries
         .iter()
         .map(|entry| {

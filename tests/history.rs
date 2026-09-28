@@ -113,7 +113,15 @@ fn a_run_is_recorded_by_default_with_its_command_path_only() {
 }
 
 #[test]
-fn with_history_off_nothing_is_created() {
+fn a_run_leaves_only_history_and_with_it_off_nothing() {
+    let home = scratch("on");
+    run(&home, &["styles", "lsit"]);
+    let created: Vec<_> = std::fs::read_dir(config_dir(&home))
+        .expect("the config directory")
+        .map(|e| e.expect("an entry").file_name())
+        .collect();
+    assert_eq!(created, ["history"]);
+
     let home = scratch("off");
     let out = command(&home)
         .env("MAPBOX_HISTORY", "0")
@@ -166,7 +174,11 @@ fn help_version_completion_history_and_sudo_are_not_recorded() {
         .args(["styles", "lsit"])
         .output()
         .expect("run mapbox");
-    assert_eq!(lines(&home).0.len(), 0, "{}", lines(&home).1);
+    assert!(
+        !config_dir(&home).exists(),
+        "a run history skips created {}",
+        config_dir(&home).display()
+    );
 }
 
 #[test]
@@ -195,6 +207,7 @@ fn history_reads_back_the_runs() {
 
     let text = run(&home, &["-o", "text", "history", "list"]);
     let text = String::from_utf8_lossy(&text.stdout);
+    assert!(text.starts_with("ID "), "a header row first: {text}");
     assert!(text.contains("mapbox search forward"), "{text}");
     assert!(!text.contains(SEARCH), "{text}");
 

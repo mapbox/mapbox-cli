@@ -3415,6 +3415,7 @@ mapbox history list --limit 0
 <tr><td>
 
 ```
+ID        TIME                      EXIT  COMMAND
 d05b3f4d  2026-09-28T11:20:03.095Z     2  mapbox styles
 be40d711  2026-09-28T11:20:03.045Z     1  mapbox styles list
 ```
@@ -3513,6 +3514,8 @@ Requests  1
 
 </td></tr>
 </table>
+
+---
 
 ## Doctor
 

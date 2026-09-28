@@ -6,7 +6,6 @@
 //! file beside the credentials, written through the same
 //! [`crate::auth::write_private`] so it gets the same `0600` treatment.
 //!
-//! Two settings — `update-check` and `history` (see [`crate::run_history`]).
 //! `get`/`set`/`unset` take a `key`, restricted by clap to [`KEYS`], so
 //! adding a setting is a new key and a new match arm rather than a new
 //! subcommand.

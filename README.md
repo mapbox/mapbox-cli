@@ -457,7 +457,8 @@ mapbox history show be40d711    # or one run, by any prefix of its id
 `--help`, `--version`, `completion`, `history` itself and runs under `sudo`
 are not recorded. `mapbox config set history off` turns history off for
 good, and `MAPBOX_HISTORY=0` for one shell; with it off, nothing is written
-and no directory is created. `MAPBOX_CLI_NO_TELEMETRY` does not affect it.
+and no directory is created, but what was already recorded stays until you
+delete `~/.mapbox/history`. `MAPBOX_CLI_NO_TELEMETRY` does not affect it.
 
 ### Privacy
 

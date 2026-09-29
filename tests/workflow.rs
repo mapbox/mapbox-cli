@@ -295,10 +295,27 @@ fn uninstall_takes_the_directory_install_was_given() {
     install_demo(&home);
     let source = home.join("src/demo");
 
-    let again = run(&home, &["workflow", "install", source.to_str().unwrap()]);
+    // Read from the JSON error rather than matched in its text: JSON escapes a
+    // Windows path's backslashes, so the raw text never holds the path as typed.
+    let again = run(
+        &home,
+        &[
+            "workflow",
+            "install",
+            source.to_str().unwrap(),
+            "-o",
+            "json",
+        ],
+    );
     let stderr = String::from_utf8_lossy(&again.stderr);
-    assert!(
-        stderr.contains(&format!(
+    let error: Value = stderr
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str(line).ok())
+        .unwrap_or_else(|| panic!("no JSON error on stderr:\n{stderr}"));
+    assert_eq!(
+        error["next_actions"][0],
+        json!(format!(
             "mapbox workflow install {} --force",
             source.display()
         )),

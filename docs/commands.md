@@ -3898,7 +3898,7 @@ copy-style
   {
     "name": "copy-style",
     "path": "/Users/me/.mapbox/workflows/copy-style",
-    "source": "github:mapbox/cli@main",
+    "source": "github:mapbox/mapbox-cli@main",
     "summary": "Copy a style from one account to another"
   }
 ]
@@ -3935,13 +3935,13 @@ of these is `invalid_workflow`, with every problem listed at once.
 | Parameter | Effect |
 | --- | --- |
 | `SOURCE` | A workflow name, looked up in the repository's `workflow/<name>/`, or a path to a local workflow directory: anything with a `/` or starting with `.`. |
-| `--repo` | GitHub repository to install from, as `OWNER/REPO`. Defaults to `mapbox/cli`. |
+| `--repo` | GitHub repository to install from, as `OWNER/REPO`. Defaults to `mapbox/mapbox-cli`. |
 | `--ref` | Branch, tag or commit to install from. Defaults to `main`. |
 | `--force` | Replace a workflow that is already installed. |
 | `--dry-run` | Check the workflow and list the files it would write, then exit. |
 
 The repository is read as one tarball through the GitHub API. For a private
-repository, such as `mapbox/cli` today, set `GH_TOKEN` or `GITHUB_TOKEN`. It is
+repository, such as `mapbox/mapbox-cli` today, set `GH_TOKEN` or `GITHUB_TOKEN`. It is
 sent only to `api.github.com`. Without one, a private repository answers 404,
 exactly as a ref that does not exist does, and the error says both.
 

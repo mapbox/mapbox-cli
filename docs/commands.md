@@ -3142,21 +3142,45 @@ not just guidance about them — with a coding agent's own CLI.
 **Not the same kind of "install" as [`agent-skills`](#agent-skills) or
 [`generate-skills`](#generate-skills).** Those write a directory this CLI
 fully owns. An MCP server has to be added to a config store that belongs to
-the *agent*, which may already list other servers, so this shells out to the
-agent's own CLI (`claude mcp add`) rather than editing that file directly —
-the same reasoning [`tilesets-cli`](#tilesets-cli) has for exec-ing
-`tilesets` rather than reimplementing it.
+the *client*, which may already list other servers, so this shells out to
+the client's own tooling rather than editing that store directly — the same
+reasoning [`tilesets-cli`](#tilesets-cli) has for exec-ing `tilesets` rather
+than reimplementing it.
 
-Only Claude Code is supported today, against the hosted Mapbox MCP
-endpoints — no token, no npm package, no Node version to manage. Adding a
-server is one row in this command's table; adding a client is a new row plus
-the two functions that shell out to it, so both are meant to grow here as
-more become available.
+Against the hosted Mapbox MCP endpoints only — no token, no npm package, no
+Node version to manage. Four clients today, two different ways of driving
+them:
 
-An existing server with the same name, at any scope, is left alone rather
-than replaced — `claude mcp get <name>` is checked first, the same
+- **Claude Code and Codex** each have their own `mcp add`/`mcp get`, so this
+  runs that rather than touching either one's config file. The two need
+  different argv (`claude mcp add --transport http <name> <url>` vs. `codex
+  mcp add <name> --url <url>`), and Codex has a real quirk worth knowing:
+  registering a server that advertises OAuth support starts a login flow as
+  *part of* `add`, and if that login fails — which it currently does
+  against the real Mapbox hosted endpoint, an incompatibility between
+  Codex's OAuth client and this server, not something this command can fix
+  — the config entry is written anyway. That's reported as `installed, login
+  incomplete` (`"status": "installed_login_incomplete"` in JSON) rather
+  than either a flat success or a flat failure.
+- **VS Code and Cursor** have no `mcp` subcommand at all, but both expose a
+  top-level `--add-mcp '<json>'` flag. Neither refuses a duplicate name —
+  both would silently overwrite an existing entry under the same name if
+  asked to — so this reads each client's own config file directly first
+  rather than ever calling that flag for a server already there. Where that
+  file lives is genuinely different per client: VS Code keeps a dedicated
+  `mcp.json`; Cursor keeps the same data inside `settings.json` under an
+  `"mcp"` key. Neither client currently has a working way to register a
+  server for one project rather than every one — confirmed directly, not
+  assumed — so both always register for every project, and this says so
+  rather than pretending otherwise.
+
+An existing server with the same name is left alone rather than replaced,
+whichever of the two mechanisms above applies — the same
 never-overwrite-what-you-didn't-write rule `agent-skills` follows for a
-skill directory someone has edited.
+skill directory someone has edited. A config file that exists but can't be
+parsed is reported as such (`config unreadable` /
+`"status": "config_unreadable"`) rather than guessed past, since guessing
+wrong could mean silently discarding whatever was in it.
 
 ### `mapbox mcp list`
 
@@ -3177,6 +3201,12 @@ mapbox mcp list
 ```
 mapbox          claude-code  not installed
 mapbox-devkit   claude-code  not installed
+mapbox          codex        not installed
+mapbox-devkit   codex        not installed
+mapbox          vscode       client not found
+mapbox-devkit   vscode       client not found
+mapbox          cursor       not installed
+mapbox-devkit   cursor       not installed
 ```
 
 </td><td>
@@ -3185,7 +3215,13 @@ mapbox-devkit   claude-code  not installed
 {
   "servers": [
     { "server": "mapbox", "client": "claude-code", "status": "not installed" },
-    { "server": "mapbox-devkit", "client": "claude-code", "status": "not installed" }
+    { "server": "mapbox-devkit", "client": "claude-code", "status": "not installed" },
+    { "server": "mapbox", "client": "codex", "status": "not installed" },
+    { "server": "mapbox-devkit", "client": "codex", "status": "not installed" },
+    { "server": "mapbox", "client": "vscode", "status": "client not found" },
+    { "server": "mapbox-devkit", "client": "vscode", "status": "client not found" },
+    { "server": "mapbox", "client": "cursor", "status": "not installed" },
+    { "server": "mapbox-devkit", "client": "cursor", "status": "not installed" }
   ]
 }
 ```
@@ -3193,9 +3229,10 @@ mapbox-devkit   claude-code  not installed
 </td></tr>
 </table>
 
-`client not found` in place of a status is Claude Code's own CLI not being on
+`client not found` in place of a status is that client's own CLI not being on
 `PATH` at all — see [`mcp install`](#mapbox-mcp-install) below for what that
-means for installing.
+means for installing. `config unreadable` means VS Code's or Cursor's own
+config file exists but didn't parse.
 
 ---
 
@@ -3211,14 +3248,16 @@ nothing was done rather than failing the run — the same shape
 | Parameter | Effect |
 | --- | --- |
 | `--server <SERVER>` | Repeatable. Defaults to every known server (`mapbox`, `mapbox-devkit`). |
-| `--client <CLIENT>` | Repeatable. Defaults to whichever clients are detected. Only `claude-code` exists today. |
-| `--global` | Register for every project rather than just this one (`claude mcp add --scope user`). |
+| `--client <CLIENT>` | Repeatable. Defaults to whichever clients are detected. One of `claude-code`, `codex`, `vscode`, `cursor`. |
+| `--global` | Register for every project rather than just this one. Only Claude Code (`--scope user`) draws that distinction — the other three currently register for every project regardless. |
 | `--dry-run` | Report what would be installed, then exit without installing it. |
 
 #### Examples
 
 ```sh
 mapbox mcp install
+
+mapbox mcp install --server mapbox --client vscode
 
 mapbox mcp install --server mapbox --global
 
@@ -3234,6 +3273,8 @@ mapbox mcp install --dry-run
 ```
 Mapbox MCP: https://mcp.mapbox.com/mcp for Claude Code — installed.
 Mapbox DevKit MCP: https://mcp-devkit.mapbox.com/mcp for Claude Code — installed.
+Mapbox MCP: https://mcp.mapbox.com/mcp for Codex — installed, login incomplete.
+Mapbox MCP: https://mcp.mapbox.com/mcp for VS Code — installed.
 ```
 
 </td><td>
@@ -3242,7 +3283,9 @@ Mapbox DevKit MCP: https://mcp-devkit.mapbox.com/mcp for Claude Code — install
 {
   "results": [
     { "server": "mapbox", "client": "claude-code", "status": "installed" },
-    { "server": "mapbox-devkit", "client": "claude-code", "status": "installed" }
+    { "server": "mapbox-devkit", "client": "claude-code", "status": "installed" },
+    { "server": "mapbox", "client": "codex", "status": "installed_login_incomplete", "error": "..." },
+    { "server": "mapbox", "client": "vscode", "status": "installed" }
   ]
 }
 ```
@@ -3254,15 +3297,18 @@ Run again, `installed` reads `already installed` (`already_installed` in
 JSON) for each — the server is left exactly as it is, nothing is re-written.
 `--dry-run` reads `would install` instead of attempting anything. A client
 whose CLI isn't reachable reads `is not on PATH, skipped`
-(`"status": "client_not_found"`) rather than stopping the rest of the run.
+(`"status": "client_not_found"`) rather than stopping the rest of the run,
+and one whose config exists but couldn't be parsed (VS Code, Cursor) reads
+`'s config could not be read, skipped` (`"status": "config_unreadable"`),
+also without stopping the rest of the run.
 
 With no `--client` named and no known client's CLI reachable at all, this is
 an error rather than a silent no-op — `mcp_client_not_found` in `-o json`,
 naming the clients it looked for:
 
 ```
-Error: No supported coding-agent CLI was found: claude-code.
-Fix: Install one of these CLIs, or pass --client to name one anyway (claude-code).
+Error: No supported coding-agent CLI was found: claude-code, codex, vscode, cursor.
+Fix: Install one of these CLIs, or pass --client to name one anyway (claude-code, codex, vscode, cursor).
 ```
 
 ---

@@ -314,11 +314,15 @@ mapbox mcp install
 Different kind of "install" from `agent-skills`/`generate-skills` above:
 those write a directory this CLI owns, this registers an MCP server —
 direct tool-calling access to Mapbox's APIs, not just guidance about them —
-with a coding agent's *own* CLI, since its config belongs to that agent and
-may already list other servers. Only Claude Code is supported today,
-against the hosted Mapbox MCP endpoints: no token, no npm package, no Node
-version to manage. An existing server with the same name is left alone
-rather than replaced.
+with a coding agent's *own* config, since that config belongs to the agent
+and may already list other servers. Claude Code, Codex, VS Code and Cursor
+are supported today, against the hosted Mapbox MCP endpoints: no token, no
+npm package, no Node version to manage. An existing server with the same
+name is left alone rather than replaced. VS Code and Cursor currently
+register for every project regardless of `--global`, since neither has a
+working way to scope it to one; Codex may report a server as installed with
+its own login incomplete, an OAuth incompatibility between Codex and
+Mapbox's hosted MCP server rather than something this command controls.
 
 ### Tileset CLI
 

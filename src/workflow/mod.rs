@@ -1,10 +1,11 @@
 //! `mapbox workflow` — install and run workflows: named, multi-step recipes
-//! of `mapbox` commands and scripts. Beta.
+//! of `mapbox` commands and scripts. Beta, in development, and not
+//! recommended for use: every subcommand says so on stderr.
 //!
 //! A workflow is a directory holding a `workflow.yaml` and the scripts it
 //! runs (see [`definition`] for the schema and the layout rules). None ships
 //! inside the binary. `install` copies one in, from a local directory or a
-//! GitHub repository's `workflow/<stage>/<name>/`, and `run` runs only what
+//! GitHub repository's `workflow/beta/<name>/`, and `run` runs only what
 //! is installed.
 //!
 //! What this refuses to be: a scheduler, a retry engine, or a language.
@@ -26,6 +27,12 @@ use crate::output::{self, field_lines, Mode};
 
 pub const COMMAND: &str = "workflow";
 
+/// Printed by every subcommand. Nothing here is a promise yet, and a
+/// person who found the command in `--help` should not build on it.
+const NOTICE: &str = "`mapbox workflow` is beta and in development, and not recommended for use: \
+                      its commands, the workflow format and the published workflows may change \
+                      or be removed without notice.";
+
 const NAME_ARG: &str = "name";
 const SOURCE_ARG: &str = "source";
 const REPO_ARG: &str = "repo";
@@ -41,13 +48,18 @@ pub fn command() -> Command {
             .help("Name of an installed workflow")
     };
     Command::new(COMMAND)
-        .about("Install and run multi-step workflows of mapbox commands and scripts (beta)")
+        .about(
+            "Install and run multi-step workflows of mapbox commands and scripts \
+             (beta, in development, not recommended for use)",
+        )
         .long_about(
             "Install and run workflows: named, multi-step recipes of mapbox commands and \
              scripts, defined in a workflow.yaml.\n\n\
              A workflow runs only once it is installed, from a local directory or from a \
-             GitHub repository's workflow/<stage>/<name>/ directory. Workflows and this \
-             command are beta: their format may change.",
+             GitHub repository's workflow/beta/<name>/ directory.\n\n\
+             Beta and in development, and not recommended for use: the commands, the \
+             workflow format and the published workflows may change or be removed \
+             without notice.",
         )
         .subcommand_required(true)
         .subcommand(Command::new("list").about("List installed workflows"))
@@ -132,6 +144,7 @@ pub struct RunFlags<'a> {
 }
 
 pub fn run(app: &Command, matches: &ArgMatches, flags: RunFlags, mode: Mode) -> Result<()> {
+    output::progress(NOTICE);
     match matches.subcommand() {
         Some(("list", _)) => list(mode),
         Some(("show", m)) => show(app, name(m), mode),
@@ -146,18 +159,6 @@ pub fn run(app: &Command, matches: &ArgMatches, flags: RunFlags, mode: Mode) -> 
 
 fn name(matches: &ArgMatches) -> &str {
     matches.get_one::<String>(NAME_ARG).expect("required")
-}
-
-fn stage_label(stage: Option<&str>) -> String {
-    stage.unwrap_or("local").to_string()
-}
-
-fn warn_if_beta(workflow: &str, stage: Option<&str>) {
-    if stage == Some("beta") {
-        output::progress(&format!(
-            "`{workflow}` is a beta workflow: its inputs and outputs may change."
-        ));
-    }
 }
 
 fn source_label(meta: &store::Meta) -> String {
@@ -176,16 +177,11 @@ fn list(mode: Mode) -> Result<()> {
             Ok(found) => {
                 rows.push(json!({
                     "name": name,
-                    "stage": stage_label(found.meta.stage.as_deref()),
                     "summary": found.workflow.summary,
                     "source": source_label(&found.meta),
                     "path": found.root,
                 }));
-                text.push_str(&format!(
-                    "{name}  ({})\n  {}\n",
-                    stage_label(found.meta.stage.as_deref()),
-                    found.workflow.summary
-                ));
+                text.push_str(&format!("{name}\n  {}\n", found.workflow.summary));
             }
             Err(e) => {
                 rows.push(json!({ "name": name, "error": format!("{e:#}") }));
@@ -227,7 +223,6 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
     let mut text = field_lines(
         &[
             ("Name", workflow.name.clone()),
-            ("Stage", stage_label(found.meta.stage.as_deref())),
             ("Summary", workflow.summary.clone()),
             ("Source", source_label(&found.meta)),
             ("Path", found.root.display().to_string()),
@@ -272,7 +267,6 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
         &text,
         json!({
             "name": workflow.name,
-            "stage": stage_label(found.meta.stage.as_deref()),
             "summary": workflow.summary,
             "description": workflow.description,
             "source": source_label(&found.meta),
@@ -329,7 +323,6 @@ fn install(app: &Command, matches: &ArgMatches, debug: bool, mode: Mode) -> Resu
     let target = store::root_path()?.join(&workflow.name);
     let summary = json!({
         "name": workflow.name,
-        "stage": stage_label(package.meta.stage.as_deref()),
         "source": source_label(&package.meta),
         "path": target,
         "files": files,
@@ -340,7 +333,6 @@ fn install(app: &Command, matches: &ArgMatches, debug: bool, mode: Mode) -> Resu
         if target.exists() && !force {
             return Err(store::already_installed(&workflow.name, &target));
         }
-        warn_if_beta(&workflow.name, package.meta.stage.as_deref());
         let text = format!(
             "Would install `{}` from {} into {}:\n{}",
             workflow.name,
@@ -356,7 +348,6 @@ fn install(app: &Command, matches: &ArgMatches, debug: bool, mode: Mode) -> Resu
     }
 
     let target = store::install(&package, force)?;
-    warn_if_beta(&workflow.name, package.meta.stage.as_deref());
     let text = format!(
         "Installed `{}` from {} into {}.\nRun it with `mapbox workflow run {}`.",
         workflow.name,
@@ -427,7 +418,6 @@ fn run_workflow(
         return output::emit(mode, &text, plan);
     }
 
-    warn_if_beta(&workflow.name, found.meta.stage.as_deref());
     let inherited = runner::Inherited::from_matches(globals);
     let result = runner::run(app, workflow, &found.root, &inputs, &inherited)?;
     output::emit_value(mode, &result, None, None, None)
@@ -459,36 +449,22 @@ mod tests {
     #[test]
     fn every_published_workflow_is_valid() {
         let app = crate::build_app(&crate::spec::effective_services().expect("bundled specs"));
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("workflow");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(store::REPO_PREFIX);
         let mut checked = 0;
-        for stage in std::fs::read_dir(&root)
-            .expect("workflow/ exists")
+        for dir in std::fs::read_dir(&root)
+            .expect("workflow/beta/ exists")
             .flatten()
         {
-            if !stage.path().is_dir() {
-                continue;
-            }
-            let stage_name = stage.file_name().to_string_lossy().into_owned();
+            let package = store::read_local(&dir.path())
+                .unwrap_or_else(|e| panic!("{}: {e:#}", dir.path().display()));
+            let problems = runner::command_problems(&app, &package.workflow);
             assert!(
-                store::STAGES.contains(&stage_name.as_str()),
-                "workflow/{stage_name}/ is not a stage; add it to store::STAGES or move it"
+                problems.is_empty(),
+                "{}: {problems:#?}",
+                dir.path().display()
             );
-            for dir in std::fs::read_dir(stage.path())
-                .expect("read stage")
-                .flatten()
-            {
-                let package = store::read_local(&dir.path())
-                    .unwrap_or_else(|e| panic!("{}: {e:#}", dir.path().display()));
-                let problems = runner::command_problems(&app, &package.workflow);
-                assert!(
-                    problems.is_empty(),
-                    "{}: {problems:#?}",
-                    dir.path().display()
-                );
-                assert_eq!(package.meta.stage.as_deref(), Some(stage_name.as_str()));
-                checked += 1;
-            }
+            checked += 1;
         }
-        assert!(checked > 0, "no workflows found under workflow/");
+        assert!(checked > 0, "no workflows found under workflow/beta/");
     }
 }

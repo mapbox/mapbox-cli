@@ -3861,14 +3861,16 @@ list drops the `--daily` suggestion once it's already in effect.
 ## Workflows
 
 A workflow is a named, multi-step recipe of `mapbox` commands and scripts,
-defined in a `workflow.yaml`. **Beta:** the command and the `version: 1`
-format may change. The format and the rules a workflow directory follows are
-in [workflow/README.md](../workflow/README.md).
+defined in a `workflow.yaml`. The format and the rules a workflow directory
+follows are in [workflow/README.md](../workflow/README.md).
+
+**Beta and in development. Not recommended for use.** The commands, the
+`version: 1` format and the published workflows may change or be removed
+without notice, and every `mapbox workflow` subcommand says so on stderr.
 
 None ships inside the binary. `install` copies one into
 `~/.mapbox/workflows/<name>/`, and every other subcommand works on what is
-installed there. A `beta` workflow says so on stderr when it is installed or
-run.
+installed there.
 
 ---
 
@@ -3885,7 +3887,7 @@ error instead of a summary.
 <tr><td>
 
 ```
-copy-style  (beta)
+copy-style
   Copy a style from one account to another
 ```
 
@@ -3897,7 +3899,6 @@ copy-style  (beta)
     "name": "copy-style",
     "path": "/Users/me/.mapbox/workflows/copy-style",
     "source": "github:mapbox/cli@main",
-    "stage": "beta",
     "summary": "Copy a style from one account to another"
   }
 ]
@@ -3933,7 +3934,7 @@ of these is `invalid_workflow`, with every problem listed at once.
 
 | Parameter | Effect |
 | --- | --- |
-| `SOURCE` | A workflow name, looked up in the repository's `workflow/<stage>/<name>/`, or a path to a local workflow directory: anything with a `/` or starting with `.`. |
+| `SOURCE` | A workflow name, looked up in the repository's `workflow/beta/<name>/`, or a path to a local workflow directory: anything with a `/` or starting with `.`. |
 | `--repo` | GitHub repository to install from, as `OWNER/REPO`. Defaults to `mapbox/cli`. |
 | `--ref` | Branch, tag or commit to install from. Defaults to `main`. |
 | `--force` | Replace a workflow that is already installed. |
@@ -3986,8 +3987,7 @@ Run it with `mapbox workflow run copy-style`.
   ],
   "name": "copy-style",
   "path": "/Users/me/.mapbox/workflows/copy-style",
-  "source": "/Users/me/dev/cli/workflow/beta/copy-style",
-  "stage": "beta"
+  "source": "/Users/me/dev/cli/workflow/beta/copy-style"
 }
 ```
 

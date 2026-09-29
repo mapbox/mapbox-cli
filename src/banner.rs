@@ -28,13 +28,9 @@ const RULE_WIDTH: usize = 40;
 /// Called only for a parsed command about to run: `--help`, `--version`,
 /// usage errors and `--schema` never reach it.
 pub fn show(matches: &ArgMatches) {
-    if enabled(
-        std::io::stderr().is_terminal(),
-        matches.get_flag(ARG),
-        matches.subcommand_name(),
-    ) {
-        let color = style::enabled(true);
-        output::progress(&text(env!("CARGO_PKG_VERSION"), color));
+    let terminal = std::io::stderr().is_terminal();
+    if enabled(terminal, matches.get_flag(ARG), matches.subcommand_name()) {
+        output::progress(&text(env!("CARGO_PKG_VERSION"), style::enabled(terminal)));
     }
 }
 

@@ -58,17 +58,19 @@ pub fn dim_prose(text: &str, on: bool) -> String {
     if !on {
         return text.to_string();
     }
+    let parts: Vec<&str> = text.split('`').collect();
     let mut out = String::new();
-    for (index, part) in text.split('`').enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-        // Odd parts sit between a pair of backticks. An unpaired trailing
-        // one leaves a last odd part with no closing tick, which is still
-        // painted as code rather than guessed at.
-        if index % 2 == 1 {
+    for (index, part) in parts.iter().enumerate() {
+        // Odd parts sit between a pair of backticks, except a last one after
+        // an unpaired tick — a value from a response can carry one. That tick
+        // is written back as prose rather than closed, which would change
+        // the text.
+        let unpaired = index == parts.len() - 1 && index % 2 == 1;
+        if unpaired {
+            out.push_str(&format!("{DIM}`{part}{RESET}"));
+        } else if index % 2 == 1 {
             out.push_str(&format!("{ACCENT}`{part}`{RESET}"));
-        } else {
+        } else if !part.is_empty() {
             out.push_str(&format!("{DIM}{part}{RESET}"));
         }
     }
@@ -123,6 +125,13 @@ mod tests {
         );
         assert_eq!(strip(&colored), tip);
         assert_eq!(dim_prose(tip, false), tip);
+    }
+
+    #[test]
+    fn an_unpaired_backtick_is_kept_as_it_was() {
+        for tip in ["`--product \"a`b\"` narrows.", "odd ` tick", "ends with `"] {
+            assert_eq!(strip(&dim_prose(tip, true)), tip);
+        }
     }
 
     #[test]

@@ -1,0 +1,65 @@
+version: 1
+name: copy-style
+summary: Copy a style from one account to another
+description: |
+  Reads a style with one credential profile and creates a copy of it with
+  another. Log in to each account first, under its own profile:
+
+    mapbox auth login --profile source
+    mapbox auth login --profile target
+
+  The copy references whatever the original does. Tilesets, fonts and the
+  sprite that belong to the source account are not copied, and the target
+  account can read them only if they are public; the `warnings` output lists
+  every such reference.
+
+inputs:
+  style_id:
+    type: string
+    required: true
+    description: ID of the style to copy
+  from_profile:
+    type: string
+    required: true
+    description: Profile logged in to the account that owns the style
+  to_profile:
+    type: string
+    required: true
+    description: Profile logged in to the account to copy it into
+  name:
+    type: string
+    description: Name for the copy. Defaults to the original's name
+
+steps:
+  - id: source
+    name: Read the style
+    command: styles get
+    args:
+      style-id: ${{ inputs.style_id }}
+      profile: ${{ inputs.from_profile }}
+      # A MAPBOX_ACCESS_TOKEN in the environment would otherwise outrank the
+      # profile, and both steps would run as the same account.
+      use-login: true
+
+  - id: body
+    name: Prepare the copy
+    script: prepare.py
+    stdin:
+      style: ${{ steps.source.output }}
+      name: ${{ inputs.name }}
+
+  - id: created
+    name: Create the copy
+    command: styles create
+    args:
+      data: "@-"
+      profile: ${{ inputs.to_profile }}
+      use-login: true
+    stdin: ${{ steps.body.output.style }}
+
+outputs:
+  id: ${{ steps.created.output.id }}
+  name: ${{ steps.created.output.name }}
+  owner: ${{ steps.created.output.owner }}
+  studio: https://studio.mapbox.com/styles/${{ steps.created.output.owner }}/${{ steps.created.output.id }}/edit/
+  warnings: ${{ steps.body.output.warnings }}

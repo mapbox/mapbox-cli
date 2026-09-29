@@ -119,8 +119,8 @@ fn a_run_carries_values_between_steps_and_prints_only_the_result() {
             "workflow",
             "run",
             "demo",
-            "-i",
-            "greeting=hi",
+            "--greeting",
+            "hi",
             "-o",
             "json",
         ],
@@ -190,14 +190,14 @@ fn dry_run_runs_nothing() {
         .status
         .success());
 
-    let path = format!("path={}", marker.display());
+    let path = marker.display().to_string();
     let out = run(
         &home,
         &[
             "workflow",
             "run",
             "touch",
-            "-i",
+            "--path",
             &path,
             "--dry-run",
             "-o",
@@ -212,7 +212,7 @@ fn dry_run_runs_nothing() {
     assert_eq!(stdout_json(&out)["steps"][0]["run"], "sh scripts/touch.sh");
     assert!(!marker.exists(), "--dry-run ran the step");
 
-    let out = run(&home, &["workflow", "run", "touch", "-i", &path]);
+    let out = run(&home, &["workflow", "run", "touch", "--path", &path]);
     assert!(
         out.status.success(),
         "{}",
@@ -316,4 +316,95 @@ fn uninstall_takes_the_directory_install_was_given() {
         source.join("workflow.yaml").is_file(),
         "the source directory was touched"
     );
+}
+
+#[test]
+fn inputs_are_flags_like_any_other_command() {
+    let home = scratch("flags");
+    install_demo(&home);
+
+    let help = run(&home, &["workflow", "run", "demo", "--help"]);
+    let text = String::from_utf8_lossy(&help.stdout);
+    assert!(
+        help.status.success(),
+        "{}",
+        String::from_utf8_lossy(&help.stderr)
+    );
+    assert!(text.contains("--greeting <GREETING>"), "{text}");
+    assert!(text.contains("[default: hello]"), "{text}");
+
+    // Clap's own usage error, exit 2, as for a typo on any command.
+    let typo = run(&home, &["workflow", "run", "demo", "--greting", "hi"]);
+    assert_eq!(typo.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&typo.stderr).contains("--greeting"));
+
+    // Globals still work after the workflow's name.
+    let out = run(
+        &home,
+        &[
+            "workflow",
+            "run",
+            "demo",
+            "--greeting=yo",
+            "--token",
+            TOKEN,
+            "-o",
+            "json",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_json(&out)["shouted"], "YO");
+}
+
+#[test]
+fn a_missing_required_input_names_its_flag() {
+    let home = scratch("required");
+    let yaml = "version: 1\nname: needs\nsummary: Needs an input\n\
+                inputs:\n  style_id: { type: string, required: true }\nsteps:\n\
+                \x20 - id: a\n    command: config list\n";
+    let dir = write_workflow(&home, "needs", yaml, &[]);
+    std::fs::remove_dir(dir.join("scripts")).unwrap();
+    assert!(run(&home, &["workflow", "install", dir.to_str().unwrap()])
+        .status
+        .success());
+
+    let out = run(&home, &["workflow", "run", "needs"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--style-id <STYLE_ID>"));
+
+    // The underscore spelling is accepted as well.
+    let out = run(
+        &home,
+        &["workflow", "run", "needs", "--style_id", "x", "-o", "json"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn a_workflow_that_is_not_installed_says_how_to_install_it() {
+    let home = scratch("not-installed");
+    let out = run(&home, &["workflow", "run", "copy-style", "--style-id", "x"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("mapbox workflow install copy-style"));
+}
+
+#[test]
+fn history_records_the_command_and_not_the_workflow_name() {
+    let home = scratch("history");
+    install_demo(&home);
+    assert!(run(&home, &["workflow", "run", "demo", "--token", TOKEN])
+        .status
+        .success());
+
+    let listed = stdout_json(&run(&home, &["history", "list", "-o", "json"]));
+    assert_eq!(listed[0]["command"], json!(["workflow", "run"]), "{listed}");
+    assert!(!listed.to_string().contains("demo"), "{listed}");
 }

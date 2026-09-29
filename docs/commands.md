@@ -3874,7 +3874,9 @@ Beta: `mapbox workflow` is in development and not recommended for use.
 ```
 
 In text mode, `list`, `show` and `install` end with tips on stderr, naming
-the command to run next.
+the command to run next. `mapbox generate-skills` leaves the `workflow`
+commands out of the skill it writes, so that an agent is not taught a command
+nobody should rely on yet.
 
 None ships inside the binary. `install` copies one into
 `~/.mapbox/workflows/<name>/`, and every other subcommand works on what is
@@ -4033,8 +4035,15 @@ the run with `workflow_failed`, naming the step, and exit code 1.
 | Parameter | Effect |
 | --- | --- |
 | `NAME` | Name of an installed workflow. |
-| `--input`, `-i` | `KEY=VALUE` for one of the workflow's inputs, repeatable. The value is read as the input's declared type. |
+| `--<input>` | One flag per input the workflow declares, spelled with dashes (`style_id` is `--style-id`). Required, typed and defaulted as its `workflow.yaml` says. `mapbox workflow run <name> --help` lists them. |
 | `--dry-run` | Check the workflow and its inputs and print the plan, then exit without running a step. |
+
+The flags come from the installed workflow's definition, read before the
+command line is parsed, so a missing input, a misspelled flag or a value of the
+wrong type is a usage error (exit 2), as on any other command. They are not in
+`--schema` or in the shell completion, which describe the command tree without
+reading `~/.mapbox/workflows/`. `workflow show` lists them for any installed
+workflow.
 
 **stdout holds only the result**: the workflow's `outputs`, or the last
 step's output if it declares none, rendered like any other result. Each
@@ -4052,12 +4061,12 @@ command line.
 
 ```sh
 mapbox workflow run copy-style \
-  --input style_id=cmm28c5rm00bj01qz9hwp69qc \
-  --input from_profile=source \
-  --input to_profile=target
+  --style-id cmm28c5rm00bj01qz9hwp69qc \
+  --from-profile source \
+  --to-profile target
 
-mapbox workflow run copy-style -i style_id=cmm28c5rm00bj01qz9hwp69qc \
-  -i from_profile=source -i to_profile=target --dry-run
+mapbox workflow run copy-style --style-id cmm28c5rm00bj01qz9hwp69qc \
+  --from-profile source --to-profile target --dry-run
 ```
 
 `--dry-run` prints the plan: the inputs as they were read, and each step with

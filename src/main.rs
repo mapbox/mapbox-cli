@@ -746,7 +746,9 @@ fn cli() -> u8 {
         }
     };
 
-    let app = build_app(&specs);
+    // Before the parse, since a workflow's inputs are flags only once its
+    // definition has been read. Everything else sees the tree unchanged.
+    let app = workflow::with_run_target(build_app(&specs), &raw_argv);
     let argv = tilesets_cli::escape_passthrough_args(&app, raw_argv.clone());
     // Parsing consumes the tree, and `--schema` still has to read it
     // afterwards — so the parse gets the copy and `app` stays whole.

@@ -18,10 +18,12 @@ pub mod runner;
 pub mod store;
 pub mod template;
 
+use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::path::Path;
 
 use anyhow::Result;
+use clap::builder::{StringValueParser, TypedValueParser};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use serde_json::{json, Value};
 
@@ -41,7 +43,7 @@ const SOURCE_ARG: &str = "source";
 const REPO_ARG: &str = "repo";
 const REF_ARG: &str = "ref";
 const FORCE_ARG: &str = "force";
-const INPUT_ARG: &str = "input";
+const RUN: &str = "run";
 
 pub fn command() -> Command {
     let name = || {
@@ -124,22 +126,114 @@ pub fn command() -> Command {
                 )),
         )
         .subcommand(
-            Command::new("run")
+            Command::new(RUN)
                 .about("Run an installed workflow")
-                .arg(name())
-                .arg(
-                    Arg::new(INPUT_ARG)
-                        .long(INPUT_ARG)
-                        .short('i')
-                        .value_name("KEY=VALUE")
-                        .action(ArgAction::Append)
-                        .help("A value for one of the workflow's inputs, repeatable"),
+                .long_about(
+                    "Run an installed workflow, giving each of its inputs as a flag: \
+                     `mapbox workflow run copy-style --style-id <id> --from-profile source \
+                     --to-profile target`.\n\n\
+                     `mapbox workflow run <name> --help` lists that workflow's flags, and \
+                     `--dry-run` prints its plan without running a step.",
                 )
-                .arg(executor::dry_run_arg(
-                    "Check the workflow and its inputs and print the plan, then exit \
-                     without running a step",
-                )),
+                .subcommand_value_name("NAME")
+                .subcommand_help_heading("Workflows")
+                .subcommand_required(true)
+                // A workflow is a subcommand only once `with_run_target` has
+                // read it from disk. Any other name still parses, so that
+                // `run` can say it is not installed, or why it cannot load.
+                .allow_external_subcommands(true),
         )
+}
+
+/// The `run` subcommand for one installed workflow: its inputs as flags,
+/// typed and required as the definition says, so that `--help`, a missing
+/// input and a misspelled flag read as they do for every other command.
+fn run_command(workflow: &definition::Workflow) -> Command {
+    let mut command = Command::new(workflow.name.clone())
+        .about(workflow.summary.clone())
+        .arg(executor::dry_run_arg(
+            "Check the workflow and its inputs and print the plan, then exit without \
+             running a step",
+        ));
+    if let Some(description) = &workflow.description {
+        command = command.long_about(format!(
+            "{}\n\n{}",
+            workflow.summary,
+            prose::render(description, false)
+        ));
+    }
+    for (name, input) in &workflow.inputs {
+        let flag = runner::input_flag(name);
+        let mut help = input.description.clone().unwrap_or_default();
+        if let Some(default) = &input.default {
+            help.push_str(&format!(
+                " [default: {}]",
+                template::as_text(default).unwrap_or_default()
+            ));
+        }
+        let mut arg = Arg::new(name.clone())
+            .long(flag.clone())
+            .value_name(flag.to_uppercase().replace('-', "_"))
+            .required(input.required)
+            .help(help.trim().to_string())
+            // Apart from the globals clap lists beside them, and required
+            // ones first, as `workflow show` orders them.
+            .help_heading("Inputs")
+            .display_order(usize::from(!input.required));
+        if flag != *name {
+            arg = arg.alias(name.clone());
+        }
+        arg = match input.kind {
+            definition::InputType::String => arg,
+            definition::InputType::Number => {
+                arg.value_parser(StringValueParser::new().try_map(|raw: String| {
+                    runner::parse_number(&raw)
+                        .map(|_| raw.clone())
+                        .ok_or_else(|| format!("`{raw}` is not a number"))
+                }))
+            }
+            // `--flag` alone means true, so a boolean reads like any flag.
+            definition::InputType::Boolean => arg
+                .value_parser(["true", "false"])
+                .num_args(0..=1)
+                .default_missing_value("true"),
+        };
+        command = command.arg(arg);
+    }
+    command
+}
+
+/// The workflow a command line runs, when it is `… workflow run <name> …`.
+///
+/// Read off argv because it has to be known before clap parses: the
+/// workflow's flags come from its `workflow.yaml`, and parsing is what they
+/// are needed for.
+fn run_target(argv: &[OsString]) -> Option<String> {
+    let words: Vec<&str> = argv.iter().skip(1).filter_map(|arg| arg.to_str()).collect();
+    let at = words.windows(2).position(|pair| pair == [COMMAND, RUN])?;
+    let name = *words.get(at + 2)?;
+    definition::is_workflow_name(name).then(|| name.to_string())
+}
+
+/// `app` with the workflow this command line runs attached under `run`, so
+/// that clap parses its inputs as flags. Anything that stops it loading is
+/// left for `run` to report, with the command tree unchanged: every other
+/// command pays nothing for this, and a broken workflow cannot break the
+/// parse.
+pub fn with_run_target(app: Command, argv: &[OsString]) -> Command {
+    let Some(name) = run_target(argv) else {
+        return app;
+    };
+    let Ok(found) = store::load(&name) else {
+        return app;
+    };
+    if !runner::command_problems(&app, &found.workflow).is_empty() {
+        return app;
+    }
+    let run = run_command(&found.workflow);
+    app.mut_subcommand(COMMAND, |workflow| {
+        workflow.mut_subcommand(RUN, |parent| parent.subcommand(run))
+    })
 }
 
 /// What the globals say, for the subcommands that need them.
@@ -169,7 +263,12 @@ pub fn run(app: &Command, matches: &ArgMatches, flags: RunFlags, mode: Mode) -> 
         Some(("uninstall", m)) => {
             uninstall(name(m), executor::wants_dry_run(m), flags.assume_yes, mode)
         }
-        Some(("run", m)) => run_workflow(app, m, flags.globals, mode),
+        Some((RUN, m)) => match m.subcommand() {
+            Some((name, workflow_matches)) => {
+                run_workflow(app, name, workflow_matches, flags.globals, mode)
+            }
+            None => unreachable!("`run` sets subcommand_required(true)"),
+        },
         _ => unreachable!("`workflow` sets subcommand_required(true)"),
     }
 }
@@ -246,7 +345,7 @@ fn run_example(workflow: &definition::Workflow) -> String {
     let mut line = format!("mapbox workflow run {}", workflow.name);
     for (name, input) in &workflow.inputs {
         if input.required {
-            line.push_str(&format!(" -i {name}=…"));
+            line.push_str(&format!(" --{} …", runner::input_flag(name)));
         }
     }
     line
@@ -572,24 +671,47 @@ fn uninstall(given: &str, dry_run: bool, assume_yes: bool, mode: Mode) -> Result
 
 fn run_workflow(
     app: &Command,
+    name: &str,
     matches: &ArgMatches,
     globals: &ArgMatches,
     mode: Mode,
 ) -> Result<()> {
-    let found = store::load(name(matches))?;
+    store::check_name(name)?;
+    let found = store::load(name)?;
     let workflow = &found.workflow;
     let problems = runner::command_problems(app, workflow);
     if !problems.is_empty() {
         return Err(store::invalid_workflow(&workflow.name, &problems));
     }
 
-    let pairs: Vec<String> = matches
-        .get_many::<String>(INPUT_ARG)
-        .into_iter()
-        .flatten()
-        .cloned()
+    let attached = app
+        .find_subcommand(COMMAND)
+        .and_then(|group| group.find_subcommand(RUN))
+        .and_then(|run| run.find_subcommand(name))
+        .is_some();
+    if !attached {
+        // Only when argv was spelled in a way `run_target` does not read.
+        return Err(output::CliError::new(
+            "invalid_arguments",
+            format!(
+                "Could not read `{name}`'s inputs from this command line. Write it as \
+                 `{}`.",
+                run_example(workflow)
+            ),
+        )
+        .into());
+    }
+
+    let given: Vec<(String, String)> = workflow
+        .inputs
+        .keys()
+        .filter_map(|input| {
+            matches
+                .get_one::<String>(input)
+                .map(|value| (input.clone(), value.clone()))
+        })
         .collect();
-    let inputs = runner::read_inputs(workflow, &pairs)?;
+    let inputs = runner::read_inputs(workflow, &given)?;
 
     if executor::wants_dry_run(matches) {
         let plan = runner::plan(workflow, &inputs);

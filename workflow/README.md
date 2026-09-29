@@ -31,7 +31,7 @@ summary: Copy a style from one account to another   # required; one line
 description: |                    # optional; shown by `workflow show`
   Longer text.
 
-inputs:                           # optional; given as --input KEY=VALUE
+inputs:                           # optional; each one is a flag of `run`
   style_id:
     type: string                  # string | number | boolean
     required: true
@@ -63,6 +63,12 @@ outputs:                          # optional; the default is the last step's out
 ```
 
 A step is a `command` or a `script`, never both.
+
+### Inputs as flags
+
+`mapbox workflow run <name>` takes each input as a flag, spelled with dashes: `style_id` is `--style-id`, and `--style_id` works too. A required input is a required flag, a number must parse as one, and a boolean is a flag that means true on its own (`--overwrite` or `--overwrite false`). `mapbox workflow run <name> --help` lists them.
+
+An input cannot be named after an option every command already has, such as `profile`, `output` or `dry_run`. `install` refuses a workflow that does.
 
 ### `description`
 

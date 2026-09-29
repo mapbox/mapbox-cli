@@ -7,9 +7,9 @@ mapbox auth login --profile source
 mapbox auth login --profile target
 mapbox workflow install copy-style
 mapbox workflow run copy-style \
-  --input style_id=<style id> \
-  --input from_profile=source \
-  --input to_profile=target
+  --style-id <style id> \
+  --from-profile source \
+  --to-profile target
 ```
 
 1. `styles get` reads the style as `from_profile`.

@@ -19,14 +19,19 @@ mod auth;
 mod completion;
 mod config;
 mod confirm;
+mod dated_jsonl;
 mod deprecation;
 mod doctor;
 mod executor;
 mod generate_skills;
+mod history;
 mod http;
 mod link;
 mod output;
 mod remedy;
+mod run_history;
+mod run_log;
+mod run_record;
 mod schema;
 mod skill_dest;
 mod spec;
@@ -608,6 +613,9 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
     // machine, never the network.
     app = app.subcommand(config::command());
 
+    // Beside `config`, which turns the history it reads on and off.
+    app = app.subcommand(history::command());
+
     // Reads what the other hand-written commands above also read — the
     // token store, the proxy environment, the config and telemetry
     // switches — so it belongs beside them rather than the API surface
@@ -664,13 +672,14 @@ fn no_stored_credentials(profile: Option<&str>) -> anyhow::Error {
 }
 
 /// Answers `--schema`, from either of the two places it can be noticed.
-fn emit_schema(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches) -> ExitCode {
+fn emit_schema(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches) -> u8 {
+    run_record::set_parsed(app, specs, matches, run_record::Invocation::Schema);
     let mode = Mode::from_matches(matches);
     match schema::emit(mode, app, specs, matches) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => 0,
         Err(e) => {
             output::emit_error(mode, &e);
-            ExitCode::FAILURE
+            1
         }
     }
 }
@@ -693,15 +702,21 @@ fn main() -> ExitCode {
         return update_check::run_refresh_child();
     }
 
+    run_record::start(&std::env::args_os().collect::<Vec<_>>());
     let code = cli();
     update_check::notify();
-    code
+    // After the notice, which the run reports.
+    run_record::finish(Some(u32::from(code)));
+    ExitCode::from(code)
 }
 
 /// Every failure leaves through here, so that one `--output` decision covers
 /// results and errors alike. `run` does the work; `cli` only chooses how
 /// what comes back is rendered.
-fn cli() -> ExitCode {
+///
+/// The exit code is returned as a number rather than an `ExitCode`, which
+/// cannot be read back, so `main` can record it.
+fn cli() -> u8 {
     // Kept whole for the pre-parse fallback: `escape_passthrough_args`
     // rewrites the line for clap, and a failure needs to see what the caller
     // actually typed.
@@ -713,7 +728,7 @@ fn cli() -> ExitCode {
         // cannot be until the specs it is parsed against exist.
         Err(e) => {
             output::emit_error(Mode::early(&raw_argv), &e);
-            return ExitCode::FAILURE;
+            return 1;
         }
     };
 
@@ -730,7 +745,10 @@ fn cli() -> ExitCode {
         // scan of argv — say whether `--schema` was really what was written.
         Err(e) => match schema::requested(&app, argv) {
             Some(matches) => return emit_schema(&app, &specs, &matches),
-            None => return report_parse_result(e, &raw_argv),
+            None => {
+                run_record::set_unparsed(&app, &raw_argv, e.kind());
+                return report_parse_result(e, &raw_argv);
+            }
         },
     };
 
@@ -741,12 +759,13 @@ fn cli() -> ExitCode {
         return emit_schema(&app, &specs, &matches);
     }
 
+    run_record::set_parsed(&app, &specs, &matches, run_record::Invocation::Execute);
     let mode = Mode::from_matches(&matches);
     match run(&app, &specs, &matches, mode) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => 0,
         Err(e) => {
             output::emit_error(mode, &e);
-            ExitCode::FAILURE
+            1
         }
     }
 }
@@ -762,7 +781,7 @@ fn cli() -> ExitCode {
 /// The mode cannot come from the parse that just failed, so `Mode::early`
 /// reads `--output` off argv itself — an explicit choice has to survive the
 /// error that makes it matter most.
-fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> ExitCode {
+fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> u8 {
     let err = drop_subcommand_from_short_circuit_usage(err);
 
     // Clap uses 2 for a usage error and 0 for help/version; preserving that
@@ -781,17 +800,6 @@ fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> Exi
             | ErrorKind::DisplayVersion
             | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
     );
-
-    // `MissingSubcommand` is exactly the case the code below already builds a
-    // short message and a `--help` suggestion for; that used to run only
-    // under `json`, so a bare `mapbox` in a terminal got clap's raw dump —
-    // the error paragraph, a repeated usage line, and a `--help` hint that
-    // says nothing the message above it didn't. Text mode deserves the same
-    // one-line-plus-suggestion treatment json already gets.
-    if is_help || (!mode.is_json() && err.kind() != ErrorKind::MissingSubcommand) {
-        let _ = err.print();
-        return ExitCode::from(code);
-    }
 
     // Clap's rendering is an error paragraph, then a blank line, then usage
     // and a hint that are help for a reader who is not going to be one here.
@@ -813,6 +821,25 @@ fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> Exi
     } else {
         message
     };
+
+    // `MissingSubcommand` is exactly the case the code below already builds a
+    // short message and a `--help` suggestion for; that used to run only
+    // under `json`, so a bare `mapbox` in a terminal got clap's raw dump —
+    // the error paragraph, a repeated usage line, and a `--help` hint that
+    // says nothing the message above it didn't. Text mode deserves the same
+    // one-line-plus-suggestion treatment json already gets.
+    if is_help || (!mode.is_json() && err.kind() != ErrorKind::MissingSubcommand) {
+        if !is_help {
+            // Printed by clap rather than `emit_error`, which records the rest.
+            run_record::set_error("usage", message);
+        }
+        if !err.use_stderr() {
+            // Help and the version: clap writes these to stdout itself.
+            run_record::add_stdout_bytes(err.render().to_string().len());
+        }
+        let _ = err.print();
+        return code;
+    }
 
     // Clap catches a missing subcommand before `run` ever sees it, so give it
     // the code `run`'s own guard uses. A caller that forgot the operation and
@@ -840,7 +867,7 @@ fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> Exi
     });
 
     output::emit_error(mode, &error.into());
-    ExitCode::from(code)
+    code
 }
 
 /// The `tip: …` line clap's own suggester renders for an unrecognized
@@ -1016,6 +1043,19 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             if use_login && token.is_none() {
                 return Err(no_stored_credentials(profile));
             }
+            match &token {
+                Some(tilesets_cli::ChildToken::Flag(t)) => {
+                    run_record::set_token(auth::TokenSource::Flag, t)
+                }
+                Some(tilesets_cli::ChildToken::Stored(t)) => {
+                    run_record::set_token(auth::TokenSource::Login, t)
+                }
+                None => {
+                    if let Some((_, t)) = auth::environment_token() {
+                        run_record::set_token(auth::TokenSource::Environment, &t);
+                    }
+                }
+            }
             if token.is_none() {
                 // Falling through to whatever the environment holds. If that
                 // shadows a login for a different account, say so: the
@@ -1075,6 +1115,13 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             Some(("unset", unset_matches)) => config::unset(unset_matches, mode)?,
             _ => unreachable!("`config` sets subcommand_required(true)"),
         },
+        // Ahead of the generic service arm too: it reads local history and
+        // makes no request.
+        Some((history::COMMAND, history_matches)) => match history_matches.subcommand() {
+            Some(("list", list_matches)) => history::list(list_matches, mode)?,
+            Some(("show", show_matches)) => history::show(show_matches, mode)?,
+            _ => unreachable!("`history` sets subcommand_required(true)"),
+        },
         // Also ahead of the generic service arm: read-only except for the
         // opt-in `--verify` request, and needs no credential load of its own
         // — it reports what one would resolve to, not what a fresh one
@@ -1095,6 +1142,9 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
 
             if use_login && token.is_none() {
                 return Err(no_stored_credentials(profile));
+            }
+            if let Some(token) = &token {
+                run_record::set_resolved_token(matches, use_login, token);
             }
 
             account_usage::run(
@@ -1208,6 +1258,9 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
 
             if use_login && token.is_none() {
                 return Err(no_stored_credentials(profile));
+            }
+            if let Some(token) = &token {
+                run_record::set_resolved_token(matches, use_login, token);
             }
             let username: Option<String> = matches
                 .get_one::<String>("username")

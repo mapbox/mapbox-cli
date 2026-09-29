@@ -19,12 +19,19 @@ pub const PRODUCT_TOKEN: &str = concat!("mapbox-cli/", env!("CARGO_PKG_VERSION")
 
 /// Whether anything past [`PRODUCT_TOKEN`] may be sent.
 pub(crate) fn telemetry_allowed() -> bool {
-    match std::env::var_os(MAPBOX_CLI_NO_TELEMETRY_ENV) {
-        None => true,
-        Some(value) => {
-            let value = value.to_string_lossy().trim().to_ascii_lowercase();
-            value.is_empty() || NOT_AN_OPT_OUT.contains(&value.as_str())
-        }
+    env_switch(MAPBOX_CLI_NO_TELEMETRY_ENV) != Some(true)
+}
+
+/// A boolean environment variable by this CLI's convention: `None` when
+/// unset or empty, `Some(false)` for one of [`NOT_AN_OPT_OUT`], `Some(true)`
+/// for anything else.
+pub(crate) fn env_switch(name: &str) -> Option<bool> {
+    let value = std::env::var_os(name)?;
+    let value = value.to_string_lossy().trim().to_ascii_lowercase();
+    if value.is_empty() {
+        None
+    } else {
+        Some(!NOT_AN_OPT_OUT.contains(&value.as_str()))
     }
 }
 

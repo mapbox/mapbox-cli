@@ -6,9 +6,9 @@
 //! file beside the credentials, written through the same
 //! [`crate::auth::write_private`] so it gets the same `0600` treatment.
 //!
-//! One setting today — `update-check` — with room for more: `get`/`set`/
-//! `unset` take a `key`, restricted by clap to [`KEYS`], so adding a second
-//! setting is a new key and a new match arm rather than a new subcommand.
+//! `get`/`set`/`unset` take a `key`, restricted by clap to [`KEYS`], so
+//! adding a setting is a new key and a new match arm rather than a new
+//! subcommand.
 //! `list` needs no key at all: it walks [`KEYS`] and reports every setting's
 //! current value in one call, which `get` cannot — the whole reason it
 //! exists alongside `get`/`set` rather than waiting for a second setting to
@@ -23,14 +23,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::auth;
-use crate::output::{self, Mode};
+use crate::output::{self, CliError, Mode};
+use crate::remedy::Remedy;
 
 pub const COMMAND: &str = "config";
 
 const CONFIG_FILE: &str = "config.json";
 
 const UPDATE_CHECK_KEY: &str = "update-check";
-const KEYS: &[&str] = &[UPDATE_CHECK_KEY];
+const HISTORY_KEY: &str = "history";
+const LOG_KEY: &str = "log";
+const KEYS: &[&str] = &[UPDATE_CHECK_KEY, HISTORY_KEY, LOG_KEY];
 
 const ON: &str = "on";
 const OFF: &str = "off";
@@ -43,6 +46,10 @@ const OFF: &str = "off";
 struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     update_check: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    history: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    log: Option<bool>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -83,6 +90,18 @@ pub fn update_check_enabled() -> bool {
     update_check_setting(&read_config())
 }
 
+/// Whether [`crate::run_history`] records runs, per the persisted setting.
+/// On unless turned off.
+pub fn history_enabled() -> bool {
+    read_config().history.unwrap_or(true)
+}
+
+/// Whether [`crate::run_log`] writes diagnostics, per the persisted setting.
+/// Off unless turned on, and it has no effect while history is off.
+pub fn log_enabled() -> bool {
+    read_config().log.unwrap_or(false)
+}
+
 fn on_off(enabled: bool) -> &'static str {
     if enabled {
         ON
@@ -97,6 +116,8 @@ fn on_off(enabled: bool) -> &'static str {
 fn resolve(config: &Config, key: &str) -> bool {
     match key {
         UPDATE_CHECK_KEY => update_check_setting(config),
+        HISTORY_KEY => config.history.unwrap_or(true),
+        LOG_KEY => config.log.unwrap_or(false),
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
 }
@@ -109,6 +130,8 @@ fn resolve(config: &Config, key: &str) -> bool {
 fn clear(config: &mut Config, key: &str) {
     match key {
         UPDATE_CHECK_KEY => config.update_check = None,
+        HISTORY_KEY => config.history = None,
+        LOG_KEY => config.log = None,
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
 }
@@ -171,8 +194,26 @@ pub fn set(matches: &ArgMatches, mode: Mode) -> Result<()> {
     let enabled = value == ON;
 
     let mut config = read_config();
+    // Diagnostics belong to history records, so they need history on.
+    // Refused rather than stored: a setting that reads `on` and does
+    // nothing would be worse than an error that says why.
+    if key == LOG_KEY && enabled && !resolve(&config, HISTORY_KEY) {
+        return Err(CliError::new(
+            "history_required",
+            "Diagnostic logging needs command history, which is off.",
+        )
+        .with_remedy(
+            Remedy::default().with_action(Some("mapbox config set history on".to_string())),
+        )
+        .into());
+    }
+    if key == HISTORY_KEY && !enabled && resolve(&config, LOG_KEY) {
+        output::progress("Diagnostic logging (`log`) stays off while history is off.");
+    }
     match key.as_str() {
         UPDATE_CHECK_KEY => config.update_check = Some(enabled),
+        HISTORY_KEY => config.history = Some(enabled),
+        LOG_KEY => config.log = Some(enabled),
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
     write_config(&config)?;
@@ -228,6 +269,7 @@ mod tests {
     fn the_config_round_trips_and_tolerates_an_empty_one() {
         let off = Config {
             update_check: Some(false),
+            ..Config::default()
         };
         let text = serde_json::to_string(&off).expect("serialize");
         assert_eq!(text, r#"{"update_check":false}"#);
@@ -249,7 +291,10 @@ mod tests {
     #[test]
     fn resolve_matches_update_check_setting_at_every_state() {
         for update_check in [None, Some(true), Some(false)] {
-            let config = Config { update_check };
+            let config = Config {
+                update_check,
+                ..Config::default()
+            };
             assert_eq!(
                 resolve(&config, UPDATE_CHECK_KEY),
                 update_check_setting(&config)
@@ -265,6 +310,7 @@ mod tests {
     fn clear_removes_the_key_rather_than_writing_the_default() {
         let mut explicit_default = Config {
             update_check: Some(true),
+            ..Config::default()
         };
         clear(&mut explicit_default, UPDATE_CHECK_KEY);
         assert_eq!(explicit_default, Config::default());
@@ -272,6 +318,7 @@ mod tests {
 
         let mut explicit_off = Config {
             update_check: Some(false),
+            ..Config::default()
         };
         clear(&mut explicit_off, UPDATE_CHECK_KEY);
         assert_eq!(explicit_off.update_check, None);

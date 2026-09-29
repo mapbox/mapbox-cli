@@ -312,11 +312,7 @@ impl ConnectivityReport {
     /// of this crate uses `Option` for, and what the docs promise.
     fn check(debug: bool, host: &str, timeout: Duration) -> Self {
         let outcome = http::client().and_then(|client| {
-            client
-                .get(host)
-                .timeout(timeout)
-                .send()
-                .map_err(anyhow::Error::from)
+            http::send(client.get(host).timeout(timeout)).map_err(anyhow::Error::from)
         });
 
         match outcome {

@@ -379,7 +379,7 @@ const REDACTED: &str = "<redacted>";
 /// starts with one — and the length keeps a user literally named `pk` from
 /// having their account redacted out of a debug line. Real tokens run to
 /// eighty characters and more.
-fn looks_like_a_token(text: &str) -> bool {
+pub(crate) fn looks_like_a_token(text: &str) -> bool {
     const PREFIXES: [&str; 3] = ["pk.", "sk.", "tk."];
     text.len() >= 40 && PREFIXES.iter().any(|prefix| text.starts_with(prefix))
 }
@@ -397,7 +397,7 @@ fn looks_like_a_token(text: &str) -> bool {
 /// Both halves are needed. The flag forms catch a value the child was told to
 /// use; the shape catches one written anywhere else, including after a `--`
 /// where nothing is a flag any more.
-fn redacted_argv(args: &[OsString]) -> Vec<String> {
+pub(crate) fn redacted_argv(args: &[OsString]) -> Vec<String> {
     let mut rendered: Vec<String> = Vec::with_capacity(args.len());
     let mut value_is_a_token = false;
 
@@ -494,7 +494,25 @@ pub fn run(args: &[OsString], token: Option<ChildToken>, debug: bool) -> Result<
 #[cfg(unix)]
 fn handoff(mut cmd: std::process::Command) -> std::io::Error {
     use std::os::unix::process::CommandExt;
+    // Now or never: after `exec` this process is the child, and `main` never
+    // gets to finish the run, so it goes without an exit code. Only when
+    // the binary resolves — a missing `tilesets` is a failure `main`
+    // reports, and the run should carry it.
+    if resolves(std::path::Path::new(cmd.get_program())) {
+        crate::run_record::finish(None);
+    }
     cmd.exec()
+}
+
+/// Whether `exec` would find `program`: as given if it has a directory in
+/// it, otherwise on `PATH`.
+#[cfg(unix)]
+fn resolves(program: &std::path::Path) -> bool {
+    if program.components().count() > 1 {
+        return program.is_file();
+    }
+    std::env::var_os("PATH")
+        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
 #[cfg(not(unix))]
@@ -502,7 +520,12 @@ fn handoff(mut cmd: std::process::Command) -> std::io::Error {
     match cmd.status() {
         // 130 is the conventional "killed by SIGINT" code; on Windows a
         // `None` code means the child was terminated rather than exiting.
-        Ok(status) => std::process::exit(status.code().unwrap_or(130)),
+        Ok(status) => {
+            let code = status.code().unwrap_or(130);
+            // `exit` skips `main`'s way out, where the run is finished.
+            crate::run_record::finish(u32::try_from(code).ok());
+            std::process::exit(code)
+        }
         Err(err) => err,
     }
 }

@@ -224,9 +224,7 @@ fn fetch(base: &str, git_ref: &str, debug: bool) -> Result<Vec<u8>> {
         eprintln!("[debug] GET {url}");
     }
 
-    let response = http::client()?
-        .get(&url)
-        .send()
+    let response = http::send(http::client()?.get(&url))
         .map_err(|e| executor::transport_failure("Could not reach GitHub", e))?;
 
     let status = response.status();

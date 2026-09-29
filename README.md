@@ -3,51 +3,67 @@
 A command-line interface for Mapbox APIs. Commands are generated at build
 time from OpenAPI specs, so they always match the specs.
 
+```sh
+brew install mapbox/tap/mapbox
+mapbox auth login
+mapbox styles list
+```
+
 ## Contents
 
-- [Build from source](#build-from-source)
-- [Install a released binary](#install-a-released-binary)
+- [Install](#install)
+  - [Homebrew](#homebrew)
+  - [Install script](#install-script)
   - [Download the archive yourself](#download-the-archive-yourself)
+  - [Build from source](#build-from-source)
+  - [Uninstall](#uninstall)
+- [Authentication](#authentication)
+  - [Named profiles](#named-profiles)
 - [Commands](#commands)
-  - [Auth](#auth)
-    - [Named profiles](#named-profiles)
-  - [API Related](#api-related)
-  - [Agent skills](#agent-skills)
+  - [API commands](#api-commands)
+  - [Diagnostics and settings](#diagnostics-and-settings)
   - [Shell completion](#shell-completion)
-  - [Generate Skills](#generate-skills)
   - [Tileset CLI](#tileset-cli)
-- [Usage](#usage)
+- [For AI agents](#for-ai-agents)
+  - [Agent skills](#agent-skills)
+  - [Generate skills](#generate-skills)
+- [Global options](#global-options)
   - [Dry runs](#dry-runs)
   - [Timeouts](#timeouts)
+  - [Extra query parameters](#extra-query-parameters)
+  - [Proxies](#proxies)
   - [Output format](#output-format)
   - [`--schema`](#--schema)
   - [Confirmation and `--yes`](#confirmation-and---yes)
+- [Updates, history and logs](#updates-history-and-logs)
   - [Update notices](#update-notices)
   - [Command history](#command-history)
   - [Diagnostic logs](#diagnostic-logs)
- - [Privacy](#privacy)
-- [Uninstall](#uninstall)
+- [Privacy](#privacy)
 - [Contributing](#contributing)
 
-## Build from source
+## Install
 
-This is the buildable core, and building it is the primary way to get it
-from here. It needs [Rust via rustup](https://rustup.rs) and nothing else:
-no second repository, no token, and no network beyond crates.io.
+Homebrew covers macOS and Linux. On Windows, use the install script or
+download the archive.
+
+### Homebrew
+
+On macOS or Linux:
 
 ```sh
-cargo build --release
-./target/release/mapbox --help
+brew install mapbox/tap/mapbox
 ```
 
-The OpenAPI specs the commands are generated from are vendored in
-`openapi/`, so a clone compiles on its own.
+Update with `brew upgrade mapbox`. The formula also installs completions
+for bash, zsh and fish, so there is nothing to set up under
+[Shell completion](#shell-completion). The tap lives at
+[mapbox/homebrew-tap](https://github.com/mapbox/homebrew-tap).
 
-## Install a released binary
+### Install script
 
-Mapbox publishes builds for macOS, Linux and Windows. The install script
-detects your platform, checks a SHA-256 checksum, and installs `mapbox`.
-No `sudo`, no admin rights:
+The script detects your platform, checks a SHA-256 checksum, and installs
+`mapbox` into `~/.local/bin`. No `sudo`, no admin rights:
 
 ```sh
 curl -fsSL https://cli.mapbox.com/install.sh | sh
@@ -57,32 +73,27 @@ curl -fsSL https://cli.mapbox.com/install.sh | sh
 irm https://cli.mapbox.com/install.ps1 | iex
 ```
 
-`MAPBOX_CLI_VERSION` pins a version instead of taking the newest:
+Run it again to update. `MAPBOX_CLI_VERSION` pins a version instead of
+taking the newest, with or without the leading `v`, so the version
+`mapbox --version` prints can be pasted straight in:
 
 ```sh
-curl -fsSL https://cli.mapbox.com/install.sh | MAPBOX_CLI_VERSION=0.2.1 sh
+curl -fsSL https://cli.mapbox.com/install.sh | MAPBOX_CLI_VERSION=0.3.0 sh
 ```
 
 ```powershell
-$env:MAPBOX_CLI_VERSION = '0.2.1'; irm https://cli.mapbox.com/install.ps1 | iex
+$env:MAPBOX_CLI_VERSION = '0.3.0'; irm https://cli.mapbox.com/install.ps1 | iex
 ```
 
-With or without the leading `v`: `0.2.1` and `v0.2.1` both work, so the
-version `mapbox --version` prints can be pasted straight in.
-`MAPBOX_INSTALL_DIR` chooses where the binary lands, and defaults to
-`~/.local/bin`.
-
-`scripts/install.sh` and `scripts/install.ps1` here are those installers'
-sources; `scripts/test-install.sh` and `scripts/test-install.ps1` exercise
-them end to end without touching the network.
-
-Run `mapbox --help` once it's on your `PATH`.
+`MAPBOX_INSTALL_DIR` chooses where the binary lands. The scripts' sources
+are [`scripts/install.sh`](./scripts/install.sh) and
+[`scripts/install.ps1`](./scripts/install.ps1).
 
 ### Download the archive yourself
 
-Nothing about the install script is required. If piping one into a shell is
-not allowed where you work, the archives are ordinary HTTP downloads, and
-`manifest.json` lists every target with its checksum:
+If piping a script into a shell is not allowed where you work, the archives
+are ordinary HTTP downloads, and `manifest.json` lists every target with its
+checksum:
 
 ```sh
 curl -fsSL https://cli.mapbox.com/latest/manifest.json
@@ -94,7 +105,7 @@ Six targets are published: `aarch64-apple-darwin`, `x86_64-apple-darwin`,
 then extract:
 
 ```sh
-version=v0.2.1
+version=v0.3.0
 file=mapbox-${version}-aarch64-apple-darwin.tar.gz
 
 curl -fsSLO "https://cli.mapbox.com/${version}/${file}"
@@ -105,11 +116,11 @@ tar -xzf "$file"
 mv mapbox ~/.local/bin/
 ```
 
-On Windows the archive is a `.zip` and PowerShell can read the manifest
-directly, so there is no text file to parse:
+On Windows the archive is a `.zip`, and PowerShell can read the manifest
+directly:
 
 ```powershell
-$version = 'v0.2.1'
+$version = 'v0.3.0'
 $target  = 'x86_64-pc-windows-msvc'
 
 $manifest = Invoke-RestMethod "https://cli.mapbox.com/$version/manifest.json"
@@ -123,38 +134,54 @@ if ((Get-FileHash -Algorithm SHA256 $artifact.file).Hash -ine $artifact.sha256) 
 Expand-Archive $artifact.file -DestinationPath .
 ```
 
-`Invoke-WebRequest` and `Get-FileHash` rather than `curl` and `sha256sum`:
-Windows PowerShell 5.1 — the edition that ships with Windows, `powershell.exe`
-— aliases `curl` to `Invoke-WebRequest`, whose flags are nothing like real
-curl's, so the commands above would silently run the wrong tool there even
-though `curl.exe` itself has shipped in `System32` since Windows 10 1803.
-PowerShell 7 (`pwsh`) dropped that alias, so `curl` there is the real thing —
-but 5.1 is still what a plain "Windows PowerShell" shortcut opens on a
-default install. `sha256sum` has the simpler problem: it isn't shipped at
-all outside WSL or Git Bash.
+This uses `Invoke-WebRequest` and `Get-FileHash` because Windows PowerShell
+5.1, the edition that ships with Windows, aliases `curl` to
+`Invoke-WebRequest`, and `sha256sum` isn't shipped outside WSL or Git Bash.
 
 Use `latest` in place of the version for whatever is current. Each archive
-holds one file, the `mapbox` executable, so there is no directory to step
-into and nothing else to place. `~/.local/bin` is where the install script
-puts it too, and `MAPBOX_INSTALL_DIR` is the variable it reads if you prefer
-somewhere else.
+holds one file, the `mapbox` executable.
 
 The macOS builds are not code-signed with a Developer ID. `curl` attaches no
 quarantine flag, which is why the commands above run, but a download through
 a browser does, and Gatekeeper will refuse an unsigned binary that carries
 one. Clear it with `xattr -d com.apple.quarantine mapbox`.
 
-## Commands
+### Build from source
 
-### Auth
+It needs [Rust via rustup](https://rustup.rs) and nothing else: no second
+repository, no token, and no network beyond crates.io. The OpenAPI specs the
+commands are generated from are vendored in `openapi/`.
+
+```sh
+cargo build --release
+./target/release/mapbox --help
+```
+
+### Uninstall
+
+```sh
+mapbox uninstall
+```
+
+Removes only the `mapbox` binary. Credentials, profiles, and the separate
+`tilesets` binary are untouched. Run
+[`mapbox auth logout`](./docs/commands.md#mapbox-auth-logout) first if you
+want those gone too. Asks for confirmation like any destructive command
+(`--yes`/`MAPBOX_YES` skips it); `--dry-run` previews without deleting.
+
+Installed with Homebrew? Use `brew uninstall mapbox` instead, so Homebrew
+knows it is gone.
+
+## Authentication
 
 ```sh
 mapbox auth login     # opens a browser (OAuth/PKCE)
-mapbox auth logout    # removes stored credentials
-mapbox auth refresh   # force-refreshes the access token
 mapbox auth whoami    # reports which token the next command will use
-mapbox auth profiles  # lists every stored profile, not just one
+mapbox auth logout    # removes stored credentials
 ```
+
+`auth refresh` and `auth profiles` complete the set; see
+[docs/commands.md](./docs/commands.md#auth).
 
 Credentials live in `~/.mapbox` as plain JSON with locked-down file
 permissions. There is no OS keychain integration. Override them with
@@ -162,7 +189,7 @@ permissions. There is no OS keychain integration. Override them with
 `MAPBOX_CONFIG_DIR` to move the whole store, which a container usually
 wants.
 
-#### Named profiles
+### Named profiles
 
 `--profile <name>` keeps a separate credential set per account:
 
@@ -172,32 +199,22 @@ mapbox --profile android_app styles list
 mapbox auth profiles              # which profiles are actually stored
 ```
 
-### API Related
+## Commands
 
-Each API is a top-level subcommand, one sub-subcommand per operation:
+### API commands
+
+Each Mapbox API is a command group, with one subcommand per operation:
 
 ```sh
-mapbox accounts *
-mapbox fonts *
-mapbox geocoder *
-mapbox rasterarrays *
-mapbox search *
-mapbox sprites *
-mapbox static-images *
-mapbox static-tiles *
-mapbox styles *
-mapbox tilequery *
-mapbox tilesets *
+mapbox accounts <operation>
+mapbox fonts <operation>
+mapbox geocoder <operation>
+mapbox search <operation>
+mapbox sprites <operation>
+mapbox static <operation>
+mapbox styles <operation>
+mapbox tilesets <operation>
 ```
-
-A command group is not the same thing as a spec file: which one an operation
-belongs to is decided per operation. So `sprites` and `tilesets` are each
-assembled from operations declared by the Styles, Raster Tiles and Vector
-Tiles specs. `mapbox tilesets` is also unrelated to `mapbox tilesets-cli`,
-which proxies to the separate Python tool.
-
-An operation can nest one level deeper where a group reads better, as in
-`mapbox styles draft get`, `draft update` and `draft delete`.
 
 For example:
 
@@ -206,63 +223,37 @@ mapbox styles get <STYLE_ID>
 mapbox styles create --data '{"name": "My Style", "version": 8, ...}'
 ```
 
-[docs/commands.md](./docs/commands.md) lists every command.
+Groups are assigned per operation, not per spec file, so `sprites` and
+`tilesets` each collect operations from several specs. A few nest one level
+deeper where that reads better, as in `mapbox styles draft get`.
+`mapbox tilesets` is unrelated to [`mapbox tilesets-cli`](#tileset-cli).
+
+[docs/commands.md](./docs/commands.md) lists every command with its
+parameters and sample output.
 
 Every request sends `User-Agent: mapbox-cli/<version>` and nothing else
-about you or your machine. `MAPBOX_CLI_NO_TELEMETRY=1` keeps even future markers
-out of that header.
+about you or your machine. `MAPBOX_CLI_NO_TELEMETRY=1` keeps even future
+markers out of that header.
 
-### Agent skills
+### Diagnostics and settings
 
 ```sh
-mapbox agent-skills list        # what's published, and what's installed here
-mapbox agent-skills install     # all 20, into whichever agents you have
-mapbox agent-skills update      # re-install what's here, report what changed
-mapbox agent-skills uninstall <NAME>
+mapbox doctor                        # the token, proxies and settings the next command would use
+mapbox usage                         # account usage per product, by day
+mapbox config set update-check off   # a setting that persists across shells
+mapbox history list                  # recent runs, newest first
 ```
 
-Installs the [Mapbox Agent Skills](https://github.com/mapbox/mapbox-agent-skills):
-hand-written guidance for coding agents on cartography, token security, style
-quality, geospatial operations and the mobile and web SDKs. No token needed,
-and no Node. It's one tarball, extracted in the binary.
-
-Fifteen agents are supported: Claude Code, Codex, Cursor, Cline, Gemini CLI,
-GitHub Copilot, Zed, OpenCode, Amp, Windsurf, Roo Code, Continue, Kiro CLI,
-Qwen Code and Goose. By default, skills are installed for whichever of them
-are found on the machine.
-
-| Flag | What it does |
-| --- | --- |
-| `--agent <name>` | Install for one agent. Repeatable. |
-| `--global` | Write to the agent's home directory instead of this project. |
-| `--dir <path>` | Write to a directory you name, for a Dockerfile or a CI job. |
-
-Most of these agents read the same `.agents/skills` directory, so asking for
-several usually means a single write.
-
-`--ref <branch|tag|sha>` installs a particular version and a SHA pins it;
-`--dry-run` lists the files first. A skill directory that already exists stops
-the install until `--force`, since it may hold your edits.
-
-`update` compares what's installed with what's published, byte for byte, and
-rewrites only what differs, including restoring a file you edited. It never
-installs a skill that wasn't already there. `uninstall <NAME>` removes the
-directory, asking first at a terminal; it makes no network request at all.
-There's no lock file: one tarball arrives before any record could be
-consulted, so comparing bytes answers exactly and leaves no state to keep in
-step with another tool's.
-
-Different command from [`generate-skills`](#generate-skills) below, which
-writes a skill describing *this CLI*. These are about using Mapbox.
+`mapbox doctor` is the first thing to run when a command behaves
+unexpectedly. It makes no request unless you pass `--verify`. See
+[Doctor](./docs/commands.md#doctor), [Usage](./docs/commands.md#usage) and
+[Config](./docs/commands.md#config) for details, and
+[Command history](#command-history) below.
 
 ### Shell completion
 
-```sh
-mapbox completion bash | zsh | fish | powershell
-```
-
-Prints a completion script on stdout. Nothing is written to disk, so put it
-where your shell looks:
+Homebrew installs completions for you. Otherwise, `mapbox completion`
+prints a script on stdout for you to put where your shell looks:
 
 ```sh
 mapbox completion bash > ~/.local/share/bash-completion/completions/mapbox
@@ -275,33 +266,9 @@ source <(mapbox completion bash)                     # this shell only
 mapbox completion powershell >> $PROFILE
 ```
 
-It completes commands, subcommands and flag names, generated from this
-binary's own command tree. So it matches the build that printed it, and
-nothing about it is maintained by hand. Values (style ids, usernames) are not
-completed: that would mean an API request mid-keystroke. `--output` does not
-apply, because the script is the result.
-
-### Generate Skills
-
-```sh
-mapbox generate-skills
-```
-
-Writes the whole command surface as an [Agent
-Skill](https://code.claude.com/docs/en/skills): `.claude/skills` for
-Claude Code, `.agents/skills` for Codex. `--agent`, `--global`, `--dir`,
-and `--service` narrow it; `--dry-run` lists files without writing them.
-
-Without `--global` it writes into the current project, once per agent it
-finds, and it prints every directory it used. To take them out again:
-
-```sh
-mapbox agent-skills uninstall mapbox-cli
-```
-
-That removes every copy this command wrote, which is more than deleting the
-directories by hand usually catches — a default run writes for each agent on
-the machine, not just the one you had in mind.
+It completes commands, subcommands and flags from this binary's own command
+tree, so it always matches the build that printed it. Values such as style
+IDs are not completed, since that would mean an API request mid-keystroke.
 
 ### Tileset CLI
 
@@ -310,22 +277,64 @@ mapbox tilesets-cli list <USERNAME>
 mapbox tilesets-cli upload-source <USERNAME> <SOURCE_ID> data.geojson.ld
 ```
 
-Forwards everything to the separately-installed [Tilesets
+Forwards everything to the separately installed [Tilesets
 CLI](https://github.com/mapbox/tilesets-cli):
 
 ```sh
 pipx install mapbox-tilesets       # Python 3.10+
 ```
 
-`--output` and `--yes` don't apply here. `tilesets` has its own flags, so use
-`--force`/`-f` for its prompts. It needs a token too: `mapbox auth login`
-covers it, or pass `--token`/`MAPBOX_ACCESS_TOKEN` the same way as every
-other command. `mapbox auth whoami` shows which one is in play if a
-tileset command answers for the wrong account.
+It uses the same token as every other command. `--output` and `--yes` don't
+apply here; `tilesets` has its own flags, so use `--force`/`-f` for its
+prompts. If a tileset command answers for the wrong account,
+`mapbox auth whoami` shows which token is in play.
 
-## Usage
+## For AI agents
 
-These apply globally, across every command, not just the API ones above.
+Two commands, for two different jobs: `agent-skills` installs guidance on
+using Mapbox, and `generate-skills` writes a skill describing this CLI.
+
+### Agent skills
+
+```sh
+mapbox agent-skills list        # what's published, and what's installed here
+mapbox agent-skills install     # every skill, for whichever agents you have
+mapbox agent-skills update      # re-install what's here, report what changed
+mapbox agent-skills uninstall <NAME>
+```
+
+Installs the [Mapbox Agent Skills](https://github.com/mapbox/mapbox-agent-skills):
+hand-written guidance for coding agents on cartography, token security, style
+quality, geospatial operations and the mobile and web SDKs. No token or Node
+needed.
+
+By default it installs into this project for each supported agent it finds
+on the machine, including Claude Code, Codex, Cursor and GitHub Copilot.
+`--agent` picks one, `--global` writes to the agent's home directory, and
+`--dir` writes to a path you name, for a Dockerfile or a CI job. `update`
+rewrites only files that differ from what's published, including files you
+edited. The full list of agents and flags is in
+[docs/commands.md](./docs/commands.md#agent-skills).
+
+### Generate skills
+
+```sh
+mapbox generate-skills
+```
+
+Writes this CLI's whole command surface as an [Agent
+Skill](https://code.claude.com/docs/en/skills), into the current project for
+each agent it finds: `.claude/skills` for Claude Code, `.agents/skills` for
+Codex. `--agent`, `--global`, `--dir` and `--service` narrow it, and
+`--dry-run` lists the files first. To remove every copy it wrote:
+
+```sh
+mapbox agent-skills uninstall mapbox-cli
+```
+
+## Global options
+
+These apply to every command, not just the API ones.
 
 ### Dry runs
 
@@ -382,10 +391,8 @@ Two things are easy to lose an afternoon to:
 | `text` | Pretty-printed, readable |
 | `json` | Everything on stdout is JSON: one compact document per command |
 
-`json` promises the shape, not the count. Every command today returns one
-document. A command that streams would emit one per line (JSON Lines), but
-that is a property of the command rather than of the flag, so there is no
-`-o jsonl`. Nothing streams yet.
+Every command prints one JSON document today. A command that streams would
+print one per line (JSON Lines), which is why there is no `-o jsonl`.
 
 Errors always go to stderr and never appear in stdout. Under `json` they're
 one flat object: `code`, `message`, plus `fix`, `next_actions` and `docs`
@@ -414,8 +421,10 @@ Continue? [y/N] n
 ```
 
 `--yes`/`-y`/`MAPBOX_YES=1` skips the question, which is what CI wants, or a
-script deliberately run at a terminal. It does **not** apply to `auth login`, which always
-needs a person.
+script deliberately run at a terminal. It does **not** apply to `auth login`,
+which always needs a person.
+
+## Updates, history and logs
 
 ### Update notices
 
@@ -427,6 +436,9 @@ A newer mapbox is available: 0.2.0 (this is 0.1.5).
 Update: curl -fsSL https://cli.mapbox.com/install.sh | sh
 Silence this: MAPBOX_NO_UPDATE_CHECK=1
 ```
+
+The suggested command is the install script's. If you installed with
+Homebrew, run `brew upgrade mapbox` instead.
 
 This is the only request the CLI makes that you didn't ask for, so it is
 kept narrow:
@@ -442,17 +454,16 @@ kept narrow:
 between runs. A build that names no release channel never checks at all, and
 `cargo build` produces one.
 
-`mapbox config set update-check off` turns it off for good, in every shell —
-see [Config](docs/commands.md#config) — rather than just the session an
-environment variable happens to be set in.
+`mapbox config set update-check off` turns it off in every shell, not just
+the one an environment variable is set in. See
+[Config](./docs/commands.md#config).
 
 ### Command history
 
 Each run appends one line to `~/.mapbox/history/<UTC date>.jsonl` (or under
 `$MAPBOX_CONFIG_DIR`), kept for 30 days and at most 10 MB, oldest dropped
-first: which command ran (its command path,
-like `search forward`), how it ended, how long it took and the request ids
-support can look up. Argument values are never recorded — not what you
+first: which command ran (its command path, like `search forward`), how it
+ended, how long it took and the request ids support can look up. Argument values are never recorded — not what you
 searched for, not a file path, not a token. The files are readable only by
 you and never leave your machine.
 
@@ -485,7 +496,7 @@ stays. A day of logs goes when that day of history does. Logging needs
 history: with history off it never runs, and with the `history` setting off
 `config set log on` refuses.
 
-### Privacy
+## Privacy
 
 **YOUR PRIVACY - COLLECTION OF TELEMETRY**
 
@@ -526,18 +537,6 @@ MAPBOX_CLI_NO_TELEMETRY=1
 For additional information on our data processing activities and your
 related rights, please see our Mapbox
 [Privacy Policy](https://www.mapbox.com/legal/privacy).
-
-## Uninstall
-
-```sh
-mapbox uninstall
-```
-
-Removes only the `mapbox` binary. Credentials, profiles, and the separate
-`tilesets` binary are untouched. Run
-[`mapbox auth logout`](./docs/commands.md#mapbox-auth-logout) first if you
-want those gone too. Asks for confirmation like any destructive command
-(`--yes`/`MAPBOX_YES` skips it); `--dry-run` previews without deleting.
 
 ## Contributing
 

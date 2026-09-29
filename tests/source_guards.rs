@@ -311,7 +311,7 @@ fn every_telemetry_marker_is_disclosed() {
     // The Privacy section alone: a marker named anywhere else in the README
     // is not a disclosure.
     let privacy = readme
-        .split_once("### Privacy")
+        .split_once("\n## Privacy\n")
         .expect("README.md has a Privacy section")
         .1;
     let privacy = privacy.split("\n## ").next().unwrap_or(privacy);

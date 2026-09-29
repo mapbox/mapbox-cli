@@ -16,15 +16,17 @@ mapbox styles list
   - [Install script](#install-script)
   - [Download the archive yourself](#download-the-archive-yourself)
   - [Build from source](#build-from-source)
+  - [Uninstall](#uninstall)
+- [Authentication](#authentication)
+  - [Named profiles](#named-profiles)
 - [Commands](#commands)
-  - [Auth](#auth)
-    - [Named profiles](#named-profiles)
   - [API commands](#api-commands)
-  - [Agent skills](#agent-skills)
   - [Shell completion](#shell-completion)
-  - [Generate Skills](#generate-skills)
   - [Tileset CLI](#tileset-cli)
-- [Usage](#usage)
+- [For AI agents](#for-ai-agents)
+  - [Agent skills](#agent-skills)
+  - [Generate skills](#generate-skills)
+- [Global options](#global-options)
   - [Dry runs](#dry-runs)
   - [Timeouts](#timeouts)
   - [Extra query parameters](#extra-query-parameters)
@@ -32,11 +34,11 @@ mapbox styles list
   - [Output format](#output-format)
   - [`--schema`](#--schema)
   - [Confirmation and `--yes`](#confirmation-and---yes)
+- [Updates, history and logs](#updates-history-and-logs)
   - [Update notices](#update-notices)
   - [Command history](#command-history)
   - [Diagnostic logs](#diagnostic-logs)
-  - [Privacy](#privacy)
-- [Uninstall](#uninstall)
+- [Privacy](#privacy)
 - [Contributing](#contributing)
 
 ## Install
@@ -162,9 +164,22 @@ cargo build --release
 ./target/release/mapbox --help
 ```
 
-## Commands
+### Uninstall
 
-### Auth
+```sh
+mapbox uninstall
+```
+
+Removes only the `mapbox` binary. Credentials, profiles, and the separate
+`tilesets` binary are untouched. Run
+[`mapbox auth logout`](./docs/commands.md#mapbox-auth-logout) first if you
+want those gone too. Asks for confirmation like any destructive command
+(`--yes`/`MAPBOX_YES` skips it); `--dry-run` previews without deleting.
+
+Installed with Homebrew? Use `brew uninstall mapbox` instead, so Homebrew
+knows it is gone.
+
+## Authentication
 
 ```sh
 mapbox auth login     # opens a browser (OAuth/PKCE)
@@ -180,7 +195,7 @@ permissions. There is no OS keychain integration. Override them with
 `MAPBOX_CONFIG_DIR` to move the whole store, which a container usually
 wants.
 
-#### Named profiles
+### Named profiles
 
 `--profile <name>` keeps a separate credential set per account:
 
@@ -189,6 +204,8 @@ mapbox auth login --profile android_app
 mapbox --profile android_app styles list
 mapbox auth profiles              # which profiles are actually stored
 ```
+
+## Commands
 
 ### API commands
 
@@ -230,6 +247,57 @@ Every request sends `User-Agent: mapbox-cli/<version>` and nothing else
 about you or your machine. `MAPBOX_CLI_NO_TELEMETRY=1` keeps even future
 markers out of that header.
 
+### Shell completion
+
+```sh
+mapbox completion bash | zsh | fish | powershell
+```
+
+Prints a completion script on stdout. Nothing is written to disk, so put it
+where your shell looks:
+
+```sh
+mapbox completion bash > ~/.local/share/bash-completion/completions/mapbox
+mapbox completion zsh  > ~/.zfunc/_mapbox            # a directory on $fpath
+mapbox completion fish > ~/.config/fish/completions/mapbox.fish
+source <(mapbox completion bash)                     # this shell only
+```
+
+```powershell
+mapbox completion powershell >> $PROFILE
+```
+
+It completes commands, subcommands and flag names, generated from this
+binary's own command tree. So it matches the build that printed it, and
+nothing about it is maintained by hand. Values (style ids, usernames) are not
+completed: that would mean an API request mid-keystroke. `--output` does not
+apply, because the script is the result.
+
+### Tileset CLI
+
+```sh
+mapbox tilesets-cli list <USERNAME>
+mapbox tilesets-cli upload-source <USERNAME> <SOURCE_ID> data.geojson.ld
+```
+
+Forwards everything to the separately-installed [Tilesets
+CLI](https://github.com/mapbox/tilesets-cli):
+
+```sh
+pipx install mapbox-tilesets       # Python 3.10+
+```
+
+`--output` and `--yes` don't apply here. `tilesets` has its own flags, so use
+`--force`/`-f` for its prompts. It needs a token too: `mapbox auth login`
+covers it, or pass `--token`/`MAPBOX_ACCESS_TOKEN` the same way as every
+other command. `mapbox auth whoami` shows which one is in play if a
+tileset command answers for the wrong account.
+
+## For AI agents
+
+Two commands, for two different jobs: `agent-skills` installs guidance on
+using Mapbox, and `generate-skills` writes a skill describing this CLI.
+
 ### Agent skills
 
 ```sh
@@ -270,36 +338,7 @@ There's no lock file: one tarball arrives before any record could be
 consulted, so comparing bytes answers exactly and leaves no state to keep in
 step with another tool's.
 
-Different command from [`generate-skills`](#generate-skills) below, which
-writes a skill describing *this CLI*. These are about using Mapbox.
-
-### Shell completion
-
-```sh
-mapbox completion bash | zsh | fish | powershell
-```
-
-Prints a completion script on stdout. Nothing is written to disk, so put it
-where your shell looks:
-
-```sh
-mapbox completion bash > ~/.local/share/bash-completion/completions/mapbox
-mapbox completion zsh  > ~/.zfunc/_mapbox            # a directory on $fpath
-mapbox completion fish > ~/.config/fish/completions/mapbox.fish
-source <(mapbox completion bash)                     # this shell only
-```
-
-```powershell
-mapbox completion powershell >> $PROFILE
-```
-
-It completes commands, subcommands and flag names, generated from this
-binary's own command tree. So it matches the build that printed it, and
-nothing about it is maintained by hand. Values (style ids, usernames) are not
-completed: that would mean an API request mid-keystroke. `--output` does not
-apply, because the script is the result.
-
-### Generate Skills
+### Generate skills
 
 ```sh
 mapbox generate-skills
@@ -321,29 +360,9 @@ That removes every copy this command wrote, which is more than deleting the
 directories by hand usually catches — a default run writes for each agent on
 the machine, not just the one you had in mind.
 
-### Tileset CLI
+## Global options
 
-```sh
-mapbox tilesets-cli list <USERNAME>
-mapbox tilesets-cli upload-source <USERNAME> <SOURCE_ID> data.geojson.ld
-```
-
-Forwards everything to the separately-installed [Tilesets
-CLI](https://github.com/mapbox/tilesets-cli):
-
-```sh
-pipx install mapbox-tilesets       # Python 3.10+
-```
-
-`--output` and `--yes` don't apply here. `tilesets` has its own flags, so use
-`--force`/`-f` for its prompts. It needs a token too: `mapbox auth login`
-covers it, or pass `--token`/`MAPBOX_ACCESS_TOKEN` the same way as every
-other command. `mapbox auth whoami` shows which one is in play if a
-tileset command answers for the wrong account.
-
-## Usage
-
-These apply globally, across every command, not just the API ones above.
+These apply to every command, not just the API ones.
 
 ### Dry runs
 
@@ -435,6 +454,8 @@ Continue? [y/N] n
 script deliberately run at a terminal. It does **not** apply to `auth login`,
 which always needs a person.
 
+## Updates, history and logs
+
 ### Update notices
 
 `mapbox` can't update itself, so when a newer release exists it says so once
@@ -506,7 +527,7 @@ stays. A day of logs goes when that day of history does. Logging needs
 history: with history off it never runs, and with the `history` setting off
 `config set log on` refuses.
 
-### Privacy
+## Privacy
 
 **YOUR PRIVACY - COLLECTION OF TELEMETRY**
 
@@ -547,21 +568,6 @@ MAPBOX_CLI_NO_TELEMETRY=1
 For additional information on our data processing activities and your
 related rights, please see our Mapbox
 [Privacy Policy](https://www.mapbox.com/legal/privacy).
-
-## Uninstall
-
-```sh
-mapbox uninstall
-```
-
-Removes only the `mapbox` binary. Credentials, profiles, and the separate
-`tilesets` binary are untouched. Run
-[`mapbox auth logout`](./docs/commands.md#mapbox-auth-logout) first if you
-want those gone too. Asks for confirmation like any destructive command
-(`--yes`/`MAPBOX_YES` skips it); `--dry-run` previews without deleting.
-
-Installed with Homebrew? Use `brew uninstall mapbox` instead, so Homebrew
-knows it is gone.
 
 ## Contributing
 

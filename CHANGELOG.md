@@ -19,6 +19,16 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox workflow`, beta: install and run workflows, which are named,
+  multi-step recipes of `mapbox` commands and scripts defined in a
+  `workflow.yaml`. `install` copies one from a local directory or from a
+  GitHub repository's `workflow/<stage>/<name>/` (by default `mapbox/cli`;
+  `GH_TOKEN`/`GITHUB_TOKEN` for a private one) into `~/.mapbox/workflows/`,
+  and `list`, `show`, `run` and `uninstall` work on what is installed. The
+  first one published is `copy-style`, which copies a style between
+  accounts. The command and the `version: 1` format are beta and may change.
+  Nothing changes for a script that does not use them.
+
 - New command: `mapbox styles download <style-id> > style.zip` saves a
   style as a ZIP with its sprite icons and custom fonts. `mapbox auth login`
   now also asks for the `styles:download` scope it needs, so log in again

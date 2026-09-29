@@ -111,6 +111,12 @@ nests, and is typed `mapbox styles draft get`.
 [tilesets.get-mvt](#mapbox-tilesets-get-mvt) ·
 [tilesets.query](#mapbox-tilesets-query)
 
+**[Workflows](#workflows)** — [workflow.list](#mapbox-workflow-list) ·
+[workflow.show](#mapbox-workflow-show) ·
+[workflow.install](#mapbox-workflow-install) ·
+[workflow.uninstall](#mapbox-workflow-uninstall) ·
+[workflow.run](#mapbox-workflow-run)
+
 **[Tilesets CLI](#tilesets-cli)** — [tilesets-cli](#mapbox-tilesets-cli-args)
 
 Then [Errors](#errors) — the shape a failure takes in each mode.
@@ -3849,6 +3855,208 @@ Tips:
 `-o json` is unaffected by `--daily` — the day-by-day figures are already
 there under each product's `daily` array either way, which is why the tip
 list drops the `--daily` suggestion once it's already in effect.
+
+---
+
+## Workflows
+
+A workflow is a named, multi-step recipe of `mapbox` commands and scripts,
+defined in a `workflow.yaml`. **Beta:** the command and the `version: 1`
+format may change. The format and the rules a workflow directory follows are
+in [workflow/README.md](../workflow/README.md).
+
+None ships inside the binary. `install` copies one into
+`~/.mapbox/workflows/<name>/`, and every other subcommand works on what is
+installed there. A `beta` workflow says so on stderr when it is installed or
+run.
+
+---
+
+### `mapbox workflow list`
+
+Lists the installed workflows. One that no longer loads, because a file was
+edited by hand or this CLI no longer reads its format, is listed with its
+error instead of a summary.
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+copy-style  (beta)
+  Copy a style from one account to another
+```
+
+</td><td>
+
+```json
+[
+  {
+    "name": "copy-style",
+    "path": "/Users/me/.mapbox/workflows/copy-style",
+    "source": "github:mapbox/cli@main",
+    "stage": "beta",
+    "summary": "Copy a style from one account to another"
+  }
+]
+```
+
+</td></tr>
+</table>
+
+---
+
+### `mapbox workflow show`
+
+Describes an installed workflow: its inputs, with their types and defaults,
+and its steps. When a step names a command or an argument this build no
+longer has, the problems are listed at the end and under `problems`.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `NAME` | Name of an installed workflow. |
+
+---
+
+### `mapbox workflow install`
+
+Installs a workflow from GitHub or from a local directory. Everything is read
+and checked before anything is written: the layout, the `workflow.yaml`, and
+every command step against this build's commands. A workflow that fails any
+of these is `invalid_workflow`, with every problem listed at once.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `SOURCE` | A workflow name, looked up in the repository's `workflow/<stage>/<name>/`, or a path to a local workflow directory: anything with a `/` or starting with `.`. |
+| `--repo` | GitHub repository to install from, as `OWNER/REPO`. Defaults to `mapbox/cli`. |
+| `--ref` | Branch, tag or commit to install from. Defaults to `main`. |
+| `--force` | Replace a workflow that is already installed. |
+| `--dry-run` | Check the workflow and list the files it would write, then exit. |
+
+The repository is read as one tarball through the GitHub API. For a private
+repository, such as `mapbox/cli` today, set `GH_TOKEN` or `GITHUB_TOKEN`. It is
+sent only to `api.github.com`. Without one, a private repository answers 404,
+exactly as a ref that does not exist does, and the error says both.
+
+**An installed workflow stops the install** unless `--force` is given. The new
+copy is staged and renamed into place, so an interrupted install leaves the
+old copy or the new one. Only regular files are taken. A symlink in a local
+directory is refused, and an archive entry whose path would leave the
+workflow's directory stops the read.
+
+#### Examples
+
+```sh
+export GITHUB_TOKEN="$(gh auth token)"
+mapbox workflow install copy-style
+
+mapbox workflow install copy-style --ref v0.4.0
+
+mapbox workflow install ./workflow/beta/copy-style --force
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+Installed `copy-style` from
+/Users/me/dev/cli/workflow/beta/copy-style
+into /Users/me/.mapbox/workflows/copy-style.
+Run it with `mapbox workflow run copy-style`.
+```
+
+</td><td>
+
+```json
+{
+  "dry_run": false,
+  "files": [
+    "README.md",
+    "scripts/prepare.py",
+    "workflow.yaml"
+  ],
+  "name": "copy-style",
+  "path": "/Users/me/.mapbox/workflows/copy-style",
+  "source": "/Users/me/dev/cli/workflow/beta/copy-style",
+  "stage": "beta"
+}
+```
+
+</td></tr>
+</table>
+
+---
+
+### `mapbox workflow uninstall`
+
+Removes an installed workflow's directory. At a terminal it asks first, and
+`--yes` skips the question. Only a plain workflow name is accepted, and only a
+directory `install` wrote is removed.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `NAME` | Name of an installed workflow. |
+| `--dry-run` | Say what it would remove, then exit without removing it. |
+
+---
+
+### `mapbox workflow run`
+
+Runs an installed workflow's steps in order. The first step that fails stops
+the run with `workflow_failed`, naming the step, and exit code 1.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `NAME` | Name of an installed workflow. |
+| `--input`, `-i` | `KEY=VALUE` for one of the workflow's inputs, repeatable. The value is read as the input's declared type. |
+| `--dry-run` | Check the workflow and its inputs and print the plan, then exit without running a step. |
+
+**stdout holds only the result**: the workflow's `outputs`, or the last
+step's output if it declares none, rendered like any other result. Each
+step's progress line and anything a step writes to stderr go to stderr.
+
+Each command step is this binary run again with `--output json`, so it
+resolves its token and applies its timeouts as the same command typed by
+hand would, and appears in `mapbox history` as its own run. The globals given
+to `workflow run` (`--profile`, `--username`, `--use-login`, `--timeout`,
+`--yes`, `--debug`, `--token`) reach every command step that does not set its
+own. A token typed as `--token` goes to the step's environment, not its
+command line.
+
+#### Examples
+
+```sh
+mapbox workflow run copy-style \
+  --input style_id=cmm28c5rm00bj01qz9hwp69qc \
+  --input from_profile=source \
+  --input to_profile=target
+
+mapbox workflow run copy-style -i style_id=cmm28c5rm00bj01qz9hwp69qc \
+  -i from_profile=source -i to_profile=target --dry-run
+```
+
+`--dry-run` prints the plan: the inputs as they were read, and each step with
+its arguments as written, since nothing has run to fill them in.
+
+```
+Would run `copy-style`:
+  1. source  mapbox styles get
+  2. body  python3 scripts/prepare.py
+  3. created  mapbox styles create
+```
 
 ---
 

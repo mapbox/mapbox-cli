@@ -39,6 +39,7 @@ mod telemetry;
 mod tilesets_cli;
 mod uninstall;
 mod update_check;
+mod workflow;
 
 use output::{CliError, Mode};
 use remedy::Remedy;
@@ -637,6 +638,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
 
     app = app.subcommand(account_usage::command());
 
+    app = app.subcommand(workflow::command());
     app.subcommand(tilesets_cli::command())
 }
 
@@ -1135,6 +1137,19 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             Some(("show", show_matches)) => history::show(show_matches, mode)?,
             _ => unreachable!("`history` sets subcommand_required(true)"),
         },
+        // Ahead of the generic service arm too. Its own requests go to
+        // GitHub, and each command step is a child `mapbox` that resolves
+        // its credentials itself — so nothing is loaded here.
+        Some((workflow::COMMAND, workflow_matches)) => workflow::run(
+            app,
+            workflow_matches,
+            workflow::RunFlags {
+                globals: matches,
+                debug,
+                assume_yes,
+            },
+            mode,
+        )?,
         // Also ahead of the generic service arm: read-only except for the
         // opt-in `--verify` request, and needs no credential load of its own
         // — it reports what one would resolve to, not what a fresh one

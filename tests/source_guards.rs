@@ -48,6 +48,10 @@ fn sources() -> Vec<(String, String)> {
 /// - `generate_skills` — the staged skill directory it renames into place.
 /// - `skill_dest` — a test scratch directory.
 /// - `uninstall` — the binary itself, which is the whole command.
+/// - `workflow/store.rs` — its staging directory, the installed workflow
+///   `install --force` replaces, and `workflow uninstall`. The name is
+///   checked to be one plain directory name first, and only a directory
+///   holding its `.install.json` marker is removed.
 const MAY_DELETE: &[&str] = &[
     "agent_skills.rs",
     "auth.rs",
@@ -56,6 +60,7 @@ const MAY_DELETE: &[&str] = &[
     "generate_skills.rs",
     "skill_dest.rs",
     "uninstall.rs",
+    "workflow/store.rs",
 ];
 
 /// A new module that deletes files has to say so here first.
@@ -238,7 +243,10 @@ const CARRIES_A_REQUEST_ID: &[&str] = &["account_usage.rs", "auth.rs", "executor
 /// `agent_skills.rs` talks to GitHub codeload, which identifies requests with
 /// `x-github-request-id`. That is not something Mapbox support can look up,
 /// so an id there would point at the wrong company — worse than none.
-const NO_REQUEST_ID_TO_CARRY: &[&str] = &["agent_skills.rs"];
+///
+/// `workflow/store.rs` fetches a tarball from the GitHub API, for the same
+/// reason.
+const NO_REQUEST_ID_TO_CARRY: &[&str] = &["agent_skills.rs", "workflow/store.rs"];
 
 /// `output/error.rs` defines `CliError::http` rather than calling it over a
 /// wire.

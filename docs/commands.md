@@ -3919,9 +3919,12 @@ copy-style  Copy a style from one account to another
 
 ### `mapbox workflow show`
 
-Describes an installed workflow: its inputs, with their types and defaults,
-and its steps. When a step names a command or an argument this build no
-longer has, the problems are listed at the end and under `problems`.
+Describes an installed workflow, in the same layout for every one: its name
+and summary, its description, its inputs with their types and defaults, its
+steps, and where the installed copy came from. When a step names a command or
+an argument this build no longer has, the problems are listed after the steps
+and under `problems`. How a description is written is in
+[workflow/README.md](../workflow/README.md#description).
 
 #### Parameters
 

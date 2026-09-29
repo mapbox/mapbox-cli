@@ -64,6 +64,9 @@ nests, and is typed `mapbox styles draft get`.
 [config.set](#mapbox-config-set) · [config.list](#mapbox-config-list) ·
 [config.unset](#mapbox-config-unset)
 
+**[History](#history)** — [history.list](#mapbox-history-list) ·
+[history.show](#mapbox-history-show)
+
 **[Doctor](#doctor)** — [doctor](#mapbox-doctor)
 
 **[Usage](#usage)** — [usage](#mapbox-usage)
@@ -3194,10 +3197,15 @@ Removed /home/user/.local/bin/mapbox.
 ## Config
 
 Settings that persist across shells and sessions — `~/.mapbox/config.json`
-(or `$MAPBOX_CONFIG_DIR`), written the same way credentials are. One setting
-today, `update-check`, which mirrors `MAPBOX_NO_UPDATE_CHECK` (see [Update
-notices](../README.md#update-notices)) but stays off in every future shell
-rather than only the one the environment variable was set in.
+(or `$MAPBOX_CONFIG_DIR`), written the same way credentials are. Each is the
+persisted form of an environment variable that only lasts for the shell it
+was set in, and stays in every future shell instead.
+
+| Key | Default | What it controls |
+| --- | --- | --- |
+| `update-check` | `on` | The update notice; mirrors `MAPBOX_NO_UPDATE_CHECK` (see [Update notices](../README.md#update-notices)) |
+| `history` | `on` | [Command history](../README.md#command-history), read by `mapbox history`; `MAPBOX_HISTORY=0` or `=1` overrides it for a session |
+| `log` | `off` | [Diagnostic logs](../README.md#diagnostic-logs), shown by `mapbox history show`; `MAPBOX_LOG=1` or `=0` overrides it for a session. Needs `history` on: `config set log on` with history off fails with `history_required` |
 
 ### `mapbox config get`
 
@@ -3209,7 +3217,7 @@ than failing, the same forgiving read the update-check cache itself uses.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to read. Only `update-check` exists today. |
+| `<key>` | Which setting to read: `update-check`, `history` or `log`. |
 
 #### Examples
 
@@ -3248,7 +3256,7 @@ without an environment variable.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to change. Only `update-check` exists today. |
+| `<key>` | Which setting to change: `update-check`, `history` or `log`. |
 | `<value>` | `on` or `off`. |
 
 #### Examples
@@ -3305,6 +3313,8 @@ mapbox config list
 
 ```
 update-check	on
+history	on
+log	off
 ```
 
 </td><td>
@@ -3314,6 +3324,14 @@ update-check	on
   {
     "key": "update-check",
     "value": true
+  },
+  {
+    "key": "history",
+    "value": true
+  },
+  {
+    "key": "log",
+    "value": false
   }
 ]
 ```
@@ -3332,7 +3350,7 @@ default, a key explicitly set to the old default value does not.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to clear. Only `update-check` exists today. |
+| `<key>` | Which setting to clear: `update-check`, `history` or `log`. |
 
 #### Examples
 
@@ -3361,6 +3379,208 @@ update-check cleared, now on (default).
 
 </td></tr>
 </table>
+
+---
+
+## History
+
+The runs [command history](../README.md#command-history) recorded on this
+machine over the last 30 days, up to 10 MB: which command ran, how it ended, how long it
+took and the request ids support can look up. Argument values are never
+recorded, so a run shows as its command path — `mapbox search forward`,
+not what was searched for. History is on by default; with it off
+(`mapbox config set history off`), both commands find nothing and say why
+on stderr. Neither makes a request or needs a token, and neither is itself
+recorded — nor are `--help`, `--version`, `completion` or a run under
+`sudo`.
+
+History is also the way in to [diagnostic logs](../README.md#diagnostic-logs):
+there is no separate command for them. `history show` includes a run's log
+when one was captured and is still kept.
+
+### `mapbox history list`
+
+The most recent runs, newest first: a short id, when it ran (UTC), its exit
+code and its command path, with `[log]` after a run whose diagnostic log was
+captured (`diagnosticsCaptured` in `json`). `json` gives each run's full
+`id`, which `history show` also accepts shortened to any prefix that names
+one run.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `--limit <n>` | How many runs to list. Defaults to `20`; `0` lists every recorded run. |
+
+#### Examples
+
+```sh
+mapbox history list
+
+mapbox history list --limit 0
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+ID        TIME                      EXIT  COMMAND
+49d6ec63  2026-09-28T11:26:38.569Z     2  mapbox styles
+2c67e6a1  2026-09-28T11:26:38.515Z     1  mapbox styles list  [log]
+```
+
+</td><td>
+
+```json
+[
+  {
+    "command": [
+      "styles"
+    ],
+    "durationMs": 42,
+    "errorCode": "usage",
+    "exitCode": 2,
+    "id": "49d6ec63-719d-4844-9005-a201fa9902c3",
+    "time": "2026-09-28T11:26:38.569Z"
+  },
+  {
+    "command": [
+      "styles",
+      "list"
+    ],
+    "diagnosticsCaptured": true,
+    "durationMs": 191,
+    "errorCode": "http_401",
+    "exitCode": 1,
+    "id": "2c67e6a1-0e32-4037-9c49-3fd21a62fab5",
+    "time": "2026-09-28T11:26:38.515Z"
+  }
+]
+```
+
+</td></tr>
+</table>
+
+### `mapbox history show`
+
+Everything recorded about one run — its command path, how it ended, its
+error code, how many requests it made and the ids of the last five — and
+what became of its diagnostic log, as `diagnostics.status` in `json`:
+
+| `status` | Meaning |
+| --- | --- |
+| `captured` | The log is in `diagnostics.log`: the command line with tokens redacted, which token was used, each request and the error message. |
+| `not_captured` | Diagnostic logging was off for this run. |
+| `unavailable` | A log was captured but has since expired or been removed to keep diagnostic logs under 100 MB. |
+
+An id that names no run fails with `history_not_found`; a prefix shared by
+several fails with `history_ambiguous_id`; with nothing recorded yet,
+`show` with no id fails with `history_empty`.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `[id]` | The run's id, or any prefix of it that names one run. The newest run when left out. |
+
+#### Examples
+
+```sh
+mapbox history show
+
+mapbox history show 2c67e6a1
+```
+
+#### Outputs
+
+A run whose log was captured:
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+Run       2c67e6a1-0e32-4037-9c49-3fd21a62fab5
+Time      2026-09-28T11:26:38.515Z (mapbox 0.3.0)
+Command   mapbox styles list
+Exit      1 after 191 ms
+Error     http_401
+Requests  1
+  request id Aa-RR5_S57xRecEYSj1rtfOCcwjDVNCnA8eUvLDFDf824mdVExRDDg==
+Log       mapbox styles list --username example --token <redacted>
+  token flag, pk, account example
+  GET https://api.mapbox.com/styles/v1/example?access_token=<redacted> -> 401 in 149 ms (request id Aa-RR5_S57xRecEYSj1rtfOCcwjDVNCnA8eUvLDFDf824mdVExRDDg==)
+  0 bytes to stdout
+  error http_401: Not Authorized - Invalid Token
+```
+
+</td><td>
+
+```json
+{
+  "command": [
+    "styles",
+    "list"
+  ],
+  "diagnostics": {
+    "log": {
+      "argv": [
+        "styles",
+        "list",
+        "--username",
+        "example",
+        "--token",
+        "<redacted>"
+      ],
+      "auth": {
+        "account": "example",
+        "source": "flag",
+        "type": "pk"
+      },
+      "error": {
+        "code": "http_401",
+        "message": "Not Authorized - Invalid Token"
+      },
+      "requests": [
+        {
+          "durationMs": 149,
+          "method": "GET",
+          "requestId": "Aa-RR5_S57xRecEYSj1rtfOCcwjDVNCnA8eUvLDFDf824mdVExRDDg==",
+          "status": 401,
+          "url": "https://api.mapbox.com/styles/v1/example?access_token=<redacted>"
+        }
+      ],
+      "stdoutBytes": 0
+    },
+    "status": "captured"
+  },
+  "durationMs": 191,
+  "errorCode": "http_401",
+  "exitCode": 1,
+  "id": "2c67e6a1-0e32-4037-9c49-3fd21a62fab5",
+  "invocation": "execute",
+  "requestCount": 1,
+  "requestIds": [
+    "Aa-RR5_S57xRecEYSj1rtfOCcwjDVNCnA8eUvLDFDf824mdVExRDDg=="
+  ],
+  "time": "2026-09-28T11:26:38.515Z",
+  "version": "0.3.0"
+}
+```
+
+</td></tr>
+</table>
+
+Without a log, the last line of `text` says why, and `json` carries only
+the status:
+
+```
+Log       not captured: diagnostic logging was off for this run (`mapbox config set log on` captures the next ones)
+Log       no longer available: it expired or was removed to keep diagnostic logs under 100 MB
+```
 
 ---
 

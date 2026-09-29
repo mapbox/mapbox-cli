@@ -379,7 +379,7 @@ const REDACTED: &str = "<redacted>";
 /// starts with one — and the length keeps a user literally named `pk` from
 /// having their account redacted out of a debug line. Real tokens run to
 /// eighty characters and more.
-fn looks_like_a_token(text: &str) -> bool {
+pub(crate) fn looks_like_a_token(text: &str) -> bool {
     const PREFIXES: [&str; 3] = ["pk.", "sk.", "tk."];
     text.len() >= 40 && PREFIXES.iter().any(|prefix| text.starts_with(prefix))
 }
@@ -397,7 +397,7 @@ fn looks_like_a_token(text: &str) -> bool {
 /// Both halves are needed. The flag forms catch a value the child was told to
 /// use; the shape catches one written anywhere else, including after a `--`
 /// where nothing is a flag any more.
-fn redacted_argv(args: &[OsString]) -> Vec<String> {
+pub(crate) fn redacted_argv(args: &[OsString]) -> Vec<String> {
     let mut rendered: Vec<String> = Vec::with_capacity(args.len());
     let mut value_is_a_token = false;
 

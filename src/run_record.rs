@@ -9,18 +9,20 @@
 //! chooses field by field what it takes. Best-effort: nothing here can change
 //! a command's output or exit code.
 
-// Nothing in this tree reads the record yet.
+// Some facts are read only by consumers not in this tree yet.
 #![allow(dead_code)]
 
 use std::ffi::OsString;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use clap::parser::ValueSource;
 use clap::{ArgMatches, Command};
 
 use crate::spec::ServiceSpec;
-use crate::{auth, completion, confirm, executor, http, output, tilesets_cli};
+use crate::{
+    auth, completion, confirm, executor, http, output, run_history, run_log, tilesets_cli,
+};
 
 const TILESETS: &str = tilesets_cli::COMMAND;
 
@@ -110,6 +112,8 @@ pub(crate) struct Failure {
 /// Everything the run reported.
 #[derive(Debug, Default)]
 pub(crate) struct Record {
+    /// A random id for this run, set at [`start`].
+    pub id: String,
     /// The command line, without the binary's own path. Raw: tokens are
     /// still in it.
     pub argv: Vec<OsString>,
@@ -136,6 +140,7 @@ pub(crate) struct Record {
 }
 
 static RECORD: Mutex<Record> = Mutex::new(Record {
+    id: String::new(),
     argv: Vec::new(),
     command: Vec::new(),
     invocation: None,
@@ -169,7 +174,11 @@ fn with_record(f: impl FnOnce(&mut Record)) {
 pub fn start(argv: &[OsString]) {
     STARTED.get_or_init(Instant::now);
     let argv = argv.get(1..).unwrap_or_default().to_vec();
-    with_record(|record| record.argv = argv);
+    let id = uuid_v4(rand::random());
+    with_record(|record| {
+        record.id = id;
+        record.argv = argv;
+    });
 
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -330,6 +339,34 @@ fn finish_locked(record: &mut Record, exit_code: Option<u32>) {
     record.finished = true;
     record.duration = STARTED.get().map_or(Duration::ZERO, Instant::elapsed);
     record.exit_code = exit_code;
+    // Diagnostics only for a run history records: detail with no record
+    // would be unreachable, and the record says whether detail exists.
+    let history = run_history::will_record(record);
+    let diagnostics = history && run_log::enabled();
+    // One time for both lines, so they land in the same day's file even
+    // across midnight.
+    let at = SystemTime::now();
+    if history {
+        run_history::write(record, diagnostics, at);
+    }
+    if diagnostics {
+        run_log::write(record, at);
+    }
+    run_log::expire_with_history();
+}
+
+fn uuid_v4(mut bytes: [u8; 16]) -> String {
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
 }
 
 /// The command path, the leaf `Command` and the leaf matches.

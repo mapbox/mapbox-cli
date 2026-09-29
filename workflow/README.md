@@ -64,6 +64,17 @@ outputs:                          # optional; the default is the last step's out
 
 A step is a `command` or a `script`, never both.
 
+### `description`
+
+`workflow show` renders it in a fixed layout, after the name and summary and before the inputs and steps. It reads a small subset of Markdown, so every workflow's page looks the same:
+
+- A blank line separates paragraphs. A paragraph is reflowed to 80 columns, so line breaks inside one do not matter.
+- A line indented by two or more spaces is a command. It is highlighted and kept exactly as written.
+- A line starting with `- ` is a list item. An indented line under an item continues the item.
+- `code` spans are highlighted.
+
+Anything else is shown as a plain paragraph. There is no other formatting: no headings, links or emphasis.
+
 ### Expressions
 
 `${{ inputs.<name> }}` and `${{ steps.<id>.output }}`, followed by any number of `.key` and `[index]`. Nothing else: no operators and no functions. Logic belongs in a script.

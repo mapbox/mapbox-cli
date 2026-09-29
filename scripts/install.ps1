@@ -665,6 +665,122 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
             Write-Host ''
             Write-Host "    `$env:MAPBOX_TILESETS_CLI = 'C:\path\to\tilesets.cmd'"
         }
+
+        # --- Coding agent skill ----------------------------------------------
+        #
+        # Most machines running this script have no coding agent installed at
+        # all, and generate-skills answers "nowhere to write" as
+        # no_agent_detected rather than writing anything when that is the
+        # case (src/skill_dest.rs) - checked first, silently, so nothing is
+        # offered when there is nothing to offer. -Global, not the
+        # project-scoped default: this script runs in whatever directory the
+        # shell happened to be in, which has no relation to a project.
+        #
+        # Past that point this asks: writing into a directory this CLI does
+        # not own and downloading a whole separate library is a bigger ask
+        # than a one-line telemetry notice, and an install nobody consented
+        # to is not a feature. [Console]::IsInputRedirected is false for a
+        # real interactive session even under `irm ... | iex` - that pipes an
+        # object through PowerShell's own pipeline into Invoke-Expression,
+        # which runs in this same process rather than redirecting a child
+        # process's stdin the way `curl ... | sh` does - so a person typing
+        # that at a real prompt still gets asked; only a session with no
+        # console at all (a scheduled task, an image build) does not.
+        function Get-AgentName([string]$Json) {
+            ([regex]::Matches($Json, '"source":"([^"]*)"') | ForEach-Object {
+                    $_.Groups[1].Value -replace ', all projects$', ''
+                }) -join ', '
+        }
+
+        $AgentSetupAllowed = $true
+        $disableAgentSetup = $env:MAPBOX_CLI_NO_AGENT_SETUP
+        if ($null -ne $disableAgentSetup) {
+            $disableAgentSetup = $disableAgentSetup.Trim().ToLowerInvariant()
+            $AgentSetupAllowed = (
+                $disableAgentSetup.Length -eq 0 -or
+                @('0', 'f', 'false', 'n', 'no', 'off') -contains $disableAgentSetup
+            )
+        }
+
+        if ($AgentSetupAllowed) {
+            # A child writing to stderr is a terminating NativeCommandError in
+            # Windows PowerShell under $ErrorActionPreference = 'Stop' (set
+            # once, at the top of this script) - the same reason
+            # Invoke-Installer in test-install.ps1 has to switch to
+            # 'Continue' around a call that does the same. Every command
+            # below writes its failures to stderr, on purpose, so this has to
+            # hold for all of them; restored in the finally below regardless
+            # of which path is reached.
+            $previousErrorAction = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $checkOut = (& $destination generate-skills --global --dry-run -o json 2>$null) -join ''
+                if ($LASTEXITCODE -eq 0) {
+                    $agentNames = Get-AgentName $checkOut
+                    Write-Host ''
+                    Write-Host "A coding agent was detected on this machine: $agentNames."
+                    $doAgentSetup = $false
+                    if (-not [Console]::IsInputRedirected) {
+                        Write-Host ''
+                        $answer = Read-Host 'Set up the mapbox CLI skill and the Mapbox Agent Skills library for it? [y/N]'
+                        if ($answer -match '^(?i:y|yes)$') { $doAgentSetup = $true }
+                    }
+                    if ($doAgentSetup) {
+                        # Offline and safe to re-run: it replaces its own
+                        # generated directory wholesale and refuses only if
+                        # something else already lives there, which -Global
+                        # keeps out of this script's way.
+                        & $destination generate-skills --global *> $null
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "Wrote the mapbox CLI skill for: $agentNames."
+                        }
+
+                        # `install` errors with already_installed on a
+                        # reinstall, since the skill directory is already
+                        # there from a previous run of this same script -
+                        # `update` is the one safe to repeat, but only once
+                        # checked first: some of what changed since the last
+                        # run might be a local edit, not just an upstream
+                        # refresh, and that is never overwritten without
+                        # being named.
+                        $agentStderr = [System.IO.Path]::GetTempFileName()
+                        try {
+                            & $destination agent-skills install --global -o json 1>$null 2>$agentStderr
+                            if ($LASTEXITCODE -eq 0) {
+                                Write-Host "Installed the Mapbox Agent Skills library for: $agentNames."
+                            } else {
+                                $agentOut = Get-Content -LiteralPath $agentStderr -Raw -ErrorAction SilentlyContinue
+                                if ($agentOut -and $agentOut.Contains('"code":"already_installed"')) {
+                                    $updateStderr = [System.IO.Path]::GetTempFileName()
+                                    try {
+                                        $updateOut = (& $destination agent-skills update --global --dry-run -o json 2>$updateStderr) -join ''
+                                        if ($LASTEXITCODE -eq 0) {
+                                            if ($updateOut.Contains('"updated":[]')) {
+                                                & $destination agent-skills update --global *> $null
+                                                Write-Host "Updated the Mapbox Agent Skills library for: $agentNames."
+                                            } else {
+                                                Write-Host 'Some Mapbox Agent Skills have local changes and were left alone.'
+                                                Write-Host "Run 'mapbox agent-skills update --global' to review and replace them."
+                                            }
+                                        }
+                                    } finally {
+                                        Remove-Item -LiteralPath $updateStderr -Force -ErrorAction SilentlyContinue
+                                    }
+                                }
+                            }
+                        } finally {
+                            Remove-Item -LiteralPath $agentStderr -Force -ErrorAction SilentlyContinue
+                        }
+                    } else {
+                        Write-Host 'Not set up. Run these any time:'
+                        Write-Host '  mapbox generate-skills --global'
+                        Write-Host '  mapbox agent-skills install --global'
+                    }
+                }
+            } finally {
+                $ErrorActionPreference = $previousErrorAction
+            }
+        }
     } finally {
         if ($staged -and (Test-Path -LiteralPath $staged)) {
             Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue

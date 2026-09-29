@@ -19,6 +19,17 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `install.sh`/`install.ps1`: when the install finds a coding agent on the
+  machine, it now asks, once, whether to write this CLI's own skill and
+  install the Mapbox Agent Skills library for it, naming the agent and what
+  will be written before doing either. Answered no, or asked somewhere with
+  no terminal to answer on (a CI job, a container), it does neither and
+  prints the two commands to run by hand instead. On a reinstall, it never
+  overwrites a skill file you edited: it checks first, and only replaces
+  what is unchanged from what was published, reporting local edits rather
+  than discarding them. `MAPBOX_CLI_NO_AGENT_SETUP=1` skips the question
+  entirely, same spelling convention as `MAPBOX_CLI_NO_TELEMETRY`.
+
 - `mapbox generate-skills`/`agent-skills install`/`agent-skills update`,
   when no coding agent is detected and none was named with `--agent`,
   `--global` or `--dir`: the failure now carries a stable

@@ -14,13 +14,15 @@
 
 use std::ffi::OsString;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use clap::parser::ValueSource;
 use clap::{ArgMatches, Command};
 
 use crate::spec::ServiceSpec;
-use crate::{auth, completion, confirm, executor, http, output, run_history, tilesets_cli};
+use crate::{
+    auth, completion, confirm, executor, http, output, run_history, run_log, tilesets_cli,
+};
 
 const TILESETS: &str = tilesets_cli::COMMAND;
 
@@ -337,7 +339,20 @@ fn finish_locked(record: &mut Record, exit_code: Option<u32>) {
     record.finished = true;
     record.duration = STARTED.get().map_or(Duration::ZERO, Instant::elapsed);
     record.exit_code = exit_code;
-    run_history::write(record);
+    // Diagnostics only for a run history records: detail with no record
+    // would be unreachable, and the record says whether detail exists.
+    let history = run_history::will_record(record);
+    let diagnostics = history && run_log::enabled();
+    // One time for both lines, so they land in the same day's file even
+    // across midnight.
+    let at = SystemTime::now();
+    if history {
+        run_history::write(record, diagnostics, at);
+    }
+    if diagnostics {
+        run_log::write(record, at);
+    }
+    run_log::expire_with_history();
 }
 
 fn uuid_v4(mut bytes: [u8; 16]) -> String {

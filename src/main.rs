@@ -30,6 +30,7 @@ mod link;
 mod output;
 mod remedy;
 mod run_history;
+mod run_log;
 mod run_record;
 mod schema;
 mod skill_dest;

@@ -43,6 +43,7 @@ fn command(home: &Path) -> Command {
         .env_remove("MAPBOX_USERNAME")
         .env_remove("MAPBOX_OUTPUT")
         .env_remove("MAPBOX_HISTORY")
+        .env_remove("MAPBOX_LOG")
         .env_remove("SUDO_USER")
         .env_remove("NO_PROXY")
         .env_remove("no_proxy")

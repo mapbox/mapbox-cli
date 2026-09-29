@@ -48,6 +48,7 @@ fn command() -> Command {
         // Off: these tests hold a run to leaving nothing on disk; what
         // history leaves is `tests/history.rs`'s to check.
         .env("MAPBOX_HISTORY", "0")
+        .env_remove("MAPBOX_LOG")
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("MAPBOX_CONFIG_DIR", home.join(".mapbox"));

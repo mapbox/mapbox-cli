@@ -42,6 +42,7 @@ fn command(home: &Path) -> Command {
         .env("MAPBOX_HISTORY", "0")
         .env_remove("MAPBOX_YES")
         .env_remove("MAPBOX_CONFIG_DIR")
+        .env_remove("MAPBOX_LOG")
         .env("HOME", home);
     cmd
 }

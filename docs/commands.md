@@ -3205,6 +3205,7 @@ was set in, and stays in every future shell instead.
 | --- | --- | --- |
 | `update-check` | `on` | The update notice; mirrors `MAPBOX_NO_UPDATE_CHECK` (see [Update notices](../README.md#update-notices)) |
 | `history` | `on` | [Command history](../README.md#command-history), read by `mapbox history`; `MAPBOX_HISTORY=0` or `=1` overrides it for a session |
+| `log` | `off` | [Diagnostic logs](../README.md#diagnostic-logs), shown by `mapbox history show`; `MAPBOX_LOG=1` or `=0` overrides it for a session. Needs `history` on: `config set log on` with history off fails with `history_required` |
 
 ### `mapbox config get`
 
@@ -3216,7 +3217,7 @@ than failing, the same forgiving read the update-check cache itself uses.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to read: `update-check` or `history`. |
+| `<key>` | Which setting to read: `update-check`, `history` or `log`. |
 
 #### Examples
 
@@ -3255,7 +3256,7 @@ without an environment variable.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to change: `update-check` or `history`. |
+| `<key>` | Which setting to change: `update-check`, `history` or `log`. |
 | `<value>` | `on` or `off`. |
 
 #### Examples
@@ -3313,6 +3314,7 @@ mapbox config list
 ```
 update-check	on
 history	on
+log	off
 ```
 
 </td><td>
@@ -3326,6 +3328,10 @@ history	on
   {
     "key": "history",
     "value": true
+  },
+  {
+    "key": "log",
+    "value": false
   }
 ]
 ```
@@ -3344,7 +3350,7 @@ default, a key explicitly set to the old default value does not.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to clear: `update-check` or `history`. |
+| `<key>` | Which setting to clear: `update-check`, `history` or `log`. |
 
 #### Examples
 
@@ -3388,11 +3394,17 @@ on stderr. Neither makes a request or needs a token, and neither is itself
 recorded — nor are `--help`, `--version`, `completion` or a run under
 `sudo`.
 
+History is also the way in to [diagnostic logs](../README.md#diagnostic-logs):
+there is no separate command for them. `history show` includes a run's log
+when one was captured and is still kept.
+
 ### `mapbox history list`
 
 The most recent runs, newest first: a short id, when it ran (UTC), its exit
-code and its command path. `json` gives each run's full `id`, which
-`history show` also accepts shortened to any prefix that names one run.
+code and its command path, with `[log]` after a run whose diagnostic log was
+captured (`diagnosticsCaptured` in `json`). `json` gives each run's full
+`id`, which `history show` also accepts shortened to any prefix that names
+one run.
 
 #### Parameters
 
@@ -3416,8 +3428,8 @@ mapbox history list --limit 0
 
 ```
 ID        TIME                      EXIT  COMMAND
-d05b3f4d  2026-09-28T11:20:03.095Z     2  mapbox styles
-be40d711  2026-09-28T11:20:03.045Z     1  mapbox styles list
+49d6ec63  2026-09-28T11:26:38.569Z     2  mapbox styles
+2c67e6a1  2026-09-28T11:26:38.515Z     1  mapbox styles list  [log]
 ```
 
 </td><td>
@@ -3428,22 +3440,23 @@ be40d711  2026-09-28T11:20:03.045Z     1  mapbox styles list
     "command": [
       "styles"
     ],
-    "durationMs": 41,
+    "durationMs": 42,
     "errorCode": "usage",
     "exitCode": 2,
-    "id": "d05b3f4d-9947-4662-a037-3d00b68d1d6e",
-    "time": "2026-09-28T11:20:03.095Z"
+    "id": "49d6ec63-719d-4844-9005-a201fa9902c3",
+    "time": "2026-09-28T11:26:38.569Z"
   },
   {
     "command": [
       "styles",
       "list"
     ],
-    "durationMs": 157,
+    "diagnosticsCaptured": true,
+    "durationMs": 191,
     "errorCode": "http_401",
     "exitCode": 1,
-    "id": "be40d711-3d62-4e9b-8dde-23535020b368",
-    "time": "2026-09-28T11:20:03.045Z"
+    "id": "2c67e6a1-0e32-4037-9c49-3fd21a62fab5",
+    "time": "2026-09-28T11:26:38.515Z"
   }
 ]
 ```
@@ -3453,12 +3466,19 @@ be40d711  2026-09-28T11:20:03.045Z     1  mapbox styles list
 
 ### `mapbox history show`
 
-Everything recorded about one run: its command path, how it ended, its
-error code, how many requests it made and the ids of the last five. `json`
-gives the record as it was written. An id that names no run fails with
-`history_not_found`; a prefix shared by several fails with
-`history_ambiguous_id`; with nothing recorded yet, `show` with no id fails
-with `history_empty`.
+Everything recorded about one run — its command path, how it ended, its
+error code, how many requests it made and the ids of the last five — and
+what became of its diagnostic log, as `diagnostics.status` in `json`:
+
+| `status` | Meaning |
+| --- | --- |
+| `captured` | The log is in `diagnostics.log`: the command line with tokens redacted, which token was used, each request and the error message. |
+| `not_captured` | Diagnostic logging was off for this run. |
+| `unavailable` | A log was captured but has since expired or been removed to keep diagnostic logs under 100 MB. |
+
+An id that names no run fails with `history_not_found`; a prefix shared by
+several fails with `history_ambiguous_id`; with nothing recorded yet,
+`show` with no id fails with `history_empty`.
 
 #### Parameters
 
@@ -3471,23 +3491,30 @@ with `history_empty`.
 ```sh
 mapbox history show
 
-mapbox history show be40d711
+mapbox history show 2c67e6a1
 ```
 
 #### Outputs
+
+A run whose log was captured:
 
 <table>
 <tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
 <tr><td>
 
 ```
-Run       be40d711-3d62-4e9b-8dde-23535020b368
-Time      2026-09-28T11:20:03.045Z (mapbox 0.3.0)
+Run       2c67e6a1-0e32-4037-9c49-3fd21a62fab5
+Time      2026-09-28T11:26:38.515Z (mapbox 0.3.0)
 Command   mapbox styles list
-Exit      1 after 157 ms
+Exit      1 after 191 ms
 Error     http_401
 Requests  1
-  request id 7ovbf8wEjg4S_uS-u8SNW0OHb64pCVgD5fThd2C2q9ZlE7bDY-s0yw==
+  request id Aa-RR5_S57xRecEYSj1rtfOCcwjDVNCnA8eUvLDFDf824mdVExRDDg==
+Log       mapbox styles list --username example --token <redacted>
+  token flag, pk, account example
+  GET https://api.mapbox.com/styles/v1/example?access_token=<redacted> -> 401 in 149 ms (request id Aa-RR5_S57xRecEYSj1rtfOCcwjDVNCnA8eUvLDFDf824mdVExRDDg==)
+  0 bytes to stdout
+  error http_401: Not Authorized - Invalid Token
 ```
 
 </td><td>
@@ -3498,22 +3525,62 @@ Requests  1
     "styles",
     "list"
   ],
-  "durationMs": 157,
+  "diagnostics": {
+    "log": {
+      "argv": [
+        "styles",
+        "list",
+        "--username",
+        "example",
+        "--token",
+        "<redacted>"
+      ],
+      "auth": {
+        "account": "example",
+        "source": "flag",
+        "type": "pk"
+      },
+      "error": {
+        "code": "http_401",
+        "message": "Not Authorized - Invalid Token"
+      },
+      "requests": [
+        {
+          "durationMs": 149,
+          "method": "GET",
+          "requestId": "Aa-RR5_S57xRecEYSj1rtfOCcwjDVNCnA8eUvLDFDf824mdVExRDDg==",
+          "status": 401,
+          "url": "https://api.mapbox.com/styles/v1/example?access_token=<redacted>"
+        }
+      ],
+      "stdoutBytes": 0
+    },
+    "status": "captured"
+  },
+  "durationMs": 191,
   "errorCode": "http_401",
   "exitCode": 1,
-  "id": "be40d711-3d62-4e9b-8dde-23535020b368",
+  "id": "2c67e6a1-0e32-4037-9c49-3fd21a62fab5",
   "invocation": "execute",
   "requestCount": 1,
   "requestIds": [
-    "7ovbf8wEjg4S_uS-u8SNW0OHb64pCVgD5fThd2C2q9ZlE7bDY-s0yw=="
+    "Aa-RR5_S57xRecEYSj1rtfOCcwjDVNCnA8eUvLDFDf824mdVExRDDg=="
   ],
-  "time": "2026-09-28T11:20:03.045Z",
+  "time": "2026-09-28T11:26:38.515Z",
   "version": "0.3.0"
 }
 ```
 
 </td></tr>
 </table>
+
+Without a log, the last line of `text` says why, and `json` carries only
+the status:
+
+```
+Log       not captured: diagnostic logging was off for this run (`mapbox config set log on` captures the next ones)
+Log       no longer available: it expired or was removed to keep diagnostic logs under 100 MB
+```
 
 ---
 

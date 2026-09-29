@@ -39,10 +39,11 @@ pub(crate) fn private_dir(name: &str) -> Option<PathBuf> {
     Some(dir)
 }
 
-/// Appends `line` to today's file in `dir`, and on the first write of a day
-/// deletes files older than `keep_days` (today included). Best-effort.
-pub(crate) fn append(dir: &Path, line: &str, keep_days: u64) {
-    let now = now_secs();
+/// Appends `line` to the file in `dir` for `at`'s UTC day, and on the first
+/// write of a day deletes files older than `keep_days` (that day included).
+/// Best-effort.
+pub(crate) fn append(dir: &Path, line: &str, at: SystemTime, keep_days: u64) {
+    let now = unix_secs(at);
     let (today, _) = utc_date(now);
     let path = dir.join(format!("{today}.jsonl"));
     let is_new_day = !path.exists();
@@ -85,6 +86,39 @@ pub(crate) fn shed(dir: &Path, limit: u64) {
             excess = 0;
         }
     }
+}
+
+/// Deletes the dated files in `dir` whose date `keep` refuses.
+pub(crate) fn prune_where(dir: &Path, keep: impl Fn(&str) -> bool) {
+    for name in dated_names(dir) {
+        if let Some(date) = dated_file(&name) {
+            if !keep(date) {
+                let _ = std::fs::remove_file(dir.join(&name));
+            }
+        }
+    }
+}
+
+/// The lines of `dir`'s file for `date` (`YYYY-MM-DD`), oldest first.
+pub(crate) fn read_day(dir: &Path, date: &str) -> Vec<String> {
+    let path = dir.join(format!("{date}.jsonl"));
+    std::fs::read_to_string(path)
+        .map(|text| {
+            text.lines()
+                .filter(|line| !line.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The oldest date kept by a window of `days` (today included), as of now.
+pub(crate) fn oldest_kept(days: u64) -> String {
+    oldest_kept_at(unix_secs(SystemTime::now()), days)
+}
+
+fn oldest_kept_at(now: u64, days: u64) -> String {
+    utc_date(now.saturating_sub(days.saturating_sub(1) * 86_400)).0
 }
 
 fn dated_names(dir: &Path) -> Vec<String> {
@@ -191,7 +225,7 @@ fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
 }
 
 fn prune(dir: &Path, now: u64, keep_days: u64) {
-    let (oldest_kept, _) = utc_date(now.saturating_sub(keep_days.saturating_sub(1) * 86_400));
+    let oldest_kept = oldest_kept_at(now, keep_days);
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -235,10 +269,8 @@ pub(crate) fn timestamp(at: SystemTime) -> String {
     )
 }
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+fn unix_secs(at: SystemTime) -> u64 {
+    at.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 #[cfg(test)]

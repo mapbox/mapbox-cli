@@ -569,14 +569,27 @@ mod tests {
     /// client, built here, so no request can go out anonymous.
     ///
     /// Reads the directory rather than a list of modules, so a module added
-    /// later is covered without anyone remembering to add it.
+    /// later is covered without anyone remembering to add it — recursively,
+    /// so neither is one that moves into a directory.
     #[test]
     fn no_module_builds_its_own_client() {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut checked = 0;
 
-        for entry in std::fs::read_dir(&src).expect("src/ is readable") {
-            let path = entry.expect("a directory entry").path();
+        let mut pending = vec![src];
+        let mut files = vec![];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(&dir).expect("src/ is readable") {
+                let path = entry.expect("a directory entry").path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else {
+                    files.push(path);
+                }
+            }
+        }
+
+        for path in files {
             if path.extension().is_none_or(|ext| ext != "rs") {
                 continue;
             }

@@ -417,7 +417,7 @@ pub fn install(package: &Package, force: bool) -> Result<PathBuf> {
         .with_context(|| format!("Could not create {}", root.display()))?;
     let target = root.join(name);
     if target.exists() && !force {
-        return Err(already_installed(name, &target));
+        return Err(already_installed(name, &target, None));
     }
 
     let staging = root.join(format!(".{name}.staging"));
@@ -449,12 +449,18 @@ pub fn install(package: &Package, force: bool) -> Result<PathBuf> {
     result.map(|()| target)
 }
 
-pub fn already_installed(name: &str, target: &Path) -> anyhow::Error {
+/// `retry` is the `install` line that would replace it, when the caller
+/// knows what was typed.
+pub fn already_installed(name: &str, target: &Path, retry: Option<String>) -> anyhow::Error {
     CliError::new(
         "already_installed",
-        format!("`{name}` is already installed at {}", target.display()),
+        format!("`{name}` is already installed at {}.", super::tilde(target)),
     )
-    .with_remedy(Remedy::default().with_fix("Pass --force to replace it."))
+    .with_remedy(
+        Remedy::default()
+            .with_fix("Pass --force to replace it.")
+            .with_action(retry),
+    )
     .into()
 }
 

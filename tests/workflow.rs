@@ -279,16 +279,41 @@ fn install_replaces_only_with_force_and_uninstall_removes() {
 }
 
 #[test]
-fn uninstall_takes_only_a_workflow_name() {
+fn uninstall_removes_nothing_outside_the_installed_workflows() {
     let home = scratch("escape");
     std::fs::create_dir_all(home.join("keep")).unwrap();
-    for name in ["../keep", "/tmp", ".."] {
+    for name in ["../keep", "/tmp", "..", "../.."] {
         let out = run(&home, &["workflow", "uninstall", name]);
         assert_eq!(out.status.code(), Some(1), "{name}");
-        assert!(
-            String::from_utf8_lossy(&out.stderr).contains("not a workflow name"),
-            "{name}"
-        );
     }
     assert!(home.join("keep").exists());
+}
+
+#[test]
+fn uninstall_takes_the_directory_install_was_given() {
+    let home = scratch("uninstall-path");
+    install_demo(&home);
+    let source = home.join("src/demo");
+
+    let again = run(&home, &["workflow", "install", source.to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&again.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "mapbox workflow install {} --force",
+            source.display()
+        )),
+        "{stderr}"
+    );
+
+    let out = run(&home, &["workflow", "uninstall", source.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!home.join(".mapbox/workflows/demo").exists());
+    assert!(
+        source.join("workflow.yaml").is_file(),
+        "the source directory was touched"
+    );
 }

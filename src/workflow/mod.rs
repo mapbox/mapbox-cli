@@ -114,7 +114,10 @@ pub fn command() -> Command {
         .subcommand(
             Command::new("uninstall")
                 .about("Remove an installed workflow")
-                .arg(name())
+                .arg(Arg::new(NAME_ARG).value_name("NAME").required(true).help(
+                    "Name of an installed workflow, or the directory it was installed \
+                             from",
+                ))
                 .arg(executor::dry_run_arg(
                     "Say what it would remove, then exit without removing it",
                 )),
@@ -176,7 +179,7 @@ fn name(matches: &ArgMatches) -> &str {
 
 /// A path as a person reads it: under the home directory as `~/…`. Text
 /// output only; JSON keeps the absolute path a program can open.
-fn tilde(path: &Path) -> String {
+pub(crate) fn tilde(path: &Path) -> String {
     match dirs::home_dir().and_then(|home| path.strip_prefix(home).ok().map(Path::to_path_buf)) {
         Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
         Some(rest) => format!("~/{}", rest.display()),
@@ -482,10 +485,18 @@ fn install(app: &Command, matches: &ArgMatches, debug: bool, mode: Mode) -> Resu
         color,
     );
 
+    // Checked here as well as in `store::install`, so the error can name
+    // the line to retry with; the store's own check covers a race.
+    if target.exists() && !force {
+        let retry = format!("mapbox workflow install {source} --force");
+        return Err(store::already_installed(
+            &workflow.name,
+            &target,
+            Some(retry),
+        ));
+    }
+
     if dry_run {
-        if target.exists() && !force {
-            return Err(store::already_installed(&workflow.name, &target));
-        }
         let text = format!(
             "Dry run — nothing was written. Would install {}:\n\n{fields}",
             heading(&workflow.name, color)
@@ -509,7 +520,21 @@ fn install(app: &Command, matches: &ArgMatches, debug: bool, mode: Mode) -> Resu
     Ok(())
 }
 
-fn uninstall(name: &str, dry_run: bool, assume_yes: bool, mode: Mode) -> Result<()> {
+/// The workflow `uninstall` means. A path is accepted, as `install` takes
+/// one, and names the workflow by its directory — which must still be a
+/// plain workflow name, so nothing but an installed workflow is removed.
+fn uninstall_name(given: &str) -> &str {
+    if !is_local_source(given) {
+        return given;
+    }
+    Path::new(given)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(given)
+}
+
+fn uninstall(given: &str, dry_run: bool, assume_yes: bool, mode: Mode) -> Result<()> {
+    let name = uninstall_name(given);
     let found = store::installed_dir(name)?;
     let Some(dir) = found else {
         // `load` words the error, with the commands to try instead.
@@ -613,6 +638,15 @@ fn run_workflow(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uninstall_reads_a_path_as_its_directory_name() {
+        assert_eq!(uninstall_name("copy-style"), "copy-style");
+        assert_eq!(uninstall_name("./workflow/copy-style"), "copy-style");
+        assert_eq!(uninstall_name("./workflow/copy-style/"), "copy-style");
+        // No directory name at all: left as typed, for the name check to refuse.
+        assert_eq!(uninstall_name(".."), "..");
+    }
 
     #[test]
     fn columns_line_up_with_color_on_or_off() {

@@ -17,6 +17,12 @@
 //! when the change is made, is whether the page has fallen behind our own
 //! binary. That's all this file claims to check.
 //!
+//! README.md gets a lighter version of the same check: every `mapbox …`
+//! invocation it spells must name a real command, and every top-level
+//! command must appear in it. That one exists because the README's list of
+//! API groups went on naming four groups the binary no longer had, and
+//! nothing here read the README.
+//!
 //! Three things it deliberately doesn't do, written down so the next
 //! reader doesn't have to re-derive the scope:
 //!
@@ -376,5 +382,139 @@ fn every_flag_a_command_takes_is_named_in_its_own_section() {
          in the table under `### What every API command takes` instead, which is where \
          this test reads the page-wide flags from.",
         unmentioned.join("\n")
+    );
+}
+
+/// README.md, read the same way as the page.
+fn readme() -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("README.md");
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+}
+
+/// Every `mapbox …` invocation in README.md, with its line number.
+///
+/// Read from shell-language fenced blocks and from inline code spans. An
+/// unlabeled fence is skipped: it holds printed output, like the update
+/// notice's "A newer mapbox is available", which is prose, not a command.
+fn readme_invocations(readme: &str) -> Vec<(usize, String)> {
+    const SHELLS: [&str; 3] = ["sh", "console", "powershell"];
+    let mut found = Vec::new();
+    let mut fence: Option<bool> = None;
+
+    for (index, line) in readme.lines().enumerate() {
+        let number = index + 1;
+        if let Some(lang) = line.trim_start().strip_prefix("```") {
+            fence = match fence {
+                Some(_) => None,
+                None => Some(SHELLS.contains(&lang.trim())),
+            };
+            continue;
+        }
+        match fence {
+            Some(true) => {
+                // `source <(mapbox completion bash)` and `$ mapbox …` both
+                // put something before the name, so match it mid-line.
+                for (at, _) in line.match_indices("mapbox ") {
+                    let before = line[..at].chars().next_back();
+                    if before.is_none_or(|c| c == ' ' || c == '(') {
+                        found.push((number, line[at..].to_string()));
+                    }
+                }
+            }
+            Some(false) => {}
+            None => {
+                for (i, span) in line.split('`').enumerate() {
+                    if i % 2 == 1 && span.starts_with("mapbox ") {
+                        found.push((number, span.to_string()));
+                    }
+                }
+            }
+        }
+    }
+    found
+}
+
+/// A word that can be part of a command path, as opposed to a flag, a
+/// placeholder, a pipe or a value like `data.geojson.ld`.
+fn is_path_word(word: &str) -> bool {
+    !word.starts_with('-')
+        && word
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+#[test]
+fn every_command_the_readme_spells_exists() {
+    let schema = schema();
+    let full: BTreeSet<&str> = commands(&schema).iter().map(name).collect();
+    // Every group a command sits under, like `mapbox styles draft`, so an
+    // invocation may stop at a group without naming an operation.
+    let mut prefixes = BTreeSet::new();
+    for command in &full {
+        let mut path = String::from("mapbox");
+        for word in command.split_whitespace().skip(1) {
+            path = format!("{path} {word}");
+            prefixes.insert(path.clone());
+        }
+    }
+
+    let mut unknown = Vec::new();
+    for (line, invocation) in readme_invocations(&readme()) {
+        let mut words = invocation.split_whitespace().skip(1).peekable();
+        // `mapbox --profile NAME styles list`: a leading global flag takes a
+        // value this check can't tell apart from a command, so the rest of
+        // the line isn't checked.
+        if words.peek().is_some_and(|word| word.starts_with('-')) {
+            continue;
+        }
+        let mut path = String::from("mapbox");
+        for word in words.take_while(|word| is_path_word(word)) {
+            let longer = format!("{path} {word}");
+            if prefixes.contains(&longer) {
+                path = longer;
+            } else if full.contains(path.as_str()) {
+                // A positional argument, like `completion bash`.
+                break;
+            } else {
+                unknown.push(format!("README.md:{line}: {longer}"));
+                break;
+            }
+        }
+    }
+
+    assert!(
+        unknown.is_empty(),
+        "README.md names commands the CLI doesn't have:\n{}\n\
+         `mapbox --schema` lists what it does have.{}",
+        unknown.join("\n"),
+        spec_revision_note()
+    );
+}
+
+#[test]
+fn every_top_level_command_appears_in_the_readme() {
+    let schema = schema();
+    let top_level: BTreeSet<String> = commands(&schema)
+        .iter()
+        .filter_map(|command| {
+            let group = name(command).split_whitespace().nth(1)?;
+            Some(format!("mapbox {group}"))
+        })
+        .collect();
+
+    let mentioned: BTreeSet<String> = readme_invocations(&readme())
+        .into_iter()
+        .filter_map(|(_, invocation)| {
+            let group = invocation.split_whitespace().nth(1)?;
+            Some(format!("mapbox {group}"))
+        })
+        .collect();
+
+    let missing: Vec<&String> = top_level.difference(&mentioned).collect();
+    assert!(
+        missing.is_empty(),
+        "README.md never shows these top-level commands: {missing:?}\n\
+         Give each at least one example line, under Commands or wherever it \
+         fits, linking to docs/commands.md for the detail."
     );
 }

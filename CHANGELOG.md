@@ -22,7 +22,7 @@ that may never merge. They are not releases and are not listed here.
 - `mapbox workflow`, beta and in development, not recommended for use:
   install and run workflows, which are named, multi-step recipes of
   `mapbox` commands and scripts defined in a `workflow.yaml`. `install` copies one from a local directory or from a
-  GitHub repository's `workflow/beta/<name>/` (by default `mapbox/cli`;
+  GitHub repository's `workflow/<name>/` (by default `mapbox/cli`;
   `GH_TOKEN`/`GITHUB_TOKEN` for a private one) into `~/.mapbox/workflows/`,
   and `list`, `show`, `run` and `uninstall` work on what is installed. The
   first one published is `copy-style`, which copies a style between

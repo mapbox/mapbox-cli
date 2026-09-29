@@ -5,7 +5,7 @@
 //! A workflow is a directory holding a `workflow.yaml` and the scripts it
 //! runs (see [`definition`] for the schema and the layout rules). None ships
 //! inside the binary. `install` copies one in, from a local directory or a
-//! GitHub repository's `workflow/beta/<name>/`, and `run` runs only what
+//! GitHub repository's `workflow/<name>/`, and `run` runs only what
 //! is installed.
 //!
 //! What this refuses to be: a scheduler, a retry engine, or a language.
@@ -56,7 +56,7 @@ pub fn command() -> Command {
             "Install and run workflows: named, multi-step recipes of mapbox commands and \
              scripts, defined in a workflow.yaml.\n\n\
              A workflow runs only once it is installed, from a local directory or from a \
-             GitHub repository's workflow/beta/<name>/ directory.\n\n\
+             GitHub repository's workflow/<name>/ directory.\n\n\
              Beta and in development, and not recommended for use: the commands, the \
              workflow format and the published workflows may change or be removed \
              without notice.",
@@ -433,7 +433,7 @@ mod tests {
         for local in [
             "./copy-style",
             "../x",
-            "workflow/beta/copy-style",
+            "workflow/copy-style",
             "/abs",
             ".",
             "a\\b",
@@ -452,8 +452,9 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(store::REPO_PREFIX);
         let mut checked = 0;
         for dir in std::fs::read_dir(&root)
-            .expect("workflow/beta/ exists")
+            .expect("workflow/ exists")
             .flatten()
+            .filter(|entry| entry.path().is_dir())
         {
             let package = store::read_local(&dir.path())
                 .unwrap_or_else(|e| panic!("{}: {e:#}", dir.path().display()));
@@ -465,6 +466,6 @@ mod tests {
             );
             checked += 1;
         }
-        assert!(checked > 0, "no workflows found under workflow/beta/");
+        assert!(checked > 0, "no workflows found under workflow/");
     }
 }

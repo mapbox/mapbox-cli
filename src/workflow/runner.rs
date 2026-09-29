@@ -82,14 +82,20 @@ impl Inherited {
     }
 }
 
-/// Turns `--input key=value` pairs into the workflow's inputs, typed as the
-/// definition declares, with defaults filled in.
-pub fn read_inputs(workflow: &Workflow, pairs: &[String]) -> Result<Map<String, Value>> {
-    let mut given: Map<String, Value> = Map::new();
-    for pair in pairs {
-        let (key, raw) = pair
-            .split_once('=')
-            .ok_or_else(|| invalid_input(format!("`{pair}` is not KEY=VALUE"), workflow))?;
+/// The flag an input is given as: its name, dashed, as every other flag in
+/// this CLI is spelled. `--style_id` is accepted too, as an alias.
+pub fn input_flag(name: &str) -> String {
+    name.replace('_', "-")
+}
+
+/// Turns the values given for a workflow's inputs, by input name, into its
+/// inputs typed as the definition declares, with defaults filled in. The
+/// parser has already checked each value's shape; this still does, so it
+/// can be trusted on its own.
+pub fn read_inputs(workflow: &Workflow, given: &[(String, String)]) -> Result<Map<String, Value>> {
+    let mut inputs: Map<String, Value> = Map::new();
+    for (key, raw) in given {
+        let flag = input_flag(key);
         let Some(spec) = workflow.inputs.get(key) else {
             return Err(invalid_input(
                 format!("`{}` has no input called `{key}`", workflow.name),
@@ -98,58 +104,52 @@ pub fn read_inputs(workflow: &Workflow, pairs: &[String]) -> Result<Map<String, 
         };
         let value = match spec.kind {
             InputType::String => Value::String(raw.to_string()),
-            InputType::Number => raw
-                .parse::<i64>()
-                .map(Value::from)
-                .or_else(|_| raw.parse::<f64>().map(Value::from))
-                .map_err(|_| {
-                    invalid_input(format!("input `{key}` is a number, not `{raw}`"), workflow)
-                })?,
-            InputType::Boolean => match raw {
+            InputType::Number => parse_number(raw).ok_or_else(|| {
+                invalid_input(format!("`--{flag}` is a number, not `{raw}`"), workflow)
+            })?,
+            InputType::Boolean => match raw.as_str() {
                 "true" => Value::Bool(true),
                 "false" => Value::Bool(false),
                 _ => {
                     return Err(invalid_input(
-                        format!("input `{key}` is `true` or `false`, not `{raw}`"),
+                        format!("`--{flag}` is `true` or `false`, not `{raw}`"),
                         workflow,
                     ))
                 }
             },
         };
-        if given.insert(key.to_string(), value).is_some() {
-            return Err(invalid_input(
-                format!("input `{key}` is given twice"),
-                workflow,
-            ));
-        }
+        inputs.insert(key.to_string(), value);
     }
 
     let mut missing = vec![];
     for (name, spec) in &workflow.inputs {
-        if given.contains_key(name) {
+        if inputs.contains_key(name) {
             continue;
         }
         match &spec.default {
             Some(default) => {
-                given.insert(name.clone(), default.clone());
+                inputs.insert(name.clone(), default.clone());
             }
-            None if spec.required => missing.push(name.as_str()),
+            None if spec.required => missing.push(format!("--{}", input_flag(name))),
             None => {
-                given.insert(name.clone(), Value::Null);
+                inputs.insert(name.clone(), Value::Null);
             }
         }
     }
     if !missing.is_empty() {
-        let flags: Vec<String> = missing
-            .iter()
-            .map(|name| format!("--input {name}=…"))
-            .collect();
         return Err(invalid_input(
-            format!("missing required input: {}", flags.join(" ")),
+            format!("missing required input: {}", missing.join(" ")),
             workflow,
         ));
     }
-    Ok(given)
+    Ok(inputs)
+}
+
+pub fn parse_number(raw: &str) -> Option<Value> {
+    raw.parse::<i64>()
+        .map(Value::from)
+        .ok()
+        .or_else(|| raw.parse::<f64>().ok().map(Value::from))
 }
 
 fn invalid_input(message: String, workflow: &Workflow) -> anyhow::Error {
@@ -409,6 +409,24 @@ fn find_arg<'a>(
 /// upgraded underneath an installed workflow.
 pub fn command_problems(app: &Command, workflow: &Workflow) -> Vec<String> {
     let mut problems = vec![];
+
+    // An input is given as a flag beside the globals, so it cannot take one
+    // of their names — clap would refuse to build the command at all.
+    let taken: Vec<&str> = app
+        .get_arguments()
+        .filter(|arg| arg.is_global_set())
+        .filter_map(Arg::get_long)
+        .chain([crate::executor::DRY_RUN_ARG, "help", "version"])
+        .collect();
+    for name in workflow.inputs.keys() {
+        let flag = input_flag(name);
+        if taken.contains(&flag.as_str()) {
+            problems.push(format!(
+                "input `{name}` would be given as `--{flag}`, which is already an option \
+                 of every command; rename it"
+            ));
+        }
+    }
     for step in &workflow.steps {
         let Action::Command { path, args } = &step.action else {
             continue;
@@ -592,12 +610,25 @@ mod tests {
     #[test]
     fn inputs_are_typed_and_defaulted() {
         let wf = workflow("  - id: a\n    command: styles list\n");
-        let inputs = read_inputs(&wf, &["n=5".into()]).unwrap();
+        let given = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let inputs = read_inputs(&wf, &given(&[("n", "5")])).unwrap();
         assert_eq!(inputs["n"], serde_json::json!(5));
         assert_eq!(inputs["flag"], serde_json::json!(false));
-        assert!(read_inputs(&wf, &["n=five".into()]).is_err());
-        assert!(read_inputs(&wf, &["nope=1".into()]).is_err());
-        assert!(read_inputs(&wf, &["n=1".into(), "n=2".into()]).is_err());
-        assert!(read_inputs(&wf, &["n".into()]).is_err());
+        assert!(read_inputs(&wf, &given(&[("n", "five")])).is_err());
+        assert!(read_inputs(&wf, &given(&[("nope", "1")])).is_err());
+    }
+
+    #[test]
+    fn an_input_cannot_take_a_global_flag() {
+        let yaml = "version: 1\nname: t\nsummary: t\ninputs:\n  profile: { type: string }\n  dry_run: { type: boolean }\nsteps:\n  - id: a\n    command: styles list\n";
+        let files: Files = [(PathBuf::from(DEFINITION_FILE), yaml.as_bytes().to_vec())].into();
+        let found = command_problems(&app(), &parse("t", &files).unwrap()).join("\n");
+        assert!(found.contains("`--profile`"), "{found}");
+        assert!(found.contains("`--dry-run`"), "{found}");
     }
 }

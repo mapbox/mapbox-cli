@@ -24,7 +24,10 @@ that may never merge. They are not releases and are not listed here.
   `mapbox` commands and scripts defined in a `workflow.yaml`. `install` copies one from a local directory or from a
   GitHub repository's `workflow/<name>/` (by default `mapbox/mapbox-cli`;
   `GH_TOKEN`/`GITHUB_TOKEN` for a private one) into `~/.mapbox/workflows/`,
-  and `list`, `show`, `run` and `uninstall` work on what is installed. The
+  and `list`, `show`, `run` and `uninstall` work on what is installed.
+  `run` takes each of the workflow's inputs as a flag, as in
+  `mapbox workflow run copy-style --style-id <id> --from-profile source
+  --to-profile target`. The generated agent skill leaves `workflow` out. The
   first one published is `copy-style`, which copies a style between
   accounts. The command, the `version: 1` format and the published
   workflows may change or be removed without notice, and every `workflow`

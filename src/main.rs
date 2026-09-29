@@ -917,7 +917,9 @@ fn cli() -> u8 {
         output::banner::show_before_help(&raw_argv);
     }
 
-    let mut app = build_app(&specs);
+    // Before the parse, since a workflow's inputs are flags only once its
+    // definition has been read. Everything else sees the tree unchanged.
+    let mut app = workflow::with_run_target(build_app(&specs), &raw_argv);
     // Here rather than in `build_app`, which tests call directly and which
     // should not depend on who happens to be running them.
     if agent_detect::detect_agent().is_some() {

@@ -8,13 +8,13 @@
 //!
 //! `--quiet` (`-q`) or `MAPBOX_QUIET` hides it.
 //!
-//! In color where [`crate::style`] allows it.
+//! In color where [`super::style`] allows it.
 
 use std::io::IsTerminal;
 
 use clap::ArgMatches;
 
-use crate::style::{self, DIM, RESET};
+use super::style::{self, DIM, RESET};
 use crate::{completion, output};
 
 pub const ARG: &str = "quiet";

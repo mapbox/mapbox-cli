@@ -16,7 +16,6 @@ mod agent_skills;
 #[cfg(test)]
 mod api_command_surface;
 mod auth;
-mod banner;
 mod completion;
 mod config;
 mod confirm;
@@ -36,7 +35,6 @@ mod run_record;
 mod schema;
 mod skill_dest;
 mod spec;
-mod style;
 mod telemetry;
 mod tilesets_cli;
 mod uninstall;
@@ -458,11 +456,11 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .help("Assume yes: never ask before a destructive command"),
         )
         .arg(
-            Arg::new(banner::ARG)
-                .long(banner::ARG)
-                .short(banner::SHORT)
+            Arg::new(output::banner::ARG)
+                .long(output::banner::ARG)
+                .short(output::banner::SHORT)
                 .action(ArgAction::SetTrue)
-                .env(banner::ENV)
+                .env(output::banner::ENV)
                 // Same trap as `--yes`: `MAPBOX_QUIET=1` must not be a usage
                 // error on every command.
                 .value_parser(FalseyValueParser::new())
@@ -774,7 +772,7 @@ fn cli() -> u8 {
     }
 
     run_record::set_parsed(&app, &specs, &matches, run_record::Invocation::Execute);
-    banner::show(&matches);
+    output::banner::show(&matches);
     let mode = Mode::from_matches(&matches);
     match run(&app, &specs, &matches, mode) {
         Ok(()) => 0,

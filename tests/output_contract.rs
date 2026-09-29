@@ -1,6 +1,6 @@
 //! End-to-end tests for the `--output` contract.
 //!
-//! The unit tests in `src/output.rs` cover mode resolution as a pure
+//! The unit tests in `src/output/mod.rs` cover mode resolution as a pure
 //! function. What they cannot cover is the thing the contract is actually
 //! about: which stream each kind of output lands on, in a real process, with
 //! a real exit code. Cargo runs a test's child with pipes for stdout and

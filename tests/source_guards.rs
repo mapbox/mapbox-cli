@@ -174,11 +174,15 @@ fn files_under(dir: &std::path::Path, extensions: &[&str]) -> Vec<(String, PathB
 /// things `--output` does not apply to.
 ///
 /// `telemetry` is a third, and does not write at all — it only reads
-/// `stdout().is_terminal()`, same as `output.rs` already does.
+/// `stdout().is_terminal()`, same as `output/mod.rs` already does.
 #[test]
 fn only_output_completion_and_binary_responses_write_to_stdout() {
-    const MAY_WRITE_STDOUT: &[&str] =
-        &["output.rs", "completion.rs", "executor.rs", "telemetry.rs"];
+    const MAY_WRITE_STDOUT: &[&str] = &[
+        "output/mod.rs",
+        "completion.rs",
+        "executor.rs",
+        "telemetry.rs",
+    ];
 
     let mut unexpected = vec![];
     for (name, source) in sources() {
@@ -236,8 +240,9 @@ const CARRIES_A_REQUEST_ID: &[&str] = &["account_usage.rs", "auth.rs", "executor
 /// so an id there would point at the wrong company — worse than none.
 const NO_REQUEST_ID_TO_CARRY: &[&str] = &["agent_skills.rs"];
 
-/// `output.rs` defines `CliError::http` rather than calling it over a wire.
-const NOT_A_SEND_PATH: &[&str] = &["output.rs"];
+/// `output/error.rs` defines `CliError::http` rather than calling it over a
+/// wire.
+const NOT_A_SEND_PATH: &[&str] = &["output/error.rs"];
 
 /// A new path that reports an API failure has to decide about the request id.
 ///

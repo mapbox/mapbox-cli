@@ -3756,7 +3756,7 @@ Tips:
 </table>
 
 `-o text`'s table is this CLI's own summary (`render_text` in
-`src/account_usage.rs`), not `render_human` in `src/output.rs`: the response
+`src/account_usage.rs`), not `render_human` in `src/output/render.rs`: the response
 nests a `daily` array and a `dimensions` object under each product, too deep
 for that generic renderer, which would fall back to the same pretty JSON
 `-o json` prints. Each row is a product's total for the period plus a

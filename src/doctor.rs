@@ -27,8 +27,8 @@ use serde::Serialize;
 use crate::auth;
 use crate::config;
 use crate::http;
+use crate::output::style;
 use crate::output::{self, Mode};
-use crate::style;
 use crate::telemetry;
 use crate::update_check;
 

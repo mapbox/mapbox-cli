@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::{Command as Process, Stdio};
 
@@ -28,7 +28,7 @@ use serde_json::{json, Map, Value};
 use super::definition::{Action, InputType, Step, Workflow, SCRIPTS_DIR};
 use super::template::{self, Context};
 use crate::auth;
-use crate::output::{self, CliError};
+use crate::output::{self, style, CliError};
 
 /// Global options a step may not set, because the runner owns them or
 /// because they would put a credential in a file.
@@ -191,12 +191,14 @@ pub fn run(
     let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
     let total = workflow.steps.len();
 
+    let color = style::enabled(std::io::stderr().is_terminal());
     for (index, step) in workflow.steps.iter().enumerate() {
         let title = step.name.as_deref().unwrap_or(&step.id);
         output::progress(&format!(
-            "[{}/{total}] {title} ({})",
-            index + 1,
-            step.label()
+            "{} {} {}",
+            style::paint(&format!("[{}/{total}]", index + 1), style::DIM, color),
+            style::paint(title, style::BOLD, color),
+            style::paint(&format!("({})", step.label()), style::DIM, color),
         ));
 
         let context = Context {

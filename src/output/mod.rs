@@ -323,7 +323,7 @@ pub fn progress(message: &str) {
 /// caller needs no guard. A blank line first — these are notes about
 /// whatever was just printed, not more of it, and butted against the last
 /// line they'd read as one.
-fn print_tips(tips: &[String]) {
+pub(crate) fn print_tips(tips: &[String]) {
     if tips.is_empty() {
         return;
     }

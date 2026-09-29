@@ -3866,7 +3866,15 @@ follows are in [workflow/README.md](../workflow/README.md).
 
 **Beta and in development. Not recommended for use.** The commands, the
 `version: 1` format and the published workflows may change or be removed
-without notice, and every `mapbox workflow` subcommand says so on stderr.
+without notice. Every `mapbox workflow` subcommand opens with this line on
+stderr:
+
+```
+Beta: `mapbox workflow` is in development and not recommended for use.
+```
+
+In text mode, `list`, `show` and `install` end with tips on stderr, naming
+the command to run next.
 
 None ships inside the binary. `install` copies one into
 `~/.mapbox/workflows/<name>/`, and every other subcommand works on what is
@@ -3887,8 +3895,8 @@ error instead of a summary.
 <tr><td>
 
 ```
-copy-style
-  Copy a style from one account to another
+NAME        SUMMARY
+copy-style  Copy a style from one account to another
 ```
 
 </td><td>
@@ -3969,10 +3977,11 @@ mapbox workflow install ./workflow/copy-style --force
 <tr><td>
 
 ```
-Installed `copy-style` from
-/Users/me/dev/cli/workflow/copy-style
-into /Users/me/.mapbox/workflows/copy-style.
-Run it with `mapbox workflow run copy-style`.
+Installed copy-style
+
+Source  ~/dev/cli/workflow/copy-style
+Path    ~/.mapbox/workflows/copy-style
+Files   README.md, scripts/prepare.py, workflow.yaml
 ```
 
 </td><td>
@@ -4052,10 +4061,18 @@ mapbox workflow run copy-style -i style_id=cmm28c5rm00bj01qz9hwp69qc \
 its arguments as written, since nothing has run to fill them in.
 
 ```
-Would run `copy-style`:
-  1. source  mapbox styles get
-  2. body  python3 scripts/prepare.py
-  3. created  mapbox styles create
+Dry run — nothing was run. Would run copy-style:
+
+Inputs
+  from_profile  source
+  name          (none)
+  style_id      cmm28c5rm00bj01qz9hwp69qc
+  to_profile    target
+
+Steps
+  1. Read the style    mapbox styles get
+  2. Prepare the copy  python3 scripts/prepare.py
+  3. Create the copy   mapbox styles create
 ```
 
 ---

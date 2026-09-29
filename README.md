@@ -3,15 +3,23 @@
 A command-line interface for Mapbox APIs. Commands are generated at build
 time from OpenAPI specs, so they always match the specs.
 
+```sh
+brew install mapbox/tap/mapbox
+mapbox auth login
+mapbox styles list
+```
+
 ## Contents
 
-- [Build from source](#build-from-source)
-- [Install a released binary](#install-a-released-binary)
+- [Install](#install)
+  - [Homebrew](#homebrew)
+  - [Install script](#install-script)
   - [Download the archive yourself](#download-the-archive-yourself)
+  - [Build from source](#build-from-source)
 - [Commands](#commands)
   - [Auth](#auth)
     - [Named profiles](#named-profiles)
-  - [API Related](#api-related)
+  - [API commands](#api-commands)
   - [Agent skills](#agent-skills)
   - [Shell completion](#shell-completion)
   - [Generate Skills](#generate-skills)
@@ -19,35 +27,38 @@ time from OpenAPI specs, so they always match the specs.
 - [Usage](#usage)
   - [Dry runs](#dry-runs)
   - [Timeouts](#timeouts)
+  - [Extra query parameters](#extra-query-parameters)
+  - [Proxies](#proxies)
   - [Output format](#output-format)
   - [`--schema`](#--schema)
   - [Confirmation and `--yes`](#confirmation-and---yes)
   - [Update notices](#update-notices)
-  - [Command history](#command-history)
-  - [Diagnostic logs](#diagnostic-logs)
- - [Privacy](#privacy)
+  - [Privacy](#privacy)
 - [Uninstall](#uninstall)
 - [Contributing](#contributing)
 
-## Build from source
+## Install
 
-This is the buildable core, and building it is the primary way to get it
-from here. It needs [Rust via rustup](https://rustup.rs) and nothing else:
-no second repository, no token, and no network beyond crates.io.
+Mapbox publishes builds for macOS, Linux and Windows. Pick one of the
+following, then run `mapbox --help`.
+
+### Homebrew
+
+On macOS or Linux:
 
 ```sh
-cargo build --release
-./target/release/mapbox --help
+brew install mapbox/tap/mapbox
 ```
 
-The OpenAPI specs the commands are generated from are vendored in
-`openapi/`, so a clone compiles on its own.
+Update with `brew upgrade mapbox`. The formula also installs completions
+for bash, zsh and fish, so there is nothing to set up under
+[Shell completion](#shell-completion). The tap lives at
+[mapbox/homebrew-tap](https://github.com/mapbox/homebrew-tap).
 
-## Install a released binary
+### Install script
 
-Mapbox publishes builds for macOS, Linux and Windows. The install script
-detects your platform, checks a SHA-256 checksum, and installs `mapbox`.
-No `sudo`, no admin rights:
+The script detects your platform, checks a SHA-256 checksum, and installs
+`mapbox` into `~/.local/bin`. No `sudo`, no admin rights:
 
 ```sh
 curl -fsSL https://cli.mapbox.com/install.sh | sh
@@ -57,44 +68,40 @@ curl -fsSL https://cli.mapbox.com/install.sh | sh
 irm https://cli.mapbox.com/install.ps1 | iex
 ```
 
-`MAPBOX_CLI_VERSION` pins a version instead of taking the newest:
+Run it again to update. `MAPBOX_CLI_VERSION` pins a version instead of
+taking the newest, with or without the leading `v`, so the version
+`mapbox --version` prints can be pasted straight in:
 
 ```sh
-curl -fsSL https://cli.mapbox.com/install.sh | MAPBOX_CLI_VERSION=0.2.1 sh
+curl -fsSL https://cli.mapbox.com/install.sh | MAPBOX_CLI_VERSION=0.3.0 sh
 ```
 
 ```powershell
-$env:MAPBOX_CLI_VERSION = '0.2.1'; irm https://cli.mapbox.com/install.ps1 | iex
+$env:MAPBOX_CLI_VERSION = '0.3.0'; irm https://cli.mapbox.com/install.ps1 | iex
 ```
 
-With or without the leading `v`: `0.2.1` and `v0.2.1` both work, so the
-version `mapbox --version` prints can be pasted straight in.
-`MAPBOX_INSTALL_DIR` chooses where the binary lands, and defaults to
-`~/.local/bin`.
+`MAPBOX_INSTALL_DIR` chooses where the binary lands.
 
 `scripts/install.sh` and `scripts/install.ps1` here are those installers'
 sources; `scripts/test-install.sh` and `scripts/test-install.ps1` exercise
 them end to end without touching the network.
 
-Run `mapbox --help` once it's on your `PATH`.
-
 ### Download the archive yourself
 
-Nothing about the install script is required. If piping one into a shell is
-not allowed where you work, the archives are ordinary HTTP downloads, and
-`manifest.json` lists every target with its checksum:
+If piping a script into a shell is not allowed where you work, the archives
+are ordinary HTTP downloads, and `manifest.json` lists every target with its
+checksum:
 
 ```sh
 curl -fsSL https://cli.mapbox.com/latest/manifest.json
 ```
 
-Six targets are published: `aarch64-apple-darwin`, `x86_64-apple-darwin`,
-`aarch64-unknown-linux-musl`, `x86_64-unknown-linux-musl`,
-`x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`. Pick yours, check it,
-then extract:
+Five targets are published: `aarch64-apple-darwin`, `x86_64-apple-darwin`,
+`aarch64-unknown-linux-musl`, `x86_64-unknown-linux-musl` and
+`x86_64-pc-windows-msvc`. Pick yours, check it, then extract:
 
 ```sh
-version=v0.2.1
+version=v0.3.0
 file=mapbox-${version}-aarch64-apple-darwin.tar.gz
 
 curl -fsSLO "https://cli.mapbox.com/${version}/${file}"
@@ -105,11 +112,11 @@ tar -xzf "$file"
 mv mapbox ~/.local/bin/
 ```
 
-On Windows the archive is a `.zip` and PowerShell can read the manifest
-directly, so there is no text file to parse:
+On Windows the archive is a `.zip`, and PowerShell can read the manifest
+directly:
 
 ```powershell
-$version = 'v0.2.1'
+$version = 'v0.3.0'
 $target  = 'x86_64-pc-windows-msvc'
 
 $manifest = Invoke-RestMethod "https://cli.mapbox.com/$version/manifest.json"
@@ -124,25 +131,27 @@ Expand-Archive $artifact.file -DestinationPath .
 ```
 
 `Invoke-WebRequest` and `Get-FileHash` rather than `curl` and `sha256sum`:
-Windows PowerShell 5.1 — the edition that ships with Windows, `powershell.exe`
-— aliases `curl` to `Invoke-WebRequest`, whose flags are nothing like real
-curl's, so the commands above would silently run the wrong tool there even
-though `curl.exe` itself has shipped in `System32` since Windows 10 1803.
-PowerShell 7 (`pwsh`) dropped that alias, so `curl` there is the real thing —
-but 5.1 is still what a plain "Windows PowerShell" shortcut opens on a
-default install. `sha256sum` has the simpler problem: it isn't shipped at
-all outside WSL or Git Bash.
+the first is an alias for something else in Windows PowerShell and neither of
+the others is guaranteed to be present.
 
 Use `latest` in place of the version for whatever is current. Each archive
-holds one file, the `mapbox` executable, so there is no directory to step
-into and nothing else to place. `~/.local/bin` is where the install script
-puts it too, and `MAPBOX_INSTALL_DIR` is the variable it reads if you prefer
-somewhere else.
+holds one file, the `mapbox` executable.
 
 The macOS builds are not code-signed with a Developer ID. `curl` attaches no
 quarantine flag, which is why the commands above run, but a download through
 a browser does, and Gatekeeper will refuse an unsigned binary that carries
 one. Clear it with `xattr -d com.apple.quarantine mapbox`.
+
+### Build from source
+
+It needs [Rust via rustup](https://rustup.rs) and nothing else: no second
+repository, no token, and no network beyond crates.io. The OpenAPI specs the
+commands are generated from are vendored in `openapi/`.
+
+```sh
+cargo build --release
+./target/release/mapbox --help
+```
 
 ## Commands
 
@@ -172,7 +181,7 @@ mapbox --profile android_app styles list
 mapbox auth profiles              # which profiles are actually stored
 ```
 
-### API Related
+### API commands
 
 Each API is a top-level subcommand, one sub-subcommand per operation:
 
@@ -209,8 +218,8 @@ mapbox styles create --data '{"name": "My Style", "version": 8, ...}'
 [docs/commands.md](./docs/commands.md) lists every command.
 
 Every request sends `User-Agent: mapbox-cli/<version>` and nothing else
-about you or your machine. `MAPBOX_CLI_NO_TELEMETRY=1` keeps even future markers
-out of that header.
+about you or your machine. `MAPBOX_CLI_NO_TELEMETRY=1` keeps even future
+markers out of that header.
 
 ### Agent skills
 
@@ -414,8 +423,8 @@ Continue? [y/N] n
 ```
 
 `--yes`/`-y`/`MAPBOX_YES=1` skips the question, which is what CI wants, or a
-script deliberately run at a terminal. It does **not** apply to `auth login`, which always
-needs a person.
+script deliberately run at a terminal. It does **not** apply to `auth login`,
+which always needs a person.
 
 ### Update notices
 
@@ -427,6 +436,9 @@ A newer mapbox is available: 0.2.0 (this is 0.1.5).
 Update: curl -fsSL https://cli.mapbox.com/install.sh | sh
 Silence this: MAPBOX_NO_UPDATE_CHECK=1
 ```
+
+The suggested command is the install script's. If you installed with
+Homebrew, run `brew upgrade mapbox` instead.
 
 This is the only request the CLI makes that you didn't ask for, so it is
 kept narrow:
@@ -538,6 +550,9 @@ Removes only the `mapbox` binary. Credentials, profiles, and the separate
 [`mapbox auth logout`](./docs/commands.md#mapbox-auth-logout) first if you
 want those gone too. Asks for confirmation like any destructive command
 (`--yes`/`MAPBOX_YES` skips it); `--dry-run` previews without deleting.
+
+Installed with Homebrew? Use `brew uninstall mapbox` instead, so Homebrew
+knows it is gone.
 
 ## Contributing
 

@@ -8,10 +8,14 @@ description: |
     mapbox auth login --profile source
     mapbox auth login --profile target
 
-  The copy references whatever the original does. Tilesets, fonts and the
-  sprite that belong to the source account are not copied, and the target
-  account can read them only if they are public; the `warnings` output lists
-  every such reference.
+  Only the style document is copied. These stay with the source account,
+  and the copy can use them only if the target account can read them:
+
+  - tilesets the style's sources use
+  - fonts, and the sprite's icons
+  - imported styles
+
+  The `warnings` output lists each one the style refers to.
 
 inputs:
   style_id:

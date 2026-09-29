@@ -13,6 +13,7 @@
 //! a script step.
 
 pub mod definition;
+mod prose;
 pub mod runner;
 pub mod store;
 pub mod template;
@@ -332,20 +333,15 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
         .map(|step| json!({ "id": step.id, "name": step.name, "run": step.label() }))
         .collect();
 
+    // Fixed order for every workflow: what it is, what it needs, what it
+    // does, then where this copy came from.
     let mut text = format!(
-        "{}\n{}\n\n{}",
+        "{}\n{}",
         heading(&workflow.name, color),
-        workflow.summary,
-        field_lines(
-            &[
-                ("Source", source_text(&found.meta)),
-                ("Path", tilde(&found.root)),
-            ],
-            color,
-        )
+        style::paint(&workflow.summary, style::DIM, color)
     );
     if let Some(description) = &workflow.description {
-        text.push_str(&format!("\n\n{}", description.trim_end()));
+        text.push_str(&format!("\n\n{}", prose::render(description, color)));
     }
 
     text.push_str(&format!("\n\n{}", heading("Inputs", color)));
@@ -403,6 +399,18 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
             text.push_str(&format!("\n  - {problem}"));
         }
     }
+
+    text.push_str(&format!("\n\n{}\n", heading("Installed", color)));
+    text.push_str(&columns(
+        &[
+            vec![
+                ("  Source".to_string(), ""),
+                (source_text(&found.meta), style::DIM),
+            ],
+            vec![("  Path".to_string(), ""), (tilde(&found.root), style::DIM)],
+        ],
+        color,
+    ));
 
     output::emit(
         mode,

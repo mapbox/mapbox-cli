@@ -51,6 +51,9 @@ use anyhow::{anyhow, Result};
 use clap::builder::PossibleValuesParser;
 use clap::{Arg, ArgAction, ArgMatches};
 
+use crate::output::CliError;
+use crate::remedy::Remedy;
+
 /// `--agent`, `--global` and `--dir`: the arg ids, and their long spellings.
 pub const AGENT_ARG: &str = "agent";
 pub const GLOBAL_ARG: &str = "global";
@@ -610,13 +613,17 @@ pub fn resolve(
 
     if require && out.is_empty() {
         let known: Vec<&str> = Agent::all().map(Agent::flag).collect();
-        return Err(anyhow!(
+        return Err(CliError::new(
+            "no_agent_detected",
             "Nowhere to write skills: no --agent was named, and no agent's home \
-             directory was found. Pass --agent to write for one anyway ({}), \
-             --global to write under its home directory, or --dir to write \
-             somewhere specific.",
+             directory was found.",
+        )
+        .with_remedy(Remedy::default().with_fix(&format!(
+            "Pass --agent to write for one anyway ({}), --global to write under \
+             its home directory, or --dir to write somewhere specific.",
             known.join(", ")
-        ));
+        )))
+        .into());
     }
 
     Ok(out)
@@ -1187,15 +1194,19 @@ mod tests {
     fn nothing_to_write_to_is_an_error_that_names_the_flags() {
         let nowhere = AgentHomes::default();
         let err = resolve(None, &[], false, &nowhere, true)
-            .expect_err("no agent, no --dir, and nothing detected");
-        let message = err.to_string();
+            .expect_err("no agent, no --dir, and nothing detected")
+            .downcast::<CliError>()
+            .expect("a CliError, not some other failure");
+        assert_eq!(err.code, "no_agent_detected");
+
+        let fix = err.fix.as_deref().unwrap_or_default();
         for flag in ["--agent", "--dir"] {
-            assert!(message.contains(flag), "{message} does not mention {flag}");
+            assert!(fix.contains(flag), "{fix} does not mention {flag}");
         }
         for agent in Agent::all() {
             assert!(
-                message.contains(agent.flag()),
-                "{message} does not mention {}",
+                fix.contains(agent.flag()),
+                "{fix} does not mention {}",
                 agent.flag()
             );
         }

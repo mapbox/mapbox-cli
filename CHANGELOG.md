@@ -19,6 +19,15 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox generate-skills`/`agent-skills install`/`agent-skills update`,
+  when no coding agent is detected and none was named with `--agent`,
+  `--global` or `--dir`: the failure now carries a stable
+  `no_agent_detected` error code (previously an unstructured message with
+  the generic `error` code, indistinguishable from an unrelated internal
+  failure). Same message, same non-zero exit — only the `code` a caller can
+  match on is new. Documented in docs/commands.md's "Where they go"
+  section.
+
 - Diagnostic logs, off by default: `mapbox config set log on` (or
   `MAPBOX_LOG=1`) keeps, for each run in history, the command line, each
   request and the error message, tokens redacted, on your machine only.

@@ -19,6 +19,12 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox mcp list`/`mapbox mcp install`: registers a Mapbox MCP server
+  (direct tool-calling access to Mapbox's APIs, not just guidance about
+  them) with a coding agent's own CLI. Only Claude Code is supported today,
+  against the hosted Mapbox MCP endpoints. An existing server with the same
+  name is left alone rather than replaced.
+
 - Diagnostic logs, off by default: `mapbox config set log on` (or
   `MAPBOX_LOG=1`) keeps, for each run in history, the command line, each
   request and the error message, tokens redacted, on your machine only.

@@ -27,6 +27,7 @@ mod generate_skills;
 mod history;
 mod http;
 mod link;
+mod mcp;
 mod output;
 mod remedy;
 mod run_history;
@@ -600,6 +601,13 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
     // same agent directories, which is why they share `skill_dest`.
     app = app.subcommand(agent_skills::command());
 
+    // The other half of "make a coding agent Mapbox-aware": the two skills
+    // commands above write guidance an agent reads, this registers an MCP
+    // server an agent can actually call. It shells out to the agent's own
+    // CLI rather than sharing `skill_dest`, since it edits a config store
+    // that CLI owns rather than a directory this one does.
+    app = app.subcommand(mcp::command());
+
     // Between the other two hand-written leaves, so the help lists the three
     // that make no request together and in the order someone meets them.
     // What it prints is built from `app` itself, which is why nothing here
@@ -1086,6 +1094,11 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             agent_skills::RunFlags { debug, assume_yes },
             mode,
         )?,
+        // Ahead of the generic service arm for the same reason as its
+        // neighbors: it makes no Mapbox request and needs no token. It does
+        // shell out to another process (the agent's own CLI), but that is
+        // local, not a network call.
+        Some((mcp::COMMAND, mcp_matches)) => mcp::run(mcp_matches, mode)?,
         // Ahead of the generic service arm for the same reason again, and
         // handed `app` for the same reason `generate-skills` is: the script
         // it prints is a rendering of the command tree already in memory.

@@ -15,6 +15,7 @@ time from OpenAPI specs, so they always match the specs.
   - [Agent skills](#agent-skills)
   - [Shell completion](#shell-completion)
   - [Generate Skills](#generate-skills)
+  - [MCP servers](#mcp-servers)
   - [Tileset CLI](#tileset-cli)
 - [Usage](#usage)
   - [Dry runs](#dry-runs)
@@ -302,6 +303,22 @@ mapbox agent-skills uninstall mapbox-cli
 That removes every copy this command wrote, which is more than deleting the
 directories by hand usually catches — a default run writes for each agent on
 the machine, not just the one you had in mind.
+
+### MCP servers
+
+```sh
+mapbox mcp list
+mapbox mcp install
+```
+
+Different kind of "install" from `agent-skills`/`generate-skills` above:
+those write a directory this CLI owns, this registers an MCP server —
+direct tool-calling access to Mapbox's APIs, not just guidance about them —
+with a coding agent's *own* CLI, since its config belongs to that agent and
+may already list other servers. Only Claude Code is supported today,
+against the hosted Mapbox MCP endpoints: no token, no npm package, no Node
+version to manage. An existing server with the same name is left alone
+rather than replaced.
 
 ### Tileset CLI
 

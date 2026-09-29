@@ -4008,14 +4008,14 @@ Files   README.md, scripts/prepare.py, workflow.yaml
 ### `mapbox workflow uninstall`
 
 Removes an installed workflow's directory. At a terminal it asks first, and
-`--yes` skips the question. Only a plain workflow name is accepted, and only a
-directory `install` wrote is removed.
+`--yes` skips the question. Only a directory `install` wrote under
+`~/.mapbox/workflows/` is removed.
 
 #### Parameters
 
 | Parameter | Effect |
 | --- | --- |
-| `NAME` | Name of an installed workflow. |
+| `NAME` | Name of an installed workflow, or the directory it was installed from, which names it by its directory name. The directory itself is not touched. |
 | `--dry-run` | Say what it would remove, then exit without removing it. |
 
 ---

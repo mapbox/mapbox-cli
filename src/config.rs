@@ -232,11 +232,11 @@ pub fn list(mode: Mode) -> Result<()> {
         .map(|key| json!({ "key": key, "value": resolve(&config, key) }))
         .collect();
 
-    let text = KEYS
+    let fields: Vec<(&str, String)> = KEYS
         .iter()
-        .map(|key| format!("{key}\t{}", on_off(resolve(&config, key))))
-        .collect::<Vec<_>>()
-        .join("\n");
+        .map(|key| (*key, on_off(resolve(&config, key)).to_string()))
+        .collect();
+    let text = output::field_lines(&fields, output::result_in_color());
 
     output::emit(mode, &text, Value::Array(entries))
 }

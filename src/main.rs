@@ -456,6 +456,18 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .help("Assume yes: never ask before a destructive command"),
         )
         .arg(
+            Arg::new(output::banner::ARG)
+                .long(output::banner::ARG)
+                .short(output::banner::SHORT)
+                .action(ArgAction::SetTrue)
+                .env(output::banner::ENV)
+                // Same trap as `--yes`: `MAPBOX_QUIET=1` must not be a usage
+                // error on every command.
+                .value_parser(FalseyValueParser::new())
+                .global(true)
+                .help("Don't print the name-and-version banner to stderr"),
+        )
+        .arg(
             Arg::new(http::TIMEOUT_ARG)
                 .long(http::TIMEOUT_ARG)
                 .value_name("SECONDS")
@@ -760,6 +772,7 @@ fn cli() -> u8 {
     }
 
     run_record::set_parsed(&app, &specs, &matches, run_record::Invocation::Execute);
+    output::banner::show(&matches);
     let mode = Mode::from_matches(&matches);
     match run(&app, &specs, &matches, mode) {
         Ok(()) => 0,

@@ -159,7 +159,10 @@ fn list_reports_every_setting_including_an_unset_one() {
         .output()
         .expect("run mapbox config list");
     assert!(text.status.success());
-    assert_eq!(stdout(&text), "update-check\toff\nhistory\ton\nlog\toff");
+    assert_eq!(
+        stdout(&text),
+        "update-check  off\nhistory       on\nlog           off"
+    );
 }
 
 #[test]

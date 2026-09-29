@@ -14,21 +14,18 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-/// Every `src/*.rs`, as (file name, contents).
+/// Every `.rs` under `src/`, as (path relative to `src/`, contents) — so
+/// `output/mod.rs` for a module in a directory.
+///
+/// Recursive on purpose: a guard that read only the top level would stop
+/// checking a module the moment it moved into a directory, and pass without
+/// saying so.
 fn sources() -> Vec<(String, String)> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut out = vec![];
-    for entry in std::fs::read_dir(&dir).expect("read src/") {
-        let path = entry.expect("a directory entry").path();
-        if path.extension().is_some_and(|ext| ext == "rs") {
-            let name = path
-                .file_name()
-                .expect("a file name")
-                .to_string_lossy()
-                .into_owned();
-            out.push((name, std::fs::read_to_string(&path).expect("read a source")));
-        }
-    }
+    let mut out: Vec<(String, String)> = files_under(&dir, &["rs"])
+        .into_iter()
+        .map(|(name, path)| (name, std::fs::read_to_string(&path).expect("read a source")))
+        .collect();
     out.sort();
     assert!(out.len() > 10, "src/ looks empty: {out:?}");
     out
@@ -137,6 +134,34 @@ fn every_module_allowed_to_delete_still_does() {
 
 /// stdout is the result, and `output::emit` is the only thing that writes it.
 ///
+/// Files under `dir` with one of `extensions`, recursively, each named by its
+/// path relative to `dir` with `/` between components on every platform.
+fn files_under(dir: &std::path::Path, extensions: &[&str]) -> Vec<(String, PathBuf)> {
+    let mut out = vec![];
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(current) = pending.pop() {
+        for entry in std::fs::read_dir(&current).expect("read a source directory") {
+            let path = entry.expect("a directory entry").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path
+                .extension()
+                .is_some_and(|ext| extensions.iter().any(|k| ext == *k))
+            {
+                let name = path
+                    .strip_prefix(dir)
+                    .expect("under the directory walked")
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                out.push((name, path));
+            }
+        }
+    }
+    out
+}
+
 /// `clippy::print_stdout` (denied in Cargo.toml) covers the macros. This
 /// covers the other way in: taking the handle and writing to it directly,
 /// which is what `output` itself does and what nothing else should.
@@ -149,11 +174,15 @@ fn every_module_allowed_to_delete_still_does() {
 /// things `--output` does not apply to.
 ///
 /// `telemetry` is a third, and does not write at all — it only reads
-/// `stdout().is_terminal()`, same as `output.rs` already does.
+/// `stdout().is_terminal()`, same as `output/mod.rs` already does.
 #[test]
 fn only_output_completion_and_binary_responses_write_to_stdout() {
-    const MAY_WRITE_STDOUT: &[&str] =
-        &["output.rs", "completion.rs", "executor.rs", "telemetry.rs"];
+    const MAY_WRITE_STDOUT: &[&str] = &[
+        "output/mod.rs",
+        "completion.rs",
+        "executor.rs",
+        "telemetry.rs",
+    ];
 
     let mut unexpected = vec![];
     for (name, source) in sources() {
@@ -211,8 +240,9 @@ const CARRIES_A_REQUEST_ID: &[&str] = &["account_usage.rs", "auth.rs", "executor
 /// so an id there would point at the wrong company — worse than none.
 const NO_REQUEST_ID_TO_CARRY: &[&str] = &["agent_skills.rs"];
 
-/// `output.rs` defines `CliError::http` rather than calling it over a wire.
-const NOT_A_SEND_PATH: &[&str] = &["output.rs"];
+/// `output/error.rs` defines `CliError::http` rather than calling it over a
+/// wire.
+const NOT_A_SEND_PATH: &[&str] = &["output/error.rs"];
 
 /// A new path that reports an API failure has to decide about the request id.
 ///
@@ -418,18 +448,11 @@ fn prose_files() -> Vec<(String, String)> {
     }
 
     for dir in ["src", "tests", "docs", "scripts"] {
-        for entry in std::fs::read_dir(root.join(dir)).expect("read a source directory") {
-            let path = entry.expect("a directory entry").path();
-            let ours = path
-                .extension()
-                .is_some_and(|ext| ["rs", "md", "sh", "ps1"].iter().any(|k| ext == *k));
-            if ours {
-                let name = format!(
-                    "{dir}/{}",
-                    path.file_name().expect("a file name").to_string_lossy()
-                );
-                out.push((name, std::fs::read_to_string(&path).expect("read a file")));
-            }
+        for (name, path) in files_under(&root.join(dir), &["rs", "md", "sh", "ps1"]) {
+            out.push((
+                format!("{dir}/{name}"),
+                std::fs::read_to_string(&path).expect("read a file"),
+            ));
         }
     }
 

@@ -399,6 +399,11 @@ one flat object: `code`, `message`, plus `fix`, `next_actions` and `docs`
 where there is advice to give. See [docs/commands.md](./docs/commands.md#errors)
 for the list of codes.
 
+At a terminal, a run opens with a `mapbox · v<version>` line on stderr, and
+tables, labels and tips are in color. Neither reaches a pipe or a file.
+`-q`/`--quiet` (or `MAPBOX_QUIET=1`) hides the banner; `NO_COLOR` turns
+color off.
+
 ### `--schema`
 
 `mapbox <command> --schema` describes a command as JSON instead of running

@@ -39,8 +39,8 @@ mapbox styles list
 
 ## Install
 
-Mapbox publishes builds for macOS, Linux and Windows. Pick one of the
-following, then run `mapbox --help`.
+Homebrew covers macOS and Linux. On Windows, use the install script or
+download the archive.
 
 ### Homebrew
 

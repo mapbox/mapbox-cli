@@ -58,10 +58,10 @@ entry point (modes, `emit`, tips), `error.rs` shapes and prints failures,
 allowed, and `banner.rs` is the version line a run opens with.
 
 Four modules may touch stdout, and the guard lists each with its reason:
-`output/mod.rs`, which is the machinery; `completion.rs`, because a shell script
-wrapped in JSON is unsourceable; `executor.rs`, because a binary API response
-wrapped in JSON is a corrupt PNG; and `telemetry.rs`, which does not write at
-all and only reads `stdout().is_terminal()`. Adding a fifth means editing that
+`output/mod.rs`, which is the machinery; `completion.rs`, because a shell
+script wrapped in JSON is unsourceable; `executor.rs`, because a binary API
+response wrapped in JSON is a corrupt PNG; and `telemetry.rs`, which does not
+write at all and only reads `stdout().is_terminal()`. Adding a fifth means editing that
 list, on purpose, in front of a reviewer.
 
 ## One HTTP client

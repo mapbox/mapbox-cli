@@ -3756,10 +3756,10 @@ Tips:
 </table>
 
 `-o text`'s table is this CLI's own summary (`render_text` in
-`src/account_usage.rs`), not `render_human` in `src/output/render.rs`: the response
-nests a `daily` array and a `dimensions` object under each product, too deep
-for that generic renderer, which would fall back to the same pretty JSON
-`-o json` prints. Each row is a product's total for the period plus a
+`src/account_usage.rs`), not `render_human` in `src/output/render.rs`: the
+response nests a `daily` array and a `dimensions` object under each product,
+too deep for that generic renderer, which would fall back to the same pretty
+JSON `-o json` prints. Each row is a product's total for the period plus a
 sparkline of its daily values — a padded one: a day the API's `daily` array
 leaves out (it omits a day rather than sending `usage: 0` for it) still gets
 its own zero-height glyph at the right position in the line, computed from

@@ -23,9 +23,10 @@ that may never merge. They are not releases and are not listed here.
   stderr. stdout is unchanged, and nothing is printed when stderr is not a
   terminal or for `mapbox completion`. `--quiet`/`-q` or `MAPBOX_QUIET=1`
   hides it. Table headers, the labels of key/value lists (`auth whoami`,
-  `doctor`, `config list`, a single object's fields) and tips are styled at
-  a terminal too, and a result written to a file or pipe never is;
-  `NO_COLOR` turns color off everywhere.
+  `doctor`, `config list`, a single object's fields), the result lists of
+  `geocoder`, `search` and `tilequery`, and tips are styled at a terminal
+  too, and a result written to a file or pipe never is; `NO_COLOR` turns
+  color off everywhere.
 
 - `mapbox config list` in text mode now aligns its keys with spaces, like
   every other key/value list, instead of separating them with a tab. A

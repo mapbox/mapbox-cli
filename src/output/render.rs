@@ -39,6 +39,9 @@ pub(super) struct Rendered {
     /// The labels and values of a field list, kept so they can be drawn
     /// again with the labels highlighted.
     fields: Option<Vec<(String, String)>>,
+    /// The whole text again in color, for a rendering that styles more than
+    /// one header line or a column of labels.
+    colored: Option<String>,
     /// The first row's key, when the table has one — a real value for the
     /// `--id` suggestion, so the line can be copied and edited rather than
     /// filled in from scratch.
@@ -286,9 +289,17 @@ fn render_geocoder_list(value: &Value) -> Option<Rendered> {
     let rows = feature_collection_rows(value)?;
     let mut rendered = render_feature_list(&rows);
     if let Some(notice) = attribution(value) {
-        rendered.text.push_str(&format!("\n\n{notice}"));
+        rendered.text.push_str(&notice_text(notice, false));
+        if let Some(colored) = &mut rendered.colored {
+            colored.push_str(&notice_text(notice, true));
+        }
     }
     Some(rendered)
+}
+
+/// The terms under a list, dimmed so the results stay what the eye lands on.
+fn notice_text(notice: &str, color: bool) -> String {
+    format!("\n\n{}", style::paint(notice, style::DIM, color))
 }
 
 /// A `FeatureCollection`'s `attribution`, when it carries a usable one.
@@ -512,11 +523,29 @@ fn render_feature_list(rows: &[Value]) -> Rendered {
             text: "(none)".to_string(),
             header: false,
             fields: None,
+            colored: None,
             shortened: false,
             identifier: None,
         };
     }
 
+    // Never clipped, so nothing to warn about; no column to suggest `--id`
+    // against either.
+    Rendered {
+        text: feature_list_text(rows, false),
+        header: false,
+        fields: None,
+        colored: Some(feature_list_text(rows, true)),
+        shortened: false,
+        identifier: None,
+    }
+}
+
+/// [`render_feature_list`]'s text. In color, the name is bold and the
+/// category, distance, coordinates and attribute names are dimmed, leaving
+/// the name and address as what a reader scans.
+fn feature_list_text(rows: &[Value], color: bool) -> String {
+    let dim = |text: &str| style::paint(text, style::DIM, color);
     let mut out = String::new();
     for (index, row) in rows.iter().enumerate() {
         if index > 0 {
@@ -526,18 +555,22 @@ fn render_feature_list(rows: &[Value]) -> Rendered {
             .get("name")
             .and_then(Value::as_str)
             .unwrap_or("(unnamed)");
-        out.push_str(&format!("{}. {name}", index + 1));
+        out.push_str(&format!(
+            "{}. {}",
+            index + 1,
+            style::paint(name, style::BOLD, color)
+        ));
         if let Some(category) = row.get("category").and_then(Value::as_str) {
-            out.push_str(&format!(" ({category})"));
+            out.push_str(&format!(" {}", dim(&format!("({category})"))));
         }
         if let Some(distance) = row.get("distance").and_then(Value::as_str) {
-            out.push_str(&format!(" — {distance}"));
+            out.push_str(&format!(" {}", dim(&format!("— {distance}"))));
         }
         if let Some(address) = row.get("address").and_then(Value::as_str) {
             out.push_str(&format!("\n   {address}"));
         }
         if let Some(coordinates) = row.get("coordinates").and_then(Value::as_str) {
-            out.push_str(&format!("\n   {coordinates}"));
+            out.push_str(&format!("\n   {}", dim(coordinates)));
         }
         // Only `tilequery` fills this in; a geocoding row never carries it.
         if let Some(extra) = row.get("extra").and_then(Value::as_object) {
@@ -546,20 +579,11 @@ fn render_feature_list(rows: &[Value]) -> Rendered {
                     Value::Array(items) => join_list(items),
                     scalar => cell(Some(scalar)),
                 };
-                out.push_str(&format!("\n   {key}: {rendered}"));
+                out.push_str(&format!("\n   {} {rendered}", dim(&format!("{key}:"))));
             }
         }
     }
-
-    // Never clipped, so nothing to warn about; no column to suggest `--id`
-    // against either.
-    Rendered {
-        text: out,
-        header: false,
-        fields: None,
-        shortened: false,
-        identifier: None,
-    }
+    out
 }
 
 /// `batch-geocode`'s `{"batch": [FeatureCollection, …]}`, one query's list
@@ -578,18 +602,6 @@ fn render_batch_feature_list(value: &Value) -> Option<Rendered> {
         .map(feature_collection_rows)
         .collect::<Option<_>>()?;
 
-    let mut out = String::new();
-    for (index, rows) in lists.iter().enumerate() {
-        if index > 0 {
-            out.push_str("\n\n");
-        }
-        // One query needs no header: there is nothing to tell it apart from.
-        if lists.len() > 1 {
-            out.push_str(&format!("Query {}:\n", index + 1));
-        }
-        out.push_str(&render_feature_list(rows).text);
-    }
-
     // Every entry carries its own `attribution` and it is the API's terms
     // rather than the query's, so all fifty of them say the same thing. Once
     // under the whole batch, then — the same notice repeated under every
@@ -601,14 +613,35 @@ fn render_batch_feature_list(value: &Value) -> Option<Rendered> {
             notices.push(notice);
         }
     }
-    for notice in notices {
-        out.push_str(&format!("\n\n{notice}"));
-    }
+
+    let text = |color: bool| {
+        let mut out = String::new();
+        for (index, rows) in lists.iter().enumerate() {
+            if index > 0 {
+                out.push_str("\n\n");
+            }
+            // One query needs no header: there is nothing to tell it apart from.
+            if lists.len() > 1 {
+                let header = format!("Query {}:", index + 1);
+                out.push_str(&format!("{}\n", style::paint(&header, style::BOLD, color)));
+            }
+            let list = render_feature_list(rows);
+            match (color, list.colored) {
+                (true, Some(colored)) => out.push_str(&colored),
+                _ => out.push_str(&list.text),
+            }
+        }
+        for notice in &notices {
+            out.push_str(&notice_text(notice, color));
+        }
+        out
+    };
 
     Some(Rendered {
-        text: out,
+        text: text(false),
         header: false,
         fields: None,
+        colored: Some(text(true)),
         shortened: false,
         identifier: None,
     })
@@ -637,6 +670,7 @@ pub(super) fn render_human(value: &Value) -> Option<Rendered> {
                 text: field_lines(&fields, false),
                 header: false,
                 fields: Some(fields),
+                colored: None,
                 shortened: false,
                 identifier: None,
             })
@@ -663,6 +697,7 @@ fn render_table(rows: &[Value]) -> Option<Rendered> {
             text: "(none)".to_string(),
             header: false,
             fields: None,
+            colored: None,
             shortened: false,
             identifier: None,
         });
@@ -720,6 +755,7 @@ fn render_table(rows: &[Value]) -> Option<Rendered> {
         text: out,
         header: true,
         fields: None,
+        colored: None,
         shortened,
         identifier,
     })
@@ -994,11 +1030,14 @@ fn join_row(cells: &[String], widths: &[usize]) -> String {
     padded.join(&" ".repeat(SEPARATOR)).trim_end().to_string()
 }
 
-/// The rendered text, with a table's column names or a field list's labels
-/// in bold.
+/// The rendered text, with a table's column names, a field list's labels or
+/// a feature list's names in bold.
 pub(super) fn styled(rendered: &Rendered, color: bool) -> String {
     if !color {
         return rendered.text.clone();
+    }
+    if let Some(colored) = &rendered.colored {
+        return colored.clone();
     }
     if let Some(fields) = &rendered.fields {
         return field_lines(fields, true);
@@ -1046,6 +1085,42 @@ mod tests {
             )
         );
         assert_eq!(style::strip(&colored), fields.text);
+    }
+
+    #[test]
+    fn a_feature_lists_names_are_bold_and_its_details_dim() {
+        let value = rows(
+            r#"{"type":"FeatureCollection","attribution":"NOTICE: terms","features":[{"type":"Feature","geometry":{"coordinates":[24.941822,60.167507],"type":"Point"},"properties":{"name":"Helsinki","feature_type":"place","full_address":"Helsinki, Uusimaa, Finland"}}]}"#,
+        );
+        let list = list_rendering(&value, Some("geocoder")).expect("renders");
+        let colored = styled(&list, true);
+        let (b, d, r) = (style::BOLD, style::DIM, style::RESET);
+        assert_eq!(
+            colored,
+            format!(
+                "1. {b}Helsinki{r} {d}(place){r}\n   Helsinki, Uusimaa, Finland\n   \
+                 {d}24.941822,60.167507{r}\n\n{d}NOTICE: terms{r}"
+            )
+        );
+        assert_eq!(style::strip(&colored), list.text);
+        assert_eq!(styled(&list, false), list.text);
+    }
+
+    #[test]
+    fn a_batchs_query_headers_are_bold_and_color_changes_no_text() {
+        let value = rows(
+            r#"{"batch":[
+                {"type":"FeatureCollection","attribution":"NOTICE: terms","features":[{"properties":{"name":"Helsinki"}}]},
+                {"type":"FeatureCollection","attribution":"NOTICE: terms","features":[{"properties":{"name":"Tampere"}}]}
+            ]}"#,
+        );
+        let list = list_rendering(&value, Some("geocoder")).expect("renders");
+        let colored = styled(&list, true);
+        assert!(
+            colored.starts_with(&format!("{}Query 1:{}", style::BOLD, style::RESET)),
+            "{colored:?}"
+        );
+        assert_eq!(style::strip(&colored), list.text);
     }
 
     #[test]

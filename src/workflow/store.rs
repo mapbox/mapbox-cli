@@ -2,7 +2,7 @@
 //!
 //! Nothing is bundled into the binary: a workflow runs only once it has been
 //! installed, from a local directory or from a GitHub repository laid out as
-//! `workflow/beta/<name>/`, into `<config dir>/workflows/<name>/`. A copy
+//! `workflow/<name>/`, into `<config dir>/workflows/<name>/`. A copy
 //! is taken rather than a link kept, so what runs is what was checked at
 //! install time and nothing edited since.
 //!
@@ -42,7 +42,7 @@ pub const DEFAULT_REF: &str = "main";
 
 /// The directory inside a repository that holds its workflows, one
 /// directory each.
-pub const REPO_PREFIX: &str = "workflow/beta";
+pub const REPO_PREFIX: &str = "workflow";
 
 /// A ceiling on what is read, from a tarball or a local directory. Far above
 /// any real workflow, and there so a hostile archive cannot make this
@@ -334,7 +334,7 @@ fn unsafe_entry(path: &Path) -> anyhow::Error {
     .into()
 }
 
-/// The files of `workflow/beta/<name>/` in a repository tarball.
+/// The files of `workflow/<name>/` in a repository tarball.
 fn extract(archive: &[u8], name: &str, repo: &str) -> Result<Files> {
     let decoder = flate2::read::GzDecoder::new(archive);
     let mut tar = tar::Archive::new(decoder.take(MAX_BYTES));
@@ -551,12 +551,9 @@ mod tests {
     fn only_the_named_workflow_comes_out() {
         let bytes = archive(&[
             ("mapbox-cli-abc/README.md", b"x"),
-            (
-                "mapbox-cli-abc/workflow/beta/copy-style/workflow.yaml",
-                b"a",
-            ),
-            ("mapbox-cli-abc/workflow/beta/copy-style/scripts/p.py", b"b"),
-            ("mapbox-cli-abc/workflow/beta/other/workflow.yaml", b"c"),
+            ("mapbox-cli-abc/workflow/copy-style/workflow.yaml", b"a"),
+            ("mapbox-cli-abc/workflow/copy-style/scripts/p.py", b"b"),
+            ("mapbox-cli-abc/workflow/other/workflow.yaml", b"c"),
         ]);
         let files = extract(&bytes, "copy-style", "mapbox/cli").unwrap();
         assert_eq!(
@@ -570,14 +567,14 @@ mod tests {
 
     #[test]
     fn a_missing_workflow_lists_what_is_there() {
-        let bytes = archive(&[("r-abc/workflow/beta/other/workflow.yaml", b"c")]);
+        let bytes = archive(&[("r-abc/workflow/other/workflow.yaml", b"c")]);
         let err = extract(&bytes, "copy-style", "mapbox/cli").unwrap_err();
         assert!(err.to_string().contains("It publishes: other."), "{err}");
     }
 
     #[test]
-    fn only_workflow_beta_is_published() {
-        let bytes = archive(&[("r-abc/workflow/copy-style/workflow.yaml", b"c")]);
+    fn a_file_directly_under_workflow_is_not_a_workflow() {
+        let bytes = archive(&[("r-abc/workflow/README.md", b"c")]);
         assert!(extract(&bytes, "copy-style", "mapbox/cli").is_err());
     }
 

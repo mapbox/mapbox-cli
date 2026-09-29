@@ -8,12 +8,12 @@ A workflow is a named, multi-step recipe of `mapbox` commands and scripts. None 
 
 ```
 workflow/
-  beta/                    # every workflow lives here
-    copy-style/            # the workflow's name
-      workflow.yaml        # required
-      scripts/             # the scripts its steps run
-        prepare.py
-      README.md            # optional
+  README.md                # this file
+  copy-style/              # the workflow's name
+    workflow.yaml          # required
+    scripts/               # the scripts its steps run
+      prepare.py
+    README.md              # optional
 ```
 
 - The directory name is the workflow's name: lower-case letters, digits and dashes, and the same as `name` in `workflow.yaml`.

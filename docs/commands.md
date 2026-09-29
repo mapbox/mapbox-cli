@@ -3934,7 +3934,7 @@ of these is `invalid_workflow`, with every problem listed at once.
 
 | Parameter | Effect |
 | --- | --- |
-| `SOURCE` | A workflow name, looked up in the repository's `workflow/beta/<name>/`, or a path to a local workflow directory: anything with a `/` or starting with `.`. |
+| `SOURCE` | A workflow name, looked up in the repository's `workflow/<name>/`, or a path to a local workflow directory: anything with a `/` or starting with `.`. |
 | `--repo` | GitHub repository to install from, as `OWNER/REPO`. Defaults to `mapbox/cli`. |
 | `--ref` | Branch, tag or commit to install from. Defaults to `main`. |
 | `--force` | Replace a workflow that is already installed. |
@@ -3959,7 +3959,7 @@ mapbox workflow install copy-style
 
 mapbox workflow install copy-style --ref v0.4.0
 
-mapbox workflow install ./workflow/beta/copy-style --force
+mapbox workflow install ./workflow/copy-style --force
 ```
 
 #### Outputs
@@ -3970,7 +3970,7 @@ mapbox workflow install ./workflow/beta/copy-style --force
 
 ```
 Installed `copy-style` from
-/Users/me/dev/cli/workflow/beta/copy-style
+/Users/me/dev/cli/workflow/copy-style
 into /Users/me/.mapbox/workflows/copy-style.
 Run it with `mapbox workflow run copy-style`.
 ```
@@ -3987,7 +3987,7 @@ Run it with `mapbox workflow run copy-style`.
   ],
   "name": "copy-style",
   "path": "/Users/me/.mapbox/workflows/copy-style",
-  "source": "/Users/me/dev/cli/workflow/beta/copy-style"
+  "source": "/Users/me/dev/cli/workflow/copy-style"
 }
 ```
 

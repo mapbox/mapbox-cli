@@ -2,7 +2,7 @@
 //!
 //! Nothing is bundled into the binary: a workflow runs only once it has been
 //! installed, from a local directory or from a GitHub repository laid out as
-//! `workflow/<stage>/<name>/`, into `<config dir>/workflows/<name>/`. A copy
+//! `workflow/beta/<name>/`, into `<config dir>/workflows/<name>/`. A copy
 //! is taken rather than a link kept, so what runs is what was checked at
 //! install time and nothing edited since.
 //!
@@ -40,12 +40,9 @@ const GITHUB_API: &str = "https://api.github.com";
 pub const DEFAULT_REPO: &str = "mapbox/cli";
 pub const DEFAULT_REF: &str = "main";
 
-/// The directory inside a repository that holds workflows, by stage.
-const REPO_PREFIX: &str = "workflow";
-
-/// The stages a workflow may be published under. `beta` is the only one so
-/// far; a `stable/` beside it needs nothing but an entry here.
-pub const STAGES: &[&str] = &["beta"];
+/// The directory inside a repository that holds its workflows, one
+/// directory each.
+pub const REPO_PREFIX: &str = "workflow/beta";
 
 /// A ceiling on what is read, from a tarball or a local directory. Far above
 /// any real workflow, and there so a hostile archive cannot make this
@@ -63,8 +60,6 @@ pub struct Meta {
     pub source: String,
     #[serde(default, rename = "ref")]
     pub git_ref: Option<String>,
-    #[serde(default)]
-    pub stage: Option<String>,
     pub installed_at: u64,
 }
 
@@ -198,11 +193,6 @@ pub fn read_local(dir: &Path) -> Result<Package> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let stage = dir
-        .parent()
-        .and_then(Path::file_name)
-        .map(|n| n.to_string_lossy().into_owned())
-        .filter(|parent| STAGES.contains(&parent.as_str()));
     let files = read_tree(&dir, &[])?;
     package(
         &name,
@@ -210,7 +200,6 @@ pub fn read_local(dir: &Path) -> Result<Package> {
         Meta {
             source: dir.display().to_string(),
             git_ref: None,
-            stage,
             installed_at: now(),
         },
     )
@@ -321,14 +310,13 @@ fn fetch_github_from(
         .take(MAX_BYTES)
         .read_to_end(&mut bytes)
         .map_err(|e| anyhow!("Could not read the archive from GitHub: {e}"))?;
-    let (stage, files) = extract(&bytes, name, repo)?;
+    let files = extract(&bytes, name, repo)?;
     package(
         name,
         files,
         Meta {
             source: format!("github:{repo}"),
             git_ref: Some(git_ref.to_string()),
-            stage: Some(stage),
             installed_at: now(),
         },
     )
@@ -346,13 +334,13 @@ fn unsafe_entry(path: &Path) -> anyhow::Error {
     .into()
 }
 
-/// The files of `workflow/<stage>/<name>/` in a repository tarball, and the
-/// stage it was found under.
-fn extract(archive: &[u8], name: &str, repo: &str) -> Result<(String, Files)> {
+/// The files of `workflow/beta/<name>/` in a repository tarball.
+fn extract(archive: &[u8], name: &str, repo: &str) -> Result<Files> {
     let decoder = flate2::read::GzDecoder::new(archive);
     let mut tar = tar::Archive::new(decoder.take(MAX_BYTES));
 
-    let mut found: std::collections::BTreeMap<(String, String), Files> = Default::default();
+    let mut files = Files::new();
+    let mut available: std::collections::BTreeSet<String> = Default::default();
     for entry in tar
         .entries()
         .context("The archive from GitHub is not readable as a tarball")?
@@ -381,66 +369,40 @@ fn extract(archive: &[u8], name: &str, repo: &str) -> Result<(String, Files)> {
             continue;
         };
         let mut parts = within.components();
-        let (Some(stage), Some(workflow)) = (parts.next(), parts.next()) else {
+        let Some(workflow) = parts.next() else {
             continue;
         };
         let relative: PathBuf = parts.collect();
         if relative.as_os_str().is_empty() {
             continue;
         }
-        let stage = stage.as_os_str().to_string_lossy().into_owned();
-        let workflow = workflow.as_os_str().to_string_lossy().into_owned();
-        if !STAGES.contains(&stage.as_str()) {
-            continue;
-        }
-        let key = (stage, workflow);
-        if key.1 != name {
-            found.entry(key).or_default();
+        if workflow.as_os_str() != name {
+            available.insert(workflow.as_os_str().to_string_lossy().into_owned());
             continue;
         }
         let mut bytes = vec![];
         entry
             .read_to_end(&mut bytes)
             .with_context(|| format!("Could not read {} out of the archive", path.display()))?;
-        found.entry(key).or_default().insert(relative, bytes);
+        files.insert(relative, bytes);
     }
 
-    let mut matching: Vec<(String, Files)> = vec![];
-    let mut available: Vec<String> = vec![];
-    for ((stage, workflow), files) in found {
-        if workflow == name {
-            matching.push((stage, files));
+    if files.is_empty() {
+        let listed = if available.is_empty() {
+            format!("{repo} publishes no workflows under `{REPO_PREFIX}/`.")
         } else {
-            available.push(format!("{workflow} ({stage})"));
-        }
-    }
-    match matching.len() {
-        1 => Ok(matching.pop().expect("one")),
-        0 => {
-            let listed = if available.is_empty() {
-                format!("{repo} publishes no workflows under `{REPO_PREFIX}/`.")
-            } else {
-                format!("It publishes: {}.", available.join(", "))
-            };
-            Err(CliError::new(
-                "workflow_not_found",
-                format!("{repo} has no workflow called `{name}`. {listed}"),
+            format!(
+                "It publishes: {}.",
+                available.into_iter().collect::<Vec<_>>().join(", ")
             )
-            .into())
-        }
-        _ => {
-            let stages: Vec<&str> = matching.iter().map(|(stage, _)| stage.as_str()).collect();
-            Err(CliError::new(
-                "ambiguous_workflow",
-                format!(
-                    "{repo} publishes `{name}` under more than one stage ({}), which it \
-                     should not.",
-                    stages.join(", ")
-                ),
-            )
-            .into())
-        }
+        };
+        return Err(CliError::new(
+            "workflow_not_found",
+            format!("{repo} has no workflow called `{name}`. {listed}"),
+        )
+        .into());
     }
+    Ok(files)
 }
 
 /// Writes `package` into place, replacing an existing install only when
@@ -596,8 +558,7 @@ mod tests {
             ("mapbox-cli-abc/workflow/beta/copy-style/scripts/p.py", b"b"),
             ("mapbox-cli-abc/workflow/beta/other/workflow.yaml", b"c"),
         ]);
-        let (stage, files) = extract(&bytes, "copy-style", "mapbox/cli").unwrap();
-        assert_eq!(stage, "beta");
+        let files = extract(&bytes, "copy-style", "mapbox/cli").unwrap();
         assert_eq!(
             files.keys().cloned().collect::<Vec<_>>(),
             [
@@ -611,12 +572,12 @@ mod tests {
     fn a_missing_workflow_lists_what_is_there() {
         let bytes = archive(&[("r-abc/workflow/beta/other/workflow.yaml", b"c")]);
         let err = extract(&bytes, "copy-style", "mapbox/cli").unwrap_err();
-        assert!(err.to_string().contains("other (beta)"), "{err}");
+        assert!(err.to_string().contains("It publishes: other."), "{err}");
     }
 
     #[test]
-    fn an_unknown_stage_is_not_published() {
-        let bytes = archive(&[("r-abc/workflow/experimental/copy-style/workflow.yaml", b"c")]);
+    fn only_workflow_beta_is_published() {
+        let bytes = archive(&[("r-abc/workflow/copy-style/workflow.yaml", b"c")]);
         assert!(extract(&bytes, "copy-style", "mapbox/cli").is_err());
     }
 

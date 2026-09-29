@@ -54,9 +54,9 @@ fn stdout_json(out: &Output) -> Value {
     })
 }
 
-/// Writes a workflow at `<home>/src/beta/<name>/` and returns its path.
+/// Writes a workflow at `<home>/src/<name>/` and returns its path.
 fn write_workflow(home: &Path, name: &str, yaml: &str, scripts: &[(&str, &str)]) -> PathBuf {
-    let dir = home.join("src").join("beta").join(name);
+    let dir = home.join("src").join(name);
     std::fs::create_dir_all(dir.join("scripts")).unwrap();
     std::fs::write(dir.join("workflow.yaml"), yaml).unwrap();
     for (file, body) in scripts {
@@ -152,7 +152,7 @@ fn a_run_carries_values_between_steps_and_prints_only_the_result() {
         "{stderr}"
     );
     assert!(stderr.contains("shouting"), "{stderr}");
-    assert!(stderr.contains("beta workflow"), "{stderr}");
+    assert!(stderr.contains("not recommended for use"), "{stderr}");
 }
 
 #[test]
@@ -247,7 +247,7 @@ fn install_replaces_only_with_force_and_uninstall_removes() {
     assert!(installed.join("workflow.yaml").is_file());
     assert!(installed.join(".install.json").is_file());
 
-    let source = home.join("src/beta/demo");
+    let source = home.join("src/demo");
     let again = run(&home, &["workflow", "install", source.to_str().unwrap()]);
     assert_eq!(again.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&again.stderr).contains("already installed"));
@@ -264,7 +264,6 @@ fn install_replaces_only_with_force_and_uninstall_removes() {
 
     let listed = stdout_json(&run(&home, &["workflow", "list", "-o", "json"]));
     assert_eq!(listed[0]["name"], "demo");
-    assert_eq!(listed[0]["stage"], "beta");
 
     let removed = run(&home, &["workflow", "uninstall", "demo", "-o", "json"]);
     assert!(

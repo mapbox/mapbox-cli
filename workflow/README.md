@@ -2,13 +2,13 @@
 
 A workflow is a named, multi-step recipe of `mapbox` commands and scripts. None ships inside the binary: `mapbox workflow install` copies one in, and `mapbox workflow run` runs only what is installed. See [docs/commands.md](../docs/commands.md#workflows) for the commands.
 
-Workflows and the `workflow` command are beta. The format below is `version: 1`, and may change before it is stable.
+> **Beta and in development. Not recommended for use.** The `workflow` command, the format below (`version: 1`) and the published workflows may change or be removed without notice. Every `mapbox workflow` subcommand says so on stderr.
 
 ## Layout
 
 ```
 workflow/
-  beta/                    # the stage; the only one so far
+  beta/                    # every workflow lives here
     copy-style/            # the workflow's name
       workflow.yaml        # required
       scripts/             # the scripts its steps run
@@ -17,7 +17,6 @@ workflow/
 ```
 
 - The directory name is the workflow's name: lower-case letters, digits and dashes, and the same as `name` in `workflow.yaml`.
-- The stage is the parent directory. A `beta` workflow says so on stderr when it is installed or run.
 - A workflow holds `workflow.yaml`, `README.md` and `scripts/`, and nothing else.
 - Every file in `scripts/` is run by some step. A workflow ships only the scripts it runs.
 

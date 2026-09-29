@@ -33,6 +33,8 @@ mapbox styles list
   - [`--schema`](#--schema)
   - [Confirmation and `--yes`](#confirmation-and---yes)
   - [Update notices](#update-notices)
+  - [Command history](#command-history)
+  - [Diagnostic logs](#diagnostic-logs)
   - [Privacy](#privacy)
 - [Uninstall](#uninstall)
 - [Contributing](#contributing)
@@ -96,9 +98,10 @@ checksum:
 curl -fsSL https://cli.mapbox.com/latest/manifest.json
 ```
 
-Five targets are published: `aarch64-apple-darwin`, `x86_64-apple-darwin`,
-`aarch64-unknown-linux-musl`, `x86_64-unknown-linux-musl` and
-`x86_64-pc-windows-msvc`. Pick yours, check it, then extract:
+Six targets are published: `aarch64-apple-darwin`, `x86_64-apple-darwin`,
+`aarch64-unknown-linux-musl`, `x86_64-unknown-linux-musl`,
+`x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`. Pick yours, check it,
+then extract:
 
 ```sh
 version=v0.3.0
@@ -131,8 +134,14 @@ Expand-Archive $artifact.file -DestinationPath .
 ```
 
 `Invoke-WebRequest` and `Get-FileHash` rather than `curl` and `sha256sum`:
-the first is an alias for something else in Windows PowerShell and neither of
-the others is guaranteed to be present.
+Windows PowerShell 5.1 — the edition that ships with Windows, `powershell.exe`
+— aliases `curl` to `Invoke-WebRequest`, whose flags are nothing like real
+curl's, so the commands above would silently run the wrong tool there even
+though `curl.exe` itself has shipped in `System32` since Windows 10 1803.
+PowerShell 7 (`pwsh`) dropped that alias, so `curl` there is the real thing —
+but 5.1 is still what a plain "Windows PowerShell" shortcut opens on a
+default install. `sha256sum` has the simpler problem: it isn't shipped at
+all outside WSL or Git Bash.
 
 Use `latest` in place of the version for whatever is current. Each archive
 holds one file, the `mapbox` executable.

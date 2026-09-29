@@ -37,7 +37,9 @@ const META_FILE: &str = ".install.json";
 /// answers with a redirect to a signed codeload URL, and `reqwest` drops the
 /// `Authorization` header when it follows a redirect to another host.
 const GITHUB_API: &str = "https://api.github.com";
-pub const DEFAULT_REPO: &str = "mapbox/cli";
+/// This repository. Not `REPO_URL`'s `mapbox/cli`: on GitHub that name
+/// redirects to a different repository.
+pub const DEFAULT_REPO: &str = "mapbox/mapbox-cli";
 pub const DEFAULT_REF: &str = "main";
 
 /// The directory inside a repository that holds its workflows, one

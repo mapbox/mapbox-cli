@@ -28,6 +28,7 @@ use crate::auth;
 use crate::config;
 use crate::http;
 use crate::output::{self, Mode};
+use crate::style;
 use crate::telemetry;
 use crate::update_check;
 
@@ -195,17 +196,17 @@ impl TokenReport {
         }
     }
 
-    fn line(&self) -> String {
-        if self.available {
+    fn field(&self) -> (&'static str, String) {
+        let value = if self.available {
             format!(
-                "Token:         available, from {} ({})",
+                "available, from {} ({})",
                 self.source.unwrap_or("unknown"),
                 self.usage.as_deref().unwrap_or("unrecognized prefix"),
             )
         } else {
-            "Token:         none available — run `mapbox auth login` or set MAPBOX_ACCESS_TOKEN"
-                .to_string()
-        }
+            "none available — run `mapbox auth login` or set MAPBOX_ACCESS_TOKEN".to_string()
+        };
+        ("Token:", value)
     }
 }
 
@@ -225,12 +226,13 @@ impl ProxyReport {
         ProxyReport { active }
     }
 
-    fn line(&self) -> String {
-        if self.active.is_empty() {
-            "Proxy:         none set".to_string()
+    fn field(&self) -> (&'static str, String) {
+        let value = if self.active.is_empty() {
+            "none set".to_string()
         } else {
-            format!("Proxy:         {}", self.active.join(", "))
-        }
+            self.active.join(", ")
+        };
+        ("Proxy:", value)
     }
 }
 
@@ -265,7 +267,7 @@ impl SwitchesReport {
         self.update_check_persisted && !self.update_check_env_opt_out && self.telemetry_allowed
     }
 
-    fn update_check_line(&self) -> String {
+    fn update_check_field(&self) -> (&'static str, String) {
         let reason = if self.update_check_env_opt_out {
             format!(" ({} is set)", update_check::NO_UPDATE_CHECK_ENV)
         } else if !self.telemetry_allowed {
@@ -275,17 +277,13 @@ impl SwitchesReport {
         } else {
             String::new()
         };
-        format!(
-            "Update check:  {}{reason}",
-            if self.update_check_on() { "on" } else { "off" }
-        )
+        let state = if self.update_check_on() { "on" } else { "off" };
+        ("Update check:", format!("{state}{reason}"))
     }
 
-    fn telemetry_line(&self) -> String {
-        format!(
-            "Telemetry:     {}",
-            if self.telemetry_allowed { "on" } else { "off" }
-        )
+    fn telemetry_field(&self) -> (&'static str, String) {
+        let state = if self.telemetry_allowed { "on" } else { "off" };
+        ("Telemetry:", state.to_string())
     }
 }
 
@@ -329,11 +327,12 @@ impl ConnectivityReport {
         }
     }
 
-    fn line(&self, host: &str) -> String {
-        match self.status {
-            Some(status) => format!("Reachable:     yes ({host} answered {status})"),
-            None => format!("Reachable:     no ({host})"),
-        }
+    fn field(&self, host: &str) -> (&'static str, String) {
+        let value = match self.status {
+            Some(status) => format!("yes ({host} answered {status})"),
+            None => format!("no ({host})"),
+        };
+        ("Reachable:", value)
     }
 }
 
@@ -348,18 +347,21 @@ struct Report {
 }
 
 impl Report {
-    fn text(&self, host: &str) -> String {
-        let mut lines = vec![
-            self.build.line(),
-            self.token.line(),
-            self.proxy.line(),
-            self.switches.update_check_line(),
-            self.switches.telemetry_line(),
+    fn text(&self, host: &str, color: bool) -> String {
+        let mut fields = vec![
+            self.token.field(),
+            self.proxy.field(),
+            self.switches.update_check_field(),
+            self.switches.telemetry_field(),
         ];
         if let Some(connectivity) = &self.connectivity {
-            lines.push(connectivity.line(host));
+            fields.push(connectivity.field(host));
         }
-        lines.join("\n")
+        format!(
+            "{}\n{}",
+            style::paint(&self.build.line(), style::BOLD, color),
+            output::field_lines(&fields, color)
+        )
     }
 }
 
@@ -386,7 +388,7 @@ pub fn run(
         connectivity: verify.then(|| ConnectivityReport::check(debug, &host, timeout)),
     };
 
-    let text = report.text(&host);
+    let text = report.text(&host, output::result_in_color());
     let json = serde_json::to_value(&report)?;
     output::emit(mode, &text, json)
 }

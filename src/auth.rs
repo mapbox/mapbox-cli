@@ -1109,16 +1109,17 @@ struct Identity<'a> {
 impl Identity<'_> {
     /// Takes `now` rather than reading the clock, so the expiry phrasing is
     /// testable — as [`time_until`] does, for the same reason.
-    fn text(&self, now: u64) -> String {
+    fn text(&self, now: u64, color: bool) -> String {
         let mut lines = vec![
-            format!(
-                "Account:  {}",
+            (
+                "Account:",
                 self.account
                     .as_deref()
                     .unwrap_or("unknown (the token carries no account claim)")
+                    .to_string(),
             ),
-            format!("Source:   {}", self.source_prose()),
-            format!("Token:    {}", self.token_prose(now)),
+            ("Source:", self.source_prose()),
+            ("Token:", self.token_prose(now)),
         ];
 
         // Only worth its own line when it is not the answer already given
@@ -1126,24 +1127,28 @@ impl Identity<'_> {
         // shadowed.
         if self.source != TokenSource::Login {
             if let Some(stored) = self.stored_login {
-                lines.push(format!(
-                    "Login:    `{stored}` stored under profile `{}`, not in use",
-                    self.profile
+                lines.push((
+                    "Login:",
+                    format!(
+                        "`{stored}` stored under profile `{}`, not in use",
+                        self.profile
+                    ),
                 ));
             }
         }
 
         if let Some(verified) = &self.verified {
-            lines.push(format!(
-                "Verified: {}",
+            lines.push((
+                "Verified:",
                 verified
                     .get("code")
                     .and_then(Value::as_str)
                     .unwrap_or("checked against the Mapbox API")
+                    .to_string(),
             ));
         }
 
-        lines.join("\n")
+        output::field_lines(&lines, color)
     }
 
     fn source_prose(&self) -> String {
@@ -1384,7 +1389,11 @@ pub fn whoami(
         verified,
     };
 
-    output::emit(mode, &identity.text(now()), identity.json())
+    output::emit(
+        mode,
+        &identity.text(now(), output::result_in_color()),
+        identity.json(),
+    )
 }
 
 /// The profile a result should report. `--profile` is optional everywhere;
@@ -2577,7 +2586,7 @@ mod tests {
             verified: None,
         };
 
-        let text = identity.text(1_000);
+        let text = identity.text(1_000, false);
         assert!(text.contains("Account:  env-account"), "{text}");
         assert!(text.contains(CLAP_TOKEN_ENV), "{text}");
         assert!(
@@ -2612,7 +2621,7 @@ mod tests {
             verified: Some(json!({ "code": "TokenValid" })),
         };
 
-        let text = identity.text(1_000);
+        let text = identity.text(1_000, false);
         assert!(!text.contains("not in use"), "{text}");
         assert!(
             text.contains("mapbox auth login (profile `work`)"),
@@ -2622,7 +2631,7 @@ mod tests {
             text.contains("temporary (tk), expires in 1 hours"),
             "{text}"
         );
-        assert!(text.contains("Verified: TokenValid"), "{text}");
+        assert!(text.contains("Verified:  TokenValid"), "{text}");
 
         // No variable was read, so none is named.
         assert_eq!(identity.json()["env_var"], Value::Null);

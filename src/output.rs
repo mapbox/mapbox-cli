@@ -22,6 +22,8 @@ use clap::parser::ValueSource;
 use clap::ArgMatches;
 use serde_json::{json, Value};
 
+use crate::style;
+
 /// `--id`'s arg id. Not `id`: see the comment where it is declared.
 pub const FILTER_ARG: &str = "filter-id";
 
@@ -432,7 +434,7 @@ pub fn emit_value(
 
     match list_rendering(value, service).or_else(|| render_human(value)) {
         Some(rendered) => {
-            write_stdout(&rendered.text)?;
+            write_stdout(&styled(&rendered, result_in_color()))?;
             // Advice about the result, so stderr — a `-o text > file` keeps
             // the table alone, and a reader still sees where to go next.
             // A blank line first. These are notes about the table, not more
@@ -491,6 +493,11 @@ fn list_rendering(value: &Value, service: Option<&str>) -> Option<Rendered> {
 struct Rendered {
     text: String,
     shortened: bool,
+    /// Whether the first line is a table's column names.
+    header: bool,
+    /// The labels and values of a field list, kept so they can be drawn
+    /// again with the labels highlighted.
+    fields: Option<Vec<(String, String)>>,
     /// The first row's key, when the table has one — a real value for the
     /// `--id` suggestion, so the line can be copied and edited rather than
     /// filled in from scratch.
@@ -844,7 +851,7 @@ fn tilequery_feature_rows(value: &Value) -> Option<Vec<Value>> {
 /// rejects is a `-o json` away.
 ///
 /// The `tilequery` object's leftovers come in on dotted keys
-/// (`tilequery.band`), the same shape `render_fields` flattens one level of
+/// (`tilequery.band`), the same shape `field_pairs` flattens one level of
 /// nesting onto — a tileset may carry a top-level `zoom` or `geometry` of its
 /// own, and a bare key would let one quietly overwrite the other.
 ///
@@ -921,7 +928,7 @@ fn tilequery_row(feature: &Value) -> Value {
     // The `tilequery` object's own leftovers — `band`, `zoom`, `units` on a
     // raster-array result — sit a level down and read the same way as the
     // top-level ones, so they are flattened in beside them, on the dotted
-    // keys `render_fields` already flattens one level of nesting onto.
+    // keys `field_pairs` already flattens one level of nesting onto.
     // Qualifying them is not cosmetic: a tileset is free to carry a top-level
     // attribute named `geometry` or `zoom` too, and a bare key let one
     // silently overwrite the other on the way in.
@@ -962,6 +969,8 @@ fn render_feature_list(rows: &[Value]) -> Rendered {
     if rows.is_empty() {
         return Rendered {
             text: "(none)".to_string(),
+            header: false,
+            fields: None,
             shortened: false,
             identifier: None,
         };
@@ -1005,6 +1014,8 @@ fn render_feature_list(rows: &[Value]) -> Rendered {
     // against either.
     Rendered {
         text: out,
+        header: false,
+        fields: None,
         shortened: false,
         identifier: None,
     }
@@ -1055,6 +1066,8 @@ fn render_batch_feature_list(value: &Value) -> Option<Rendered> {
 
     Some(Rendered {
         text: out,
+        header: false,
+        fields: None,
         shortened: false,
         identifier: None,
     })
@@ -1079,8 +1092,10 @@ fn render_human(value: &Value) -> Option<Rendered> {
                 return Some(table);
             }
             // Field lists never clip: they have the room.
-            render_fields(value).map(|text| Rendered {
-                text,
+            field_pairs(value).map(|fields| Rendered {
+                text: field_lines(&fields, false),
+                header: false,
+                fields: Some(fields),
                 shortened: false,
                 identifier: None,
             })
@@ -1105,6 +1120,8 @@ fn render_table(rows: &[Value]) -> Option<Rendered> {
     if rows.is_empty() {
         return Some(Rendered {
             text: "(none)".to_string(),
+            header: false,
+            fields: None,
             shortened: false,
             identifier: None,
         });
@@ -1160,19 +1177,21 @@ fn render_table(rows: &[Value]) -> Option<Rendered> {
 
     Some(Rendered {
         text: out,
+        header: true,
+        fields: None,
         shortened,
         identifier,
     })
 }
 
-/// A single object as aligned `name  value` lines.
+/// A single object as the `(name, value)` pairs of a field list.
 ///
 /// One level of nesting is flattened onto dotted keys, because dropping it
 /// loses the answer: `accounts retrieve-token` puts everything worth reading
 /// inside `token`, and a scalars-only view rendered the whole response as
 /// `code  TokenValid`. Deeper than that, or an array, and the structure is
 /// the information — those fall back to JSON.
-fn render_fields(value: &Value) -> Option<String> {
+fn field_pairs(value: &Value) -> Option<Vec<(String, String)>> {
     let object = value.as_object()?;
     let mut fields: Vec<(String, String)> = Vec::new();
 
@@ -1202,12 +1221,30 @@ fn render_fields(value: &Value) -> Option<String> {
         return None;
     }
 
-    let width = fields.iter().map(|(k, _)| k.chars().count()).max()?;
-    let lines: Vec<String> = fields
+    Some(fields)
+}
+
+/// Aligned `label  value` lines, with the labels in bold.
+///
+/// Every key/value list a person reads goes through here — a response's
+/// fields, `auth whoami`, `doctor` — so they align and highlight the same
+/// way. Padding is added outside the escapes, so color never shifts a
+/// column.
+pub fn field_lines<L: AsRef<str>>(fields: &[(L, String)], color: bool) -> String {
+    let width = fields
         .iter()
-        .map(|(k, v)| format!("{k:width$}  {v}"))
-        .collect();
-    Some(lines.join("\n"))
+        .map(|(label, _)| label.as_ref().chars().count())
+        .max()
+        .unwrap_or(0);
+    fields
+        .iter()
+        .map(|(label, value)| {
+            let label = label.as_ref();
+            let pad = " ".repeat(width - label.chars().count() + 2);
+            format!("{}{pad}{value}", style::paint(label, style::BOLD, color))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// A list of scalars on one line. One row of a table cannot afford this, but
@@ -1544,13 +1581,50 @@ fn print_tips(tips: &[String]) {
         return;
     }
     eprintln!();
+    for line in tip_lines(tips, style::enabled(std::io::stderr().is_terminal())) {
+        eprintln!("{line}");
+    }
+}
+
+/// The lines [`print_tips`] writes, colored or not. The label is bold and the
+/// advice dimmed, so the tips read as secondary to the result above them.
+fn tip_lines(tips: &[String], color: bool) -> Vec<String> {
     if let [tip] = tips {
-        eprintln!("Tip: {tip}");
-    } else {
-        eprintln!("Tips:");
-        for tip in tips {
-            eprintln!("  {tip}");
-        }
+        return vec![format!(
+            "{} {}",
+            style::paint("Tip:", style::BOLD, color),
+            style::dim_prose(tip, color)
+        )];
+    }
+    std::iter::once(style::paint("Tips:", style::BOLD, color))
+        .chain(
+            tips.iter()
+                .map(|tip| format!("  {}", style::dim_prose(tip, color))),
+        )
+        .collect()
+}
+
+/// Whether a result written to stdout may carry color. Only a terminal:
+/// `-o text > file` must leave a file with no escapes in it.
+pub fn result_in_color() -> bool {
+    style::enabled(std::io::stdout().is_terminal())
+}
+
+/// The rendered text, with a table's column names or a field list's labels
+/// in bold.
+fn styled(rendered: &Rendered, color: bool) -> String {
+    if !color {
+        return rendered.text.clone();
+    }
+    if let Some(fields) = &rendered.fields {
+        return field_lines(fields, true);
+    }
+    if !rendered.header {
+        return rendered.text.clone();
+    }
+    match rendered.text.split_once('\n') {
+        Some((header, rows)) => format!("{}\n{rows}", style::paint(header, style::BOLD, true)),
+        None => style::paint(&rendered.text, style::BOLD, true),
     }
 }
 
@@ -1603,6 +1677,54 @@ mod tests {
 
     fn rows(json: &str) -> Value {
         serde_json::from_str(json).expect("test fixture parses")
+    }
+
+    #[test]
+    fn tips_in_color_say_what_they_say_in_plain_text() {
+        let tips = vec![
+            "Values are shortened to fit; `-o json` prints each row whole.".to_string(),
+            "To see one row: mapbox styles get <style-id>".to_string(),
+        ];
+        let plain = tip_lines(&tips, false);
+        assert_eq!(plain[0], "Tips:");
+        let colored = tip_lines(&tips, true);
+        assert_eq!(colored[0], format!("{}Tips:{}", style::BOLD, style::RESET));
+        let stripped: Vec<String> = colored.iter().map(|line| style::strip(line)).collect();
+        assert_eq!(stripped, plain);
+
+        let one = vec!["`-o json` for the response.".to_string()];
+        assert_eq!(
+            style::strip(&tip_lines(&one, true)[0]),
+            tip_lines(&one, false)[0]
+        );
+    }
+
+    #[test]
+    fn only_a_tables_first_line_is_bold() {
+        let table =
+            render_table(rows(r#"[{"id":"a","name":"x"}]"#).as_array().unwrap()).expect("renders");
+        let colored = styled(&table, true);
+        let (header, rest) = colored.split_once('\n').expect("two lines");
+        assert!(header.starts_with(style::BOLD) && header.ends_with(style::RESET));
+        assert!(!rest.contains('\x1b'), "{rest:?}");
+        assert_eq!(style::strip(&colored), table.text);
+        assert_eq!(styled(&table, false), table.text);
+    }
+
+    #[test]
+    fn a_field_lists_labels_are_bold_and_stay_aligned() {
+        let fields = render_human(&rows(r#"{"id":"a","owner":"x"}"#)).expect("renders");
+        assert_eq!(fields.text, "id     a\nowner  x");
+        let colored = styled(&fields, true);
+        assert_eq!(
+            colored,
+            format!(
+                "{b}id{r}     a\n{b}owner{r}  x",
+                b = style::BOLD,
+                r = style::RESET
+            )
+        );
+        assert_eq!(style::strip(&colored), fields.text);
     }
 
     /// Two commands under one `Next:` have to read as two commands, not as

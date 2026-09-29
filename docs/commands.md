@@ -532,6 +532,7 @@ either.
 | `--profile <name>` | Which stored credentials to use. |
 | `--output`, `-o` | `auto` \| `text` \| `json`. |
 | `--id <value>` | On a command that returns a list, print just the row with that `id` or `name`. |
+| `--quiet`, `-q` | Don't print the `mapbox · v<version>` banner, which goes to stderr and only when stderr is a terminal. Also `MAPBOX_QUIET`. |
 | `--timeout <seconds>` | How long one request may take, connection included. Defaults to 60 seconds, or 900 for a body read from `--file` or from a `--data @<path>`/`@-`. Also `MAPBOX_TIMEOUT`. |
 
 An operation with a request body takes `--data`/`-d` when that body is text
@@ -3312,9 +3313,9 @@ mapbox config list
 <tr><td>
 
 ```
-update-check	on
-history	on
-log	off
+update-check  on
+history       on
+log           off
 ```
 
 </td><td>

@@ -383,6 +383,11 @@ fn leaf<'a>(
             // Its forwarded words come back as subcommands of their own.
             return (path, command.find_subcommand(name).unwrap_or(command), sub);
         }
+        // The word after `workflow run` names a workflow on this machine, and
+        // a record keeps command paths, never what was typed as a value.
+        if path == [crate::workflow::COMMAND, "run"] {
+            return (path, command.find_subcommand(name).unwrap_or(command), sub);
+        }
         match command.find_subcommand(name) {
             Some(found) => command = found,
             None => break,
@@ -414,7 +419,8 @@ fn tree_path(app: &Command, words: impl IntoIterator<Item = String>) -> Vec<Stri
         match command.find_subcommand(&word) {
             Some(found) => {
                 path.push(found.get_name().to_string());
-                if found.get_name() == TILESETS {
+                // See `leaf`: what follows `workflow run` is a workflow's name.
+                if found.get_name() == TILESETS || path == [crate::workflow::COMMAND, "run"] {
                     break;
                 }
                 command = found;

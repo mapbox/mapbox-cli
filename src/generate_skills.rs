@@ -135,8 +135,21 @@ pub fn command() -> Command {
         .arg(executor::dry_run_arg(DRY_RUN_HELP))
 }
 
+/// `--schema`'s walk, without the commands a skill must not teach.
+///
+/// `workflow` is beta, in development and not recommended for use, and an
+/// agent that reads about a command in its skill takes it as one to reach
+/// for. `--schema` still lists it, with the notice in its description.
+fn skill_schema(app: &Command, specs: &[ServiceSpec]) -> schema::Schema {
+    let mut schema = schema::build(app, specs, &[]);
+    schema
+        .commands
+        .retain(|entry| entry.service != crate::workflow::COMMAND);
+    schema
+}
+
 pub fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -> Result<()> {
-    let schema = schema::build(app, specs, &[]);
+    let schema = skill_schema(app, specs);
     let header = Header::new(requested_services(&schema, matches)?);
     let files = render(app, &schema, &header);
 
@@ -1475,7 +1488,7 @@ mod tests {
     fn generated() -> (Command, Vec<ServiceSpec>, Vec<GeneratedFile>) {
         let specs = specs();
         let app = crate::build_app(&specs);
-        let schema = schema::build(&app, &specs, &[]);
+        let schema = skill_schema(&app, &specs);
         let header = Header::new(None);
         let files = render(&app, &schema, &header);
         (app, specs, files)
@@ -1574,10 +1587,18 @@ mod tests {
         // The same walk `schema::every_command_in_the_tree_is_described`
         // does, for the same reason: the command tree is the authority on
         // what a command is.
-        let mut runnable = crate::runnable_commands(&app);
+        // Less `workflow`, which `skill_schema` leaves out on purpose.
+        let mut runnable: Vec<String> = crate::runnable_commands(&app)
+            .into_iter()
+            .filter(|command| !command.starts_with("mapbox workflow "))
+            .collect();
         runnable.sort();
 
         assert_eq!(described, runnable);
+        assert!(
+            !described.iter().any(|command| command.contains("workflow")),
+            "the skill teaches `workflow`, which is not recommended for use"
+        );
 
         let mut unique = described.clone();
         unique.dedup();
@@ -1731,7 +1752,7 @@ mod tests {
         // And through the real renderer, where a wrapper that swallowed part
         // of the body would still pass the two assertions above.
         let (app, specs, files) = generated();
-        let schema = schema::build(&app, &specs, &[]);
+        let schema = skill_schema(&app, &specs);
         let real_body = render_body(&app, &schema, &by_service(&schema, &header), &header);
         for name in ["SKILL.md", "AGENTS.md"] {
             let file = files
@@ -1844,7 +1865,7 @@ mod tests {
     fn a_service_filter_narrows_the_skill_and_is_recorded() {
         let specs = specs();
         let app = crate::build_app(&specs);
-        let schema = schema::build(&app, &specs, &[]);
+        let schema = skill_schema(&app, &specs);
 
         let header = Header::new(Some(vec!["styles".to_string()]));
         let files = render(&app, &schema, &header);
@@ -1881,7 +1902,7 @@ mod tests {
     fn an_unknown_service_is_an_error_that_lists_the_real_ones() {
         let specs = specs();
         let app = crate::build_app(&specs);
-        let schema = schema::build(&app, &specs, &[]);
+        let schema = skill_schema(&app, &specs);
 
         let matches = app
             .clone()
@@ -2023,7 +2044,7 @@ mod tests {
     fn positionals_keep_their_order_and_flags_are_sorted() {
         let (_, specs, _) = generated();
         let app = crate::build_app(&specs);
-        let schema = schema::build(&app, &specs, &[]);
+        let schema = skill_schema(&app, &specs);
 
         let mut checked = 0usize;
         for entry in &schema.commands {
@@ -2062,7 +2083,7 @@ mod tests {
     fn a_table_names_a_value_rather_than_suggesting_one() {
         let (_, specs, files) = generated();
         let app = crate::build_app(&specs);
-        let schema = schema::build(&app, &specs, &[]);
+        let schema = skill_schema(&app, &specs);
 
         let output = schema
             .global_options
@@ -2110,7 +2131,7 @@ mod tests {
     fn a_description_is_cut_only_when_it_would_not_fit() {
         let (_, specs, _) = generated();
         let app = crate::build_app(&specs);
-        let schema = schema::build(&app, &specs, &[]);
+        let schema = skill_schema(&app, &specs);
 
         let output = schema
             .global_options

@@ -19,6 +19,34 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox workflow`, beta and in development, not recommended for use:
+  install and run workflows, which are named, multi-step recipes of
+  `mapbox` commands and scripts defined in a `workflow.yaml`. `install` copies one from a local directory or from a
+  GitHub repository's `workflow/<name>/` (by default `mapbox/mapbox-cli`;
+  `GH_TOKEN`/`GITHUB_TOKEN` for a private one) into `~/.mapbox/workflows/`,
+  and `list`, `show`, `run` and `uninstall` work on what is installed.
+  `run` takes each of the workflow's inputs as a flag, as in
+  `mapbox workflow run copy-style --style-id <id> --from-profile source
+  --to-profile target`. `run --dry-run` runs only the steps a workflow
+  marks `dry_run`, which write nothing, so the plan can show real data. At a
+  terminal each step shows a spinner, the details its script reports on
+  stderr (a `::progress ` line updates the spinner's text, a `::warn ` line
+  is a warning, listed again at the end), and `✓` or `✗` with the time it
+  took; off a terminal, each step is a plain `[n/total]` line followed by
+  its details. `--quiet` drops the details but keeps warnings. A workflow's
+  optional `result` template is what text mode prints; `-o json` prints its
+  outputs. A command step's `save: <file>` keeps its stdout, such as a
+  style's ZIP, as a file for later steps, in a working directory removed
+  when the run ends; a command step may be marked `dry_run` when its command
+  changes nothing. The
+  generated agent skill leaves `workflow` out. The first one published is
+  `copy-style`, which copies a style between accounts with its custom fonts
+  and icons, and on a partial failure lists what it created and the
+  commands that remove it. The command, the `version: 1` format and the published
+  workflows may change or be removed without notice, and every `workflow`
+  subcommand says so on stderr. Nothing changes for a script that does not
+  use them.
+
 - New command: `mapbox styles download <style-id> > style.zip` saves a
   style as a ZIP with its sprite icons and custom fonts. `mapbox auth login`
   now also asks for the `styles:download` scope it needs, so log in again

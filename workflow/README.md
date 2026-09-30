@@ -1,0 +1,165 @@
+# Workflows
+
+A workflow is a named, multi-step recipe of `mapbox` commands and scripts. None ships inside the binary: `mapbox workflow install` copies one in, and `mapbox workflow run` runs only what is installed. See [docs/commands.md](../docs/commands.md#workflows) for the commands.
+
+> **Beta and in development. Not recommended for use.** The `workflow` command, the format below (`version: 1`) and the published workflows may change or be removed without notice. Every `mapbox workflow` subcommand says so on stderr.
+
+## Layout
+
+```
+workflow/
+  README.md                # this file
+  copy-style/              # the workflow's name
+    workflow.yaml          # required
+    scripts/               # the scripts its steps run
+      copy_style.py
+    README.md              # optional
+```
+
+- The directory name is the workflow's name: lower-case letters, digits and dashes, and the same as `name` in `workflow.yaml`.
+- A workflow holds `workflow.yaml`, `README.md` and `scripts/`, and nothing else.
+- Every file in `scripts/` is run by some step. A workflow ships only the scripts it runs.
+
+The same rules apply to any workflow `install` reads, from this repository, another one (`--repo OWNER/REPO`, laid out the same way) or a local directory. `every_published_workflow_is_valid` in `src/workflow/mod.rs` holds this directory to them in `cargo test`.
+
+## `workflow.yaml`
+
+```yaml
+version: 1                        # required; the schema version
+name: copy-style                  # required; the directory's name
+summary: Copy a style from one account to another   # required; one line
+description: |                    # optional; shown by `workflow show`
+  Longer text.
+
+inputs:                           # optional; each one is a flag of `run`
+  style_id:
+    type: string                  # string | number | boolean
+    required: true
+    description: ID of the style to copy
+  name:
+    type: string                  # not required and no default: null
+  zoom:
+    type: number
+    default: 12
+
+steps:                            # required; run in order, first failure stops
+  - id: source                    # required; lower-case, digits, underscores
+    name: Read the style          # optional; the progress line
+    command: styles get           # a mapbox command
+    args:                         # names as `mapbox --schema` lists them
+      style-id: ${{ inputs.style_id }}
+      profile: work               # global options too
+      use-login: true             # a flag takes true or false
+    dry_run: true                 # optional; also runs under --dry-run (a command that changes nothing)
+
+  - id: bundle
+    command: styles download
+    args: { style-id: "${{ inputs.style_id }}", profile: work, use-login: true }
+    save: style.zip               # optional; keep stdout as a file, for a binary response
+
+  - id: body
+    script: prepare.py            # a file in scripts/
+    interpreter: python3          # optional for .sh, .py and .js
+    dry_run: true                 # optional; runs under --dry-run too, told so in its environment
+    args: ["--zoom", "${{ inputs.zoom }}"]
+    stdin:                        # optional; sent to the step as JSON
+      style: ${{ steps.source.output }}
+
+outputs:                          # optional; the default is the last step's output
+  id: ${{ steps.source.output.id }}
+
+result: |                         # optional; what text mode prints instead of the outputs
+  Created ${{ steps.source.output.id }}.
+```
+
+A step is a `command` or a `script`, never both.
+
+### Inputs as flags
+
+`mapbox workflow run <name>` takes each input as a flag, spelled with dashes: `style_id` is `--style-id`, and `--style_id` works too. A required input is a required flag, a number must parse as one, and a boolean is a flag that means true on its own (`--overwrite` or `--overwrite false`). `mapbox workflow run <name> --help` lists them.
+
+An input cannot be named after an option every command already has, such as `profile`, `output` or `dry_run`. `install` refuses a workflow that does.
+
+### `description`
+
+`workflow show` renders it in a fixed layout, after the name and summary and before the inputs and steps. It reads a small subset of Markdown, so every workflow's page looks the same:
+
+- A blank line separates paragraphs. A paragraph is reflowed to 80 columns, so line breaks inside one do not matter.
+- A line indented by two or more spaces is a command. It is highlighted and kept exactly as written.
+- A line starting with `- ` is a list item. An indented line under an item continues the item.
+- `code` spans are highlighted.
+
+Anything else is shown as a plain paragraph. There is no other formatting: no headings, links or emphasis.
+
+### Expressions
+
+`${{ inputs.<name> }}` and `${{ steps.<id>.output }}`, followed by any number of `.key` and `[index]`. Nothing else: no operators and no functions. Logic belongs in a script.
+
+- A value that is exactly one expression keeps its JSON type, so a whole object can go to `stdin` and a number stays a number.
+- An expression inside a longer string is written in as text. One that is null there is an error rather than an empty string.
+- An expression may name only a declared input or an earlier step. That is checked before any step runs.
+
+### Command steps
+
+Each command step runs this `mapbox` binary again, with `--output json`, and its JSON result becomes the step's output. It resolves its token, timeouts and path encoding exactly as the same command typed by hand would, and appears in `mapbox history` on its own.
+
+- `args` keys are the argument names `mapbox --schema <command>` lists: a flag's long name, or a positional's name. Global options such as `profile`, `username` and `use-login` are accepted too.
+- `output`, `quiet`, `schema` and `dry-run` belong to the runner. `token` is refused, because a token written into a workflow is a secret in a file: log in under a profile and name the `profile` instead.
+- Global options given to `mapbox workflow run` (`--profile`, `--username`, `--use-login`, `--timeout`, `--yes`, `--debug`, `--token`) reach every command step that does not set its own.
+- `stdin` is sent to the command, for `--data @-`. Without it, the command reads the terminal, which is where a confirmation prompt gets its answer.
+- A step cannot run `mapbox workflow`.
+- `save: <file name>` keeps the command's stdout as that file in the run's working directory instead of reading it as the output, which is how a binary response, such as `styles download`'s ZIP, reaches a later step. The step's output is then `{"path": …, "bytes": …}`. The directory is removed when the run ends, however it ends.
+
+### Script steps
+
+A script runs from the installed copy of `scripts/`, in the directory `mapbox workflow run` was started from.
+
+- It gets `args` as its arguments and `stdin` on standard input, as JSON unless the value is a string. With no `stdin` it reads nothing.
+- Whatever it writes to stdout is its output: JSON when it parses as JSON, the text otherwise. It reports to the person running it on stderr, as below.
+- A non-zero exit stops the workflow.
+- `MAPBOX_CLI` is the path to this `mapbox` binary, for a script that runs commands of its own. `MAPBOX_WORKFLOW_ROOT` is the installed workflow's directory. `MAPBOX_WORKFLOW_WORKDIR` is the run's working directory, where a `save`d file is; anything a script writes there is removed with it when the run ends.
+- Prefer a command step where one will do, so `workflow show` and `install` can see the command. A script is for what a step cannot do: a loop, or logic.
+- The interpreter must be installed on the machine. `.sh` runs under `sh`, `.py` under `python3` and `.js` under `node`, and any other extension needs `interpreter`.
+
+### Reporting progress
+
+The runner shows every step the same way, so a script only says what it is doing and what it did:
+
+| A stderr line | Is | Shown |
+| --- | --- | --- |
+| `::progress uploading icons 150/561` | What the step is doing now | At a terminal, beside the spinner, until the next one replaces it. Dropped anywhere else. |
+| `::warn Source uses a tileset that is not copied` | Something the person should act on | Under the step (`! …` at a terminal, `warning: …` elsewhere), and listed again after the last step. Also under `--quiet`. |
+| anything else, such as `Uploaded font Yellow Banana Regular` | A detail: what the step did | Under the step. Not under `--quiet`. |
+
+At a terminal a step looks like this, and the last line becomes `✓ <time>` or `✗ failed after <time>` when it ends:
+
+```
+▸ Copy the fonts, the style and its icons
+    Uploaded font Yellow Banana Regular
+    Created style target-account/ckcopy000000000000000001
+  ⠹ uploading icons 150/561
+```
+
+In a pipe, a CI log or anywhere stderr is not a terminal, each step is one `[n/total]` line followed by its details, with no escape codes. A command step is never animated: it keeps the terminal, so a confirmation prompt still reaches the person running it.
+
+`mapbox workflow run --quiet` (or `MAPBOX_QUIET=1`) keeps each step's title, how it ended and its warnings, and drops its details.
+
+### `result`
+
+What `mapbox workflow run` prints on stdout in text mode, in place of the outputs as a list of fields. It is a template over the same `${{ inputs.… }}` and `${{ steps.… }}` expressions, checked the same way, and a line break in it is kept:
+
+```yaml
+result: |
+  Copied the style to ${{ steps.copy.output.owner }} as ${{ steps.copy.output.id }}.
+  Open it in Studio: https://studio.mapbox.com/styles/${{ steps.copy.output.owner }}/${{ steps.copy.output.id }}/edit/
+```
+
+`-o json` ignores it and prints the outputs, which is what a script should read. `--dry-run` does not resolve it, since the steps it names may not have run.
+
+### Dry runs
+
+`mapbox workflow run --dry-run` skips every step unless it is marked `dry_run: true`. A marked step runs for real, so its output is under `results` in the plan and a later marked step can plan with real data:
+
+- A marked command step runs as it would anyway, so it must be a command that changes nothing: one without a `--dry-run` of its own, such as `styles get`, `styles download` or `fonts list`. `install` refuses a writing command marked `dry_run`.
+- A marked script step runs with `MAPBOX_WORKFLOW_DRY_RUN=1` in its environment and must write nothing then: read what it needs, and say on stderr what it would do. That is the script's promise; the runner cannot check it.
+- A marked step can read only the outputs of earlier marked steps, since the others do not run. `install` refuses one that reads any other.

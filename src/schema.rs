@@ -387,6 +387,14 @@ fn commands(app: &Command, specs: &[ServiceSpec], path: &[String]) -> Vec<Comman
         ));
     }
 
+    if wants(crate::workflow::COMMAND) {
+        out.extend(builtin_commands(
+            app,
+            crate::workflow::COMMAND,
+            wanted_command,
+        ));
+    }
+
     if wants(crate::doctor::COMMAND) && wanted_command.is_none() {
         out.extend(builtin_leaf_command(app, crate::doctor::COMMAND));
     }

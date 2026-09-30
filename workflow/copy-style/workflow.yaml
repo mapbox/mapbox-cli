@@ -1,0 +1,115 @@
+version: 1
+name: copy-style
+summary: Copy a style, with its fonts and icons, from one account to another
+description: |
+  Downloads a style with one credential profile and recreates it with
+  another: its custom fonts, the style itself, and its icons. Log in to each
+  account first, under its own profile:
+
+    mapbox auth login --profile source
+    mapbox auth login --profile target
+
+  The source account needs access to the style download API, which Mapbox
+  grants on request. Fonts the target account already has are not uploaded
+  again.
+
+  These stay with the source account, and the copy can use them only if the
+  target account can read them:
+
+  - tilesets the style's sources use
+  - imported styles
+
+  The `warnings` output lists each one the style refers to.
+
+  If a step fails partway, nothing is removed: the error lists what was
+  created and the commands that remove it.
+
+inputs:
+  style_id:
+    type: string
+    required: true
+    description: ID of the style to copy
+  from_profile:
+    type: string
+    required: true
+    description: Profile logged in to the account that owns the style
+  to_profile:
+    type: string
+    required: true
+    description: Profile logged in to the account to copy it into
+  name:
+    type: string
+    description: Name for the copy. Defaults to the original's name
+
+steps:
+  # The first four are mapbox commands. Each runs as its profile's login and
+  # names that login's account, so a MAPBOX_ACCESS_TOKEN or MAPBOX_USERNAME in
+  # the environment cannot point it at another account.
+  - id: source_login
+    name: Check the source login
+    command: auth status
+    args:
+      profile: ${{ inputs.from_profile }}
+    dry_run: true
+
+  - id: target_login
+    name: Check the target login
+    command: auth status
+    args:
+      profile: ${{ inputs.to_profile }}
+    dry_run: true
+
+  - id: download
+    name: Download the style
+    command: styles download
+    args:
+      style-id: ${{ inputs.style_id }}
+      profile: ${{ inputs.from_profile }}
+      use-login: true
+      username: ${{ steps.source_login.output.stored_login }}
+    save: style.zip
+    dry_run: true
+
+  - id: target_fonts
+    name: List the target account's fonts
+    command: fonts list
+    args:
+      profile: ${{ inputs.to_profile }}
+      use-login: true
+      username: ${{ steps.target_login.output.stored_login }}
+    dry_run: true
+
+  # Scripts from here: the copy loops over fonts and icon batches, which a
+  # workflow step does not.
+  - id: plan
+    name: Plan the copy
+    script: copy_style.py
+    args: [plan]
+    dry_run: true
+    stdin:
+      archive: ${{ steps.download.output.path }}
+      target_fonts: ${{ steps.target_fonts.output }}
+      source_owner: ${{ steps.source_login.output.stored_login }}
+      target_owner: ${{ steps.target_login.output.stored_login }}
+      to_profile: ${{ inputs.to_profile }}
+      name: ${{ inputs.name }}
+
+  - id: copy
+    name: Copy the fonts, the style and its icons
+    script: copy_style.py
+    args: [apply]
+    dry_run: true
+    stdin: ${{ steps.plan.output }}
+
+outputs:
+  id: ${{ steps.copy.output.id }}
+  name: ${{ steps.copy.output.name }}
+  owner: ${{ steps.copy.output.owner }}
+  studio: https://studio.mapbox.com/styles/${{ steps.copy.output.owner }}/${{ steps.copy.output.id }}/edit/
+  fonts: ${{ steps.copy.output.fonts }}
+  icons: ${{ steps.copy.output.icons }}
+  warnings: ${{ steps.copy.output.warnings }}
+
+result: |
+  Copied the style to ${{ steps.copy.output.owner }} as ${{ steps.copy.output.id }}, with ${{ steps.copy.output.icons }} icons.
+  Open it in Studio: https://studio.mapbox.com/styles/${{ steps.copy.output.owner }}/${{ steps.copy.output.id }}/edit/

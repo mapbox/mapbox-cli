@@ -10,7 +10,9 @@ Two steps share this file:
                         then the style's sprite and glyph URLs.
 
 Under MAPBOX_WORKFLOW_DRY_RUN=1, `apply` writes nothing and says what it
-would run instead. Human-readable notes go to stderr; stdout is JSON only.
+would run instead. stdout is JSON only. On stderr, a line starting with
+`::progress ` is what the step is doing now, shown beside the runner's
+spinner; every other line is a detail, kept under the step.
 """
 
 import json
@@ -41,6 +43,10 @@ class Failed(Exception):
 
 def note(message):
     print(message, file=sys.stderr, flush=True)
+
+
+def progress(message):
+    note(f"::progress {message}")
 
 
 def mapbox(login, *args, stdout=None, input=None):
@@ -91,8 +97,8 @@ def shown(login, *args):
     return " ".join(["mapbox", *quoted])
 
 
-def counted(n, noun):
-    return f"{n} {noun}" + ("" if n == 1 else "s")
+def counted(n, noun, plural=None):
+    return f"{n} {noun if n == 1 else plural or noun + 's'}"
 
 
 def login_of(profile):
@@ -128,6 +134,7 @@ def fetch():
     target = login_of(request["to_profile"])
     # Before the download: a target that cannot be written to is the likelier
     # failure, and the cheaper one to find.
+    progress(f"checking the fonts in {target[1]}")
     existing = set(mapbox(target, "fonts", "list") or [])
 
     workdir = tempfile.mkdtemp(prefix="mapbox-copy-style-")
@@ -142,7 +149,9 @@ def fetch():
 def plan_copy(request, workdir, source, target, existing):
     archive = os.path.join(workdir, "style.zip")
     with open(archive, "wb") as out:
+        progress(f"downloading {source[1]}/{request['style_id']}")
         mapbox(source, "styles", "download", request["style_id"], stdout=out)
+    note(f"Downloaded {source[1]}/{request['style_id']} ({os.path.getsize(archive) // 1024} KB)")
     unpacked = os.path.join(workdir, "style")
     with zipfile.ZipFile(archive) as bundle:
         bundle.extractall(unpacked)
@@ -173,10 +182,11 @@ def plan_copy(request, workdir, source, target, existing):
         "icons": icons,
         "warnings": owned_references(style, source_owner) if source_owner else [],
     }
-    note(
-        f"Downloaded {source_owner}/{request['style_id']}: {counted(len(icons), 'icon')}, "
-        f"{counted(len(fonts), 'custom font')} ({len(skip)} already in {target_owner})."
-    )
+    note(f"Found {counted(len(icons), 'icon')} and {counted(len(fonts), 'custom font')}")
+    for font in skip:
+        note(f"Font {font} is already in {target_owner}; it will be skipped")
+    for warning in plan["warnings"]:
+        note(warning)
     return plan
 
 
@@ -243,7 +253,7 @@ def rehearse(plan):
     lines.append("  create the style")
     lines.append(f"  upload {len(plan['icons'])} icons in {len(groups)} batches")
     lines.append(f"  point its sprite and glyphs at {plan['target_owner']}")
-    note("\n".join(lines) + "\n")
+    note("\n".join(lines))
 
     return {
         "dry_run": True,
@@ -260,21 +270,31 @@ def carry_out(plan):
     created = {"style": None, "fonts": [], "icons": 0}
     try:
         for f in plan["fonts"]["upload"]:
+            font = os.path.splitext(f)[0]
+            progress(f"uploading font {font}")
             mapbox(target, "fonts", "upload", "--file", os.path.join(unpacked, "fonts", f))
-            created["fonts"].append(os.path.splitext(f)[0])
+            created["fonts"].append(font)
+            note(f"Uploaded font {font}")
 
+        progress("creating the style")
         style = mapbox(target, "styles", "create", "--data", "@-", input=json.dumps(style_body(plan)))
         created["style"] = style["id"]
+        note(f"Created style {plan['target_owner']}/{created['style']}")
 
         for group in batches(plan["icons"]):
             files = []
             for icon in group:
                 files += ["--file", os.path.join(unpacked, "sprite_images", icon)]
+            progress(f"uploading icons {created['icons']}/{len(plan['icons'])}")
             mapbox(target, "sprites", "upload-batch", created["style"], *files)
             created["icons"] += len(group)
+        if plan["icons"]:
+            note(f"Uploaded {counted(created['icons'], 'icon')} in {counted(len(batches(plan['icons'])), 'batch', 'batches')}")
 
         updated = pointed_at_target(style, plan, created["style"])
+        progress("pointing the sprite and glyphs at the copy")
         mapbox(target, "styles", "update", created["style"], "--data", "@-", input=json.dumps(updated))
+        note(f"Pointed its sprite and glyphs at {plan['target_owner']}")
     except Failed as failure:
         lines = [str(failure)]
         if created["style"] or created["fonts"]:

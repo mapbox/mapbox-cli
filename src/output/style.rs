@@ -105,6 +105,14 @@ fn console_renders_ansi() -> bool {
     !cfg!(windows) || env_value("WT_SESSION").is_some() || env_value("TERM_PROGRAM").is_some()
 }
 
+/// Whether a line on a stream can be redrawn in place, for a spinner.
+///
+/// Not a color question, so `NO_COLOR` does not turn it off; a terminal that
+/// would print the escapes literally does.
+pub fn redraws(stream_is_terminal: bool) -> bool {
+    stream_is_terminal && env_value("TERM").as_deref() != Some("dumb") && console_renders_ansi()
+}
+
 /// A variable's value, treating an empty one as unset — `NO_COLOR=` is how a
 /// shell clears it, not a request for no color.
 fn env_value(name: &str) -> Option<String> {

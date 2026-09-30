@@ -292,6 +292,35 @@ fn a_dry_run_runs_only_the_steps_that_support_it() {
     assert!(marker.exists(), "the real run did not run every step");
 }
 
+/// Away from a terminal, a script's progress lines are dropped and its other
+/// stderr lines are kept, with no escape codes around either.
+#[test]
+fn a_script_reports_details_and_drops_progress_off_a_terminal() {
+    let home = scratch("step-reports");
+    let yaml = "version: 1\nname: report\nsummary: Reports as it goes\nsteps:\n\
+                \x20 - id: work\n    script: work.sh\n";
+    let script = "echo '::progress halfway' >&2\necho 'Did the thing' >&2\necho '{}'\n";
+    let dir = write_workflow(&home, "report", yaml, &[("work.sh", script)]);
+    assert!(run(&home, &["workflow", "install", dir.to_str().unwrap()])
+        .status
+        .success());
+
+    let out = run(&home, &["workflow", "run", "report", "-o", "json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("[1/1] work"), "{stderr}");
+    assert!(
+        stderr.lines().any(|line| line == "Did the thing"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("halfway"), "{stderr}");
+    assert!(!stderr.contains('\x1b'), "{stderr}");
+}
+
 #[test]
 fn install_refuses_an_invalid_workflow_and_writes_nothing() {
     let home = scratch("invalid");

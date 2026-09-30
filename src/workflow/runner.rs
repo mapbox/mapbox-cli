@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::io::{IsTerminal, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command as Process, Stdio};
 
@@ -26,9 +26,10 @@ use clap::{Arg, ArgAction, Command};
 use serde_json::{json, Map, Value};
 
 use super::definition::{Action, InputType, Step, Workflow, DRY_RUN_ENV, SCRIPTS_DIR};
+use super::progress::{Display, StepView};
 use super::template::{self, Context};
 use crate::auth;
-use crate::output::{self, style, CliError};
+use crate::output::{self, CliError};
 
 /// Global options a step may not set, because the runner owns them or
 /// because they would put a credential in a file.
@@ -240,22 +241,11 @@ fn run_steps(
     let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
     let total = workflow.steps.len();
 
-    let color = style::enabled(std::io::stderr().is_terminal());
+    let display = Display::for_stderr(total);
     for (index, step) in workflow.steps.iter().enumerate() {
         let title = step.name.as_deref().unwrap_or(&step.id);
-        let skipped = dry_run && !step.dry_run;
-        let note = if skipped {
-            format!("({}, skipped in a dry run)", step.label())
-        } else {
-            format!("({})", step.label())
-        };
-        output::progress(&format!(
-            "{} {} {}",
-            style::paint(&format!("[{}/{total}]", index + 1), style::DIM, color),
-            style::paint(title, style::BOLD, color),
-            style::paint(&note, style::DIM, color),
-        ));
-        if skipped {
+        if dry_run && !step.dry_run {
+            display.skipped(index, title, &step.label());
             continue;
         }
 
@@ -309,8 +299,11 @@ fn run_steps(
             process.env(auth::CLAP_TOKEN_ENV, token);
         }
 
-        let value = execute(&mut process, stdin.as_ref(), step)?;
-        outputs.insert(step.id.clone(), value);
+        let is_script = matches!(step.action, Action::Script { .. });
+        let view = display.start(index, title, &step.label(), is_script);
+        let result = execute(&mut process, stdin.as_ref(), step, &view);
+        view.finish(result.is_ok());
+        outputs.insert(step.id.clone(), result?);
     }
 
     Ok(outputs)
@@ -326,7 +319,12 @@ fn step_failure(step: &Step, err: anyhow::Error) -> anyhow::Error {
 
 /// Spawns one step and reads its stdout as its output: JSON when it parses,
 /// the text otherwise, nothing when there is none.
-fn execute(process: &mut Process, stdin: Option<&Value>, step: &Step) -> Result<Value> {
+fn execute(
+    process: &mut Process,
+    stdin: Option<&Value>,
+    step: &Step,
+    view: &StepView,
+) -> Result<Value> {
     // A script with nothing to read gets nothing, rather than a terminal it
     // might block on. A command keeps the terminal, which is where a
     // confirmation prompt reads its answer.
@@ -335,10 +333,16 @@ fn execute(process: &mut Process, stdin: Option<&Value>, step: &Step) -> Result<
         (None, Action::Script { .. }) => Stdio::null(),
         (None, Action::Command { .. }) => Stdio::inherit(),
     };
+    // A script's stderr is read line by line, for its progress and details.
+    // A command's is the terminal's, so a confirmation prompt still shows.
+    let errors = match step.action {
+        Action::Script { .. } => Stdio::piped(),
+        Action::Command { .. } => Stdio::inherit(),
+    };
     let mut child = process
         .stdin(input)
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(errors)
         .spawn()
         .map_err(|e| {
             let program = process.get_program().to_string_lossy().into_owned();
@@ -363,11 +367,23 @@ fn execute(process: &mut Process, stdin: Option<&Value>, step: &Step) -> Result<
             let _ = pipe.write_all(body.as_bytes());
         })
     });
+    let reader = child.stderr.take().map(|pipe| {
+        let reporter = view.reporter();
+        std::thread::spawn(move || {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                reporter.report(&line);
+            }
+        })
+    });
     let finished = child
         .wait_with_output()
         .map_err(|e| step_failure(step, anyhow!("could not wait for it: {e}")))?;
     if let Some(writer) = writer {
         let _ = writer.join();
+    }
+    // Every line the step wrote is shown before its outcome is.
+    if let Some(reader) = reader {
+        let _ = reader.join();
     }
 
     if !finished.status.success() {

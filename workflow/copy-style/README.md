@@ -27,8 +27,10 @@ Created in target-account before the failure:
   font Yellow Banana Regular
 
 Nothing was removed. To remove what was created:
-  mapbox styles delete ckcopy000000000000000001 --profile target --use-login
-  mapbox fonts delete 'Yellow Banana Regular' --profile target --use-login
+  mapbox styles delete ckcopy000000000000000001 --profile target --use-login --username target-account
+  mapbox fonts delete 'Yellow Banana Regular' --profile target --use-login --username target-account
 ```
+
+Each command runs as its profile's login and names that login's account with `--username`, so a `MAPBOX_ACCESS_TOKEN` or `MAPBOX_USERNAME` in the environment cannot send a request as, or to, a different account.
 
 Needs `python3` on `PATH`.

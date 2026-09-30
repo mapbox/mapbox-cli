@@ -43,32 +43,50 @@ def note(message):
     print(message, file=sys.stderr, flush=True)
 
 
-def mapbox(profile, *args, stdout=None):
-    """Runs a mapbox command as `profile`'s login and returns its JSON output.
+def mapbox(login, *args, stdout=None, input=None):
+    """Runs a mapbox command as a profile's login and returns its JSON output.
 
-    `--use-login` because a MAPBOX_ACCESS_TOKEN in the environment would
-    otherwise outrank the profile, and both accounts would be the same one.
+    `login` is (profile, account). `--use-login` because a MAPBOX_ACCESS_TOKEN
+    in the environment would otherwise outrank the profile; `--username`
+    because a MAPBOX_USERNAME would otherwise name a different account than
+    the profile's token belongs to, and every request would be refused.
     """
+    profile, account = login
     command = [CLI, *args, "--profile", profile, "--use-login", "--quiet"]
+    if account:
+        command += ["--username", account]
     if stdout is None:
         command += ["--output", "json"]
     done = subprocess.run(
         command,
+        input=input.encode() if input is not None else None,
         stdout=stdout or subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=stdout is None,
     )
     if done.returncode != 0:
-        detail = done.stderr if isinstance(done.stderr, str) else done.stderr.decode(errors="replace")
-        raise Failed(f"`mapbox {' '.join(args[:2])}` failed: {detail.strip()}")
+        raise Failed(f"`mapbox {' '.join(args[:2])}` as `{profile}` failed: {readable(done.stderr)}")
     if stdout is None:
         return json.loads(done.stdout) if done.stdout.strip() else None
     return None
 
 
-def shown(profile, *args):
+def readable(stderr):
+    """A child's error as a person would want it: the message and the fix,
+    rather than the JSON document `--output json` prints."""
+    text = stderr.decode(errors="replace").strip()
+    try:
+        error = json.loads(text.splitlines()[-1])
+    except (ValueError, IndexError):
+        return text
+    if not isinstance(error, dict) or "message" not in error:
+        return text
+    return "\n  ".join(filter(None, [error["message"], error.get("fix")]))
+
+
+def shown(login, *args):
     """A command line to show the user, which they can run as it stands."""
-    words = [*args, "--profile", profile, "--use-login"]
+    profile, account = login
+    words = [*args, "--profile", profile, "--use-login", "--username", account]
     quoted = [w if re.fullmatch(r"[A-Za-z0-9_./:@=-]+", w) else "'" + w.replace("'", "'\\''") + "'" for w in words]
     return " ".join(["mapbox", *quoted])
 
@@ -77,12 +95,13 @@ def counted(n, noun):
     return f"{n} {noun}" + ("" if n == 1 else "s")
 
 
-def account_of(profile):
-    status = mapbox(profile, "auth", "status") or {}
+def login_of(profile):
+    """The profile and the account its stored login belongs to."""
+    status = mapbox((profile, None), "auth", "status") or {}
     account = status.get("stored_login")
     if not account:
         raise Failed(f"Profile `{profile}` is not logged in. Run `mapbox auth login --profile {profile}`.")
-    return account
+    return (profile, account)
 
 
 def owned_references(style, owner):
@@ -105,20 +124,22 @@ def owned_references(style, owner):
 
 def fetch():
     request = json.load(sys.stdin)
-    source, target = request["from_profile"], request["to_profile"]
-    target_owner = account_of(target)
+    source = login_of(request["from_profile"])
+    target = login_of(request["to_profile"])
+    # Before the download: a target that cannot be written to is the likelier
+    # failure, and the cheaper one to find.
+    existing = set(mapbox(target, "fonts", "list") or [])
 
     workdir = tempfile.mkdtemp(prefix="mapbox-copy-style-")
     try:
-        plan = plan_copy(request, workdir, target_owner)
+        plan = plan_copy(request, workdir, source, target, existing)
     except BaseException:
         shutil.rmtree(workdir, ignore_errors=True)
         raise
     json.dump(plan, sys.stdout)
 
 
-def plan_copy(request, workdir, target_owner):
-    source, target = request["from_profile"], request["to_profile"]
+def plan_copy(request, workdir, source, target, existing):
     archive = os.path.join(workdir, "style.zip")
     with open(archive, "wb") as out:
         mapbox(source, "styles", "download", request["style_id"], stdout=out)
@@ -128,14 +149,14 @@ def plan_copy(request, workdir, target_owner):
 
     with open(os.path.join(unpacked, "style.json")) as f:
         style = json.load(f)
-    source_owner = style.get("owner") or ""
+    source_owner = style.get("owner") or source[1]
+    target_owner = target[1]
 
     fonts_dir = os.path.join(unpacked, "fonts")
     fonts = sorted(
         f for f in (os.listdir(fonts_dir) if os.path.isdir(fonts_dir) else [])
         if f.lower().endswith(FONT_EXTENSIONS)
     )
-    existing = set(mapbox(target, "fonts", "list") or [])
     upload = [f for f in fonts if os.path.splitext(f)[0] not in existing]
     skip = [os.path.splitext(f)[0] for f in fonts if f not in upload]
 
@@ -144,7 +165,7 @@ def plan_copy(request, workdir, target_owner):
 
     plan = {
         "workdir": workdir,
-        "to_profile": target,
+        "to_profile": target[0],
         "source_owner": source_owner,
         "target_owner": target_owner,
         "name": request.get("name") or style.get("name"),
@@ -184,17 +205,17 @@ def batches(icons):
     return [icons[i:i + ICONS_PER_BATCH] for i in range(0, len(icons), ICONS_PER_BATCH)]
 
 
-def cleanup_commands(profile, created):
+def cleanup_commands(login, created):
     commands = []
     if created["style"]:
         # Deleting the style removes its sprite, icons included.
-        commands.append(shown(profile, "styles", "delete", created["style"]))
-    commands += [shown(profile, "fonts", "delete", font) for font in created["fonts"]]
+        commands.append(shown(login, "styles", "delete", created["style"]))
+    commands += [shown(login, "fonts", "delete", font) for font in created["fonts"]]
     return commands
 
 
 def rehearse(plan):
-    target = plan["to_profile"]
+    target = (plan["to_profile"], plan["target_owner"])
     fonts_dir = os.path.join(plan["workdir"], "style", "fonts")
     groups = batches(plan["icons"])
     would_run = [shown(target, "fonts", "upload", "--file", os.path.join(fonts_dir, f)) for f in plan["fonts"]["upload"]]
@@ -222,7 +243,7 @@ def rehearse(plan):
 
 
 def carry_out(plan):
-    target = plan["to_profile"]
+    target = (plan["to_profile"], plan["target_owner"])
     unpacked = os.path.join(plan["workdir"], "style")
     created = {"style": None, "fonts": [], "icons": 0}
     try:
@@ -230,14 +251,7 @@ def carry_out(plan):
             mapbox(target, "fonts", "upload", "--file", os.path.join(unpacked, "fonts", f))
             created["fonts"].append(os.path.splitext(f)[0])
 
-        body = json.dumps(style_body(plan))
-        result = subprocess.run(
-            [CLI, "styles", "create", "--data", "@-", "--profile", target, "--use-login", "--quiet", "--output", "json"],
-            input=body, capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            raise Failed(f"`mapbox styles create` failed: {result.stderr.strip()}")
-        style = json.loads(result.stdout)
+        style = mapbox(target, "styles", "create", "--data", "@-", input=json.dumps(style_body(plan)))
         created["style"] = style["id"]
 
         for group in batches(plan["icons"]):
@@ -248,12 +262,7 @@ def carry_out(plan):
             created["icons"] += len(group)
 
         updated = pointed_at_target(style, plan, created["style"])
-        result = subprocess.run(
-            [CLI, "styles", "update", created["style"], "--data", "@-", "--profile", target, "--use-login", "--quiet", "--output", "json"],
-            input=json.dumps(updated), capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            raise Failed(f"`mapbox styles update` failed: {result.stderr.strip()}")
+        mapbox(target, "styles", "update", created["style"], "--data", "@-", input=json.dumps(updated))
     except Failed as failure:
         lines = [str(failure)]
         if created["style"] or created["fonts"]:

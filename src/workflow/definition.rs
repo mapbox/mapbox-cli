@@ -84,7 +84,14 @@ pub struct Step {
     pub name: Option<String>,
     pub action: Action,
     pub stdin: Option<Value>,
+    /// Runs under `--dry-run` too, with [`DRY_RUN_ENV`] set. The script's
+    /// promise to write nothing then, which only a script can make: a
+    /// command step has no way to hold its request back and still answer.
+    pub dry_run: bool,
 }
+
+/// Set to `1` for a `dry_run` step while `--dry-run` runs it.
+pub const DRY_RUN_ENV: &str = "MAPBOX_WORKFLOW_DRY_RUN";
 
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -147,6 +154,8 @@ struct RawStep {
     args: Option<Value>,
     #[serde(default)]
     stdin: Option<Value>,
+    #[serde(default)]
+    dry_run: bool,
 }
 
 /// A workflow name is one directory name, lower-case and dash-separated —
@@ -275,6 +284,7 @@ pub fn parse(name: &str, files: &Files) -> Result<Workflow, Vec<String>> {
 
     let mut steps = vec![];
     let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut runs_in_dry_run: BTreeSet<String> = BTreeSet::new();
     let mut referenced_scripts: BTreeSet<PathBuf> = BTreeSet::new();
     for raw_step in raw.steps {
         let id = raw_step.id.clone();
@@ -297,8 +307,31 @@ pub fn parse(name: &str, files: &Files) -> Result<Workflow, Vec<String>> {
             );
         }
 
+        if raw_step.dry_run {
+            // A dry run skips every other step, so there is no output of
+            // theirs for this one to read.
+            for value in raw_step.args.iter().chain(raw_step.stdin.iter()) {
+                for reference in template::references(value).unwrap_or_default() {
+                    if let Reference::Step { id: read, .. } = &reference {
+                        if seen.contains(read) && !runs_in_dry_run.contains(read) {
+                            problems.push(format!(
+                                "step `{id}` runs under --dry-run but reads `{}`, from a \
+                                 step that does not",
+                                template::display(&reference)
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         let action = match (raw_step.command, raw_step.script) {
             (Some(command), None) => {
+                if raw_step.dry_run {
+                    problems.push(format!(
+                        "step `{id}`: `dry_run` only applies to a `script` step"
+                    ));
+                }
                 if raw_step.interpreter.is_some() {
                     problems.push(format!(
                         "step `{id}`: `interpreter` only applies to a `script` step"
@@ -390,12 +423,16 @@ pub fn parse(name: &str, files: &Files) -> Result<Workflow, Vec<String>> {
         };
 
         seen.insert(id.clone());
+        if raw_step.dry_run {
+            runs_in_dry_run.insert(id.clone());
+        }
         if let Some(action) = action {
             steps.push(Step {
                 id,
                 name: raw_step.name,
                 action,
                 stdin: raw_step.stdin,
+                dry_run: raw_step.dry_run,
             });
         }
     }
@@ -558,6 +595,40 @@ outputs:
         let found = problems(&[(DEFINITION_FILE, &yaml), ("scripts/shape.py", "")]);
         assert!(
             found.iter().any(|p| p.contains("no earlier step")),
+            "{found:?}"
+        );
+    }
+
+    /// A command step cannot hold its request back, so it cannot promise
+    /// to write nothing under `--dry-run`.
+    #[test]
+    fn only_a_script_can_run_in_a_dry_run() {
+        let yaml = MINIMAL.replace(
+            "    command: styles get\n",
+            "    command: styles get\n    dry_run: true\n",
+        );
+        let found = problems(&[(DEFINITION_FILE, &yaml), ("scripts/shape.py", "")]);
+        assert!(
+            found
+                .iter()
+                .any(|p| p.contains("only applies to a `script` step")),
+            "{found:?}"
+        );
+    }
+
+    /// A dry run skips the steps not marked `dry_run`, so a step that is
+    /// marked cannot read their output.
+    #[test]
+    fn a_dry_run_step_reads_only_dry_run_steps() {
+        let yaml = MINIMAL.replace(
+            "    script: shape.py\n",
+            "    script: shape.py\n    dry_run: true\n",
+        );
+        let found = problems(&[(DEFINITION_FILE, &yaml), ("scripts/shape.py", "")]);
+        assert!(
+            found
+                .iter()
+                .any(|p| p.contains("runs under --dry-run but reads `steps.fetch")),
             "{found:?}"
         );
     }

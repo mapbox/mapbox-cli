@@ -12,7 +12,7 @@ workflow/
   copy-style/              # the workflow's name
     workflow.yaml          # required
     scripts/               # the scripts its steps run
-      prepare.py
+      copy_style.py
     README.md              # optional
 ```
 
@@ -54,6 +54,7 @@ steps:                            # required; run in order, first failure stops
   - id: body
     script: prepare.py            # a file in scripts/
     interpreter: python3          # optional for .sh, .py and .js
+    dry_run: true                 # optional; runs under --dry-run too (scripts only)
     args: ["--zoom", "${{ inputs.zoom }}"]
     stdin:                        # optional; sent to the step as JSON
       style: ${{ steps.source.output }}
@@ -108,3 +109,10 @@ A script runs from the installed copy of `scripts/`, in the directory `mapbox wo
 - A non-zero exit stops the workflow.
 - `MAPBOX_CLI` is the path to this `mapbox` binary, for a script that runs commands of its own. `MAPBOX_WORKFLOW_ROOT` is the installed workflow's directory.
 - The interpreter must be installed on the machine. `.sh` runs under `sh`, `.py` under `python3` and `.js` under `node`, and any other extension needs `interpreter`.
+
+### Dry runs
+
+`mapbox workflow run --dry-run` skips every step unless it is marked `dry_run: true`. A marked step runs with `MAPBOX_WORKFLOW_DRY_RUN=1` in its environment and must write nothing then: read what it needs, and say on stderr what it would do. Its output is under `results` in the plan, so a later marked step can plan with real data.
+
+- Only a script step can be marked. A command step cannot hold its request back and still answer.
+- A marked step can read only the outputs of earlier marked steps, since the others do not run. `install` refuses one that reads any other.

@@ -1,21 +1,28 @@
 version: 1
 name: copy-style
-summary: Copy a style from one account to another
+summary: Copy a style, with its fonts and icons, from one account to another
 description: |
-  Reads a style with one credential profile and creates a copy of it with
-  another. Log in to each account first, under its own profile:
+  Downloads a style with one credential profile and recreates it with
+  another: its custom fonts, the style itself, and its icons. Log in to each
+  account first, under its own profile:
 
     mapbox auth login --profile source
     mapbox auth login --profile target
 
-  Only the style document is copied. These stay with the source account,
-  and the copy can use them only if the target account can read them:
+  The source account needs access to the style download API, which Mapbox
+  grants on request. Fonts the target account already has are not uploaded
+  again.
+
+  These stay with the source account, and the copy can use them only if the
+  target account can read them:
 
   - tilesets the style's sources use
-  - fonts, and the sprite's icons
   - imported styles
 
   The `warnings` output lists each one the style refers to.
+
+  If a step fails partway, nothing is removed: the error lists what was
+  created and the commands that remove it.
 
 inputs:
   style_id:
@@ -35,35 +42,29 @@ inputs:
     description: Name for the copy. Defaults to the original's name
 
 steps:
-  - id: source
-    name: Read the style
-    command: styles get
-    args:
-      style-id: ${{ inputs.style_id }}
-      profile: ${{ inputs.from_profile }}
-      # A MAPBOX_ACCESS_TOKEN in the environment would otherwise outrank the
-      # profile, and both steps would run as the same account.
-      use-login: true
-
-  - id: body
-    name: Prepare the copy
-    script: prepare.py
+  - id: fetch
+    name: Download the style and plan the copy
+    script: copy_style.py
+    args: [fetch]
+    dry_run: true
     stdin:
-      style: ${{ steps.source.output }}
+      style_id: ${{ inputs.style_id }}
+      from_profile: ${{ inputs.from_profile }}
+      to_profile: ${{ inputs.to_profile }}
       name: ${{ inputs.name }}
 
-  - id: created
-    name: Create the copy
-    command: styles create
-    args:
-      data: "@-"
-      profile: ${{ inputs.to_profile }}
-      use-login: true
-    stdin: ${{ steps.body.output.style }}
+  - id: copy
+    name: Copy the fonts, the style and its icons
+    script: copy_style.py
+    args: [apply]
+    dry_run: true
+    stdin: ${{ steps.fetch.output }}
 
 outputs:
-  id: ${{ steps.created.output.id }}
-  name: ${{ steps.created.output.name }}
-  owner: ${{ steps.created.output.owner }}
-  studio: https://studio.mapbox.com/styles/${{ steps.created.output.owner }}/${{ steps.created.output.id }}/edit/
-  warnings: ${{ steps.body.output.warnings }}
+  id: ${{ steps.copy.output.id }}
+  name: ${{ steps.copy.output.name }}
+  owner: ${{ steps.copy.output.owner }}
+  studio: https://studio.mapbox.com/styles/${{ steps.copy.output.owner }}/${{ steps.copy.output.id }}/edit/
+  fonts: ${{ steps.copy.output.fonts }}
+  icons: ${{ steps.copy.output.icons }}
+  warnings: ${{ steps.copy.output.warnings }}

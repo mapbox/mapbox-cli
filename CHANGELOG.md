@@ -30,9 +30,12 @@ that may never merge. They are not releases and are not listed here.
   --to-profile target`. `run --dry-run` runs only the steps a workflow
   marks `dry_run`, which write nothing, so the plan can show real data. At a
   terminal each step shows a spinner, the details its script reports on
-  stderr (a `::progress ` line updates the spinner's text), and `✓` or `✗`
-  with the time it took; off a terminal, each step is a plain `[n/total]`
-  line followed by its details. The
+  stderr (a `::progress ` line updates the spinner's text, a `::warn ` line
+  is a warning, listed again at the end), and `✓` or `✗` with the time it
+  took; off a terminal, each step is a plain `[n/total]` line followed by
+  its details. `--quiet` drops the details but keeps warnings. A workflow's
+  optional `result` template is what text mode prints; `-o json` prints its
+  outputs. The
   generated agent skill leaves `workflow` out. The first one published is
   `copy-style`, which copies a style between accounts with its custom fonts
   and icons, and on a partial failure lists what it created and the

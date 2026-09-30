@@ -10,7 +10,10 @@
 //!
 //! A script reports through its stderr. A line starting with
 //! [`PROGRESS_PREFIX`] replaces the text beside the spinner and is dropped
-//! where there is none; any other line is a detail, kept in both modes.
+//! where there is none. One starting with [`WARN_PREFIX`] is a warning: shown
+//! where it happened and listed again once the run ends, so it is not lost
+//! among the details. Any other line is a detail, kept in both modes unless
+//! the run is `--quiet`.
 //!
 //! A command step is never animated. It keeps the terminal, where a
 //! confirmation prompt has to be able to reach the person running it, so
@@ -26,6 +29,8 @@ use crate::output::style;
 
 /// Marks a script's stderr line as progress rather than a detail.
 pub const PROGRESS_PREFIX: &str = "::progress ";
+/// Marks a script's stderr line as a warning.
+pub const WARN_PREFIX: &str = "::warn ";
 
 const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const TICK: Duration = Duration::from_millis(80);
@@ -34,17 +39,42 @@ const DETAIL_INDENT: &str = "    ";
 pub struct Display {
     live: bool,
     color: bool,
+    quiet: bool,
     total: usize,
+    warnings: Arc<Mutex<Vec<String>>>,
 }
 
 impl Display {
-    pub fn for_stderr(total: usize) -> Self {
+    pub fn for_stderr(total: usize, quiet: bool) -> Self {
         let terminal = std::io::stderr().is_terminal();
         Display {
             live: style::redraws(terminal),
             color: style::enabled(terminal),
+            quiet,
             total,
+            warnings: Arc::default(),
         }
+    }
+
+    /// Lists every warning a step reported, once the steps are done.
+    pub fn finish_run(&self) {
+        let warnings = self.warnings.lock().expect("warnings");
+        if warnings.is_empty() {
+            return;
+        }
+        let heading = if warnings.len() == 1 {
+            "Warning"
+        } else {
+            "Warnings"
+        };
+        eprintln!("{}", style::paint(heading, style::BOLD, self.color));
+        for warning in warnings.iter() {
+            eprintln!(
+                "  {} {warning}",
+                style::paint("!", style::YELLOW, self.color)
+            );
+        }
+        eprintln!();
     }
 
     /// A step that will not run, because this is a dry run and it did not
@@ -84,6 +114,8 @@ impl Display {
             started: Instant::now(),
             live: self.live,
             color: self.color,
+            quiet: self.quiet,
+            warnings: Arc::clone(&self.warnings),
         };
 
         if self.live {
@@ -163,6 +195,8 @@ pub struct StepView {
     started: Instant,
     live: bool,
     color: bool,
+    quiet: bool,
+    warnings: Arc<Mutex<Vec<String>>>,
 }
 
 impl StepView {
@@ -172,6 +206,8 @@ impl StepView {
             state: Arc::clone(&self.state),
             live: self.live,
             color: self.color,
+            quiet: self.quiet,
+            warnings: Arc::clone(&self.warnings),
         }
     }
 
@@ -211,26 +247,47 @@ pub struct Reporter {
     state: Arc<Mutex<State>>,
     live: bool,
     color: bool,
+    quiet: bool,
+    warnings: Arc<Mutex<Vec<String>>>,
 }
 
 impl Reporter {
     /// One line the step wrote to stderr.
     pub fn report(&self, line: &str) {
         let mut state = self.state.lock().expect("progress state");
-        match line.strip_prefix(PROGRESS_PREFIX) {
-            Some(progress) => {
-                if state.spinning {
-                    state.progress = progress.trim().to_string();
-                    draw_spinner(&state, self.color);
-                }
-            }
-            None if state.spinning => {
-                clear_line();
-                eprintln!("{DETAIL_INDENT}{line}");
+        if let Some(progress) = line.strip_prefix(PROGRESS_PREFIX) {
+            if state.spinning {
+                state.progress = progress.trim().to_string();
                 draw_spinner(&state, self.color);
             }
-            None if self.live => eprintln!("{DETAIL_INDENT}{line}"),
-            None => eprintln!("{line}"),
+            return;
+        }
+        let shown = match line.strip_prefix(WARN_PREFIX) {
+            Some(warning) => {
+                let warning = warning.trim().to_string();
+                self.warnings
+                    .lock()
+                    .expect("warnings")
+                    .push(warning.clone());
+                if self.live {
+                    format!("{} {warning}", style::paint("!", style::YELLOW, self.color))
+                } else {
+                    format!("warning: {warning}")
+                }
+            }
+            None if self.quiet => return,
+            None => line.to_string(),
+        };
+        if state.spinning {
+            clear_line();
+        }
+        if self.live {
+            eprintln!("{DETAIL_INDENT}{shown}");
+        } else {
+            eprintln!("{shown}");
+        }
+        if state.spinning {
+            draw_spinner(&state, self.color);
         }
     }
 }

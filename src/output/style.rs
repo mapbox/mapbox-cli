@@ -21,6 +21,7 @@ pub const DIM: &str = "\x1b[2m";
 pub const ACCENT: &str = "\x1b[94m";
 pub const GREEN: &str = "\x1b[32m";
 pub const RED: &str = "\x1b[31m";
+pub const YELLOW: &str = "\x1b[33m";
 
 /// Whether a stream should be written in color.
 pub fn enabled(stream_is_terminal: bool) -> bool {

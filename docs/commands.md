@@ -533,7 +533,7 @@ either.
 | `--profile <name>` | Which stored credentials to use. |
 | `--output`, `-o` | `auto` \| `text` \| `json`. |
 | `--id <value>` | On a command that returns a list, print just the row with that `id` or `name`. |
-| `--quiet`, `-q` | Don't print the `mapbox · v<version>` banner, which goes to stderr and only when stderr is a terminal. Also `MAPBOX_QUIET`. |
+| `--quiet`, `-q` | Don't print the `mapbox · v<version>` banner, which goes to stderr and only when stderr is a terminal, the note after a download, or a workflow step's details. Also `MAPBOX_QUIET`. |
 | `--timeout <seconds>` | How long one request may take, connection included. Defaults to 60 seconds, or 900 for a body read from `--file` or from a `--data @<path>`/`@-`. Also `MAPBOX_TIMEOUT`. |
 
 An operation with a request body takes `--data`/`-d` when that body is text
@@ -4051,7 +4051,12 @@ step's progress and anything a step writes to stderr go to stderr. At a
 terminal, each step shows its title, the details its script reports, and a
 spinner that becomes `✓` or `✗` with the time it took; anywhere else, each
 step is one `[n/total]` line followed by its details, with no escape codes.
-`workflow/README.md` describes how a script reports.
+`--quiet` keeps each step's title, how it ended and its warnings, and drops
+its details. `workflow/README.md` describes how a script reports progress,
+details and warnings.
+
+A workflow that declares `result` prints it in text mode instead of the
+outputs as fields; `-o json` always prints the outputs.
 
 Each command step is this binary run again with `--output json`, so it
 resolves its token and applies its timeouts as the same command typed by

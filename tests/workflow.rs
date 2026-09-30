@@ -27,6 +27,11 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 fn run(home: &Path, args: &[&str]) -> Output {
+    run_with(home, args, &[])
+}
+
+/// [`run`], with `env` set on top of what it sets.
+fn run_with(home: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_mapbox"))
         .env_remove("MAPBOX_ACCESS_TOKEN")
         .env_remove("MapboxAccessToken")
@@ -39,6 +44,7 @@ fn run(home: &Path, args: &[&str]) -> Output {
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("MAPBOX_CONFIG_DIR", home.join(".mapbox"))
+        .envs(env.iter().copied())
         .args(args)
         .output()
         .expect("run mapbox")
@@ -111,7 +117,8 @@ fn a_run_carries_values_between_steps_and_prints_only_the_result() {
     let home = scratch("run");
     install_demo(&home);
 
-    let out = run(
+    // Not quiet, so the script's stderr is shown as a detail.
+    let out = run_with(
         &home,
         &[
             "--token",
@@ -124,6 +131,7 @@ fn a_run_carries_values_between_steps_and_prints_only_the_result() {
             "-o",
             "json",
         ],
+        &[("MAPBOX_QUIET", "0")],
     );
     assert!(
         out.status.success(),
@@ -292,20 +300,36 @@ fn a_dry_run_runs_only_the_steps_that_support_it() {
     assert!(marker.exists(), "the real run did not run every step");
 }
 
-/// Away from a terminal, a script's progress lines are dropped and its other
-/// stderr lines are kept, with no escape codes around either.
-#[test]
-fn a_script_reports_details_and_drops_progress_off_a_terminal() {
-    let home = scratch("step-reports");
-    let yaml = "version: 1\nname: report\nsummary: Reports as it goes\nsteps:\n\
-                \x20 - id: work\n    script: work.sh\n";
-    let script = "echo '::progress halfway' >&2\necho 'Did the thing' >&2\necho '{}'\n";
-    let dir = write_workflow(&home, "report", yaml, &[("work.sh", script)]);
-    assert!(run(&home, &["workflow", "install", dir.to_str().unwrap()])
+const REPORTING: &str = "version: 1\nname: report\nsummary: Reports as it goes\n\
+    inputs:\n  who: { type: string, default: world }\nsteps:\n\
+    \x20 - id: work\n    script: work.sh\n\
+    outputs:\n  said: ${{ steps.work.output.said }}\n\
+    result: 'Said ${{ steps.work.output.said }} to ${{ inputs.who }}.'\n";
+
+const WORK: &str = "echo '::progress halfway' >&2\n\
+    echo 'Did the thing' >&2\n\
+    echo '::warn Something to know' >&2\n\
+    echo '{\"said\":\"hello\"}'\n";
+
+fn install_reporting(home: &Path) {
+    let dir = write_workflow(home, "report", REPORTING, &[("work.sh", WORK)]);
+    assert!(run(home, &["workflow", "install", dir.to_str().unwrap()])
         .status
         .success());
+}
 
-    let out = run(&home, &["workflow", "run", "report", "-o", "json"]);
+/// Away from a terminal, a script's details and warnings are kept and its
+/// progress lines dropped, with no escape codes around any of them.
+#[test]
+fn a_script_reports_details_and_warnings_and_drops_progress_off_a_terminal() {
+    let home = scratch("step-reports");
+    install_reporting(&home);
+
+    let out = run_with(
+        &home,
+        &["workflow", "run", "report", "-o", "json"],
+        &[("MAPBOX_QUIET", "0")],
+    );
     assert!(
         out.status.success(),
         "{}",
@@ -317,8 +341,62 @@ fn a_script_reports_details_and_drops_progress_off_a_terminal() {
         stderr.lines().any(|line| line == "Did the thing"),
         "{stderr}"
     );
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line == "warning: Something to know"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Warning\n  ! Something to know"),
+        "a warning is listed again once the run ends: {stderr}"
+    );
     assert!(!stderr.contains("halfway"), "{stderr}");
     assert!(!stderr.contains('\x1b'), "{stderr}");
+}
+
+/// `--quiet` drops a step's details, but never its warnings.
+#[test]
+fn quiet_drops_details_but_keeps_warnings() {
+    let home = scratch("step-reports-quiet");
+    install_reporting(&home);
+
+    let out = run(&home, &["workflow", "run", "report", "-o", "json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("Did the thing"), "{stderr}");
+    assert!(stderr.contains("Something to know"), "{stderr}");
+}
+
+/// `result` is how text mode shows the outcome; `-o json` still prints the
+/// outputs, which is what a script reads.
+#[test]
+fn result_is_the_text_and_outputs_are_the_json() {
+    let home = scratch("result-text");
+    install_reporting(&home);
+
+    let text = run(
+        &home,
+        &[
+            "workflow", "run", "report", "--who", "Helsinki", "-o", "text",
+        ],
+    );
+    assert!(
+        text.status.success(),
+        "{}",
+        String::from_utf8_lossy(&text.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&text.stdout).trim_end(),
+        "Said hello to Helsinki."
+    );
+
+    let json = run(&home, &["workflow", "run", "report", "-o", "json"]);
+    assert_eq!(stdout_json(&json), json!({ "said": "hello" }));
 }
 
 #[test]

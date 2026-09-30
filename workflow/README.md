@@ -61,6 +61,9 @@ steps:                            # required; run in order, first failure stops
 
 outputs:                          # optional; the default is the last step's output
   id: ${{ steps.source.output.id }}
+
+result: |                         # optional; what text mode prints instead of the outputs
+  Created ${{ steps.source.output.id }}.
 ```
 
 A step is a `command` or a `script`, never both.
@@ -114,8 +117,11 @@ A script runs from the installed copy of `scripts/`, in the directory `mapbox wo
 
 The runner shows every step the same way, so a script only says what it is doing and what it did:
 
-- A stderr line starting with `::progress ` is what the step is doing now, such as `::progress uploading icons 150/561`. At a terminal it is shown beside a spinner and replaced by the next one. Anywhere else it is dropped.
-- Any other stderr line is a detail, such as `Uploaded font Yellow Banana Regular`, and is kept under the step.
+| A stderr line | Is | Shown |
+| --- | --- | --- |
+| `::progress uploading icons 150/561` | What the step is doing now | At a terminal, beside the spinner, until the next one replaces it. Dropped anywhere else. |
+| `::warn Source uses a tileset that is not copied` | Something the person should act on | Under the step (`! …` at a terminal, `warning: …` elsewhere), and listed again after the last step. Also under `--quiet`. |
+| anything else, such as `Uploaded font Yellow Banana Regular` | A detail: what the step did | Under the step. Not under `--quiet`. |
 
 At a terminal a step looks like this, and the last line becomes `✓ <time>` or `✗ failed after <time>` when it ends:
 
@@ -127,6 +133,20 @@ At a terminal a step looks like this, and the last line becomes `✓ <time>` or 
 ```
 
 In a pipe, a CI log or anywhere stderr is not a terminal, each step is one `[n/total]` line followed by its details, with no escape codes. A command step is never animated: it keeps the terminal, so a confirmation prompt still reaches the person running it.
+
+`mapbox workflow run --quiet` (or `MAPBOX_QUIET=1`) keeps each step's title, how it ended and its warnings, and drops its details.
+
+### `result`
+
+What `mapbox workflow run` prints on stdout in text mode, in place of the outputs as a list of fields. It is a template over the same `${{ inputs.… }}` and `${{ steps.… }}` expressions, checked the same way, and a line break in it is kept:
+
+```yaml
+result: |
+  Copied the style to ${{ steps.copy.output.owner }} as ${{ steps.copy.output.id }}.
+  Open it in Studio: https://studio.mapbox.com/styles/${{ steps.copy.output.owner }}/${{ steps.copy.output.id }}/edit/
+```
+
+`-o json` ignores it and prints the outputs, which is what a script should read. `--dry-run` does not resolve it, since the steps it names may not have run.
 
 ### Dry runs
 

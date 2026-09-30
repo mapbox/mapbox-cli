@@ -221,6 +221,77 @@ fn dry_run_runs_nothing() {
     assert!(marker.exists(), "the real run did not run the step");
 }
 
+/// Steps marked `dry_run` run under `--dry-run`, told so through the
+/// environment, and their output is in the plan; the rest do not run.
+#[test]
+fn a_dry_run_runs_only_the_steps_that_support_it() {
+    let home = scratch("dry-run-steps");
+    let marker = home.join("wrote");
+    let yaml = "version: 1\nname: rehearse\nsummary: Plans, writes, reports\n\
+                inputs:\n  path: { type: string, required: true }\nsteps:\n\
+                \x20 - id: plan\n    script: env.sh\n    dry_run: true\n\
+                \x20 - id: write\n    script: touch.sh\n    args: ['${{ inputs.path }}']\n\
+                \x20 - id: report\n    script: echo.sh\n    dry_run: true\n\
+                \x20   stdin: ${{ steps.plan.output }}\n";
+    let dir = write_workflow(
+        &home,
+        "rehearse",
+        yaml,
+        &[
+            (
+                "env.sh",
+                "printf '{\"dry_run\":\"%s\"}\\n' \"$MAPBOX_WORKFLOW_DRY_RUN\"\n",
+            ),
+            ("touch.sh", "touch \"$1\"\n"),
+            ("echo.sh", "cat\n"),
+        ],
+    );
+    assert!(run(&home, &["workflow", "install", dir.to_str().unwrap()])
+        .status
+        .success());
+
+    let path = marker.display().to_string();
+    let out = run(
+        &home,
+        &[
+            "workflow",
+            "run",
+            "rehearse",
+            "--path",
+            &path,
+            "--dry-run",
+            "-o",
+            "json",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let plan = stdout_json(&out);
+    assert_eq!(plan["results"]["plan"], json!({ "dry_run": "1" }));
+    assert_eq!(plan["results"]["report"], json!({ "dry_run": "1" }));
+    assert!(plan["results"].get("write").is_none(), "{plan}");
+    assert_eq!(plan["steps"][1]["dry_run"], false);
+    assert!(
+        !marker.exists(),
+        "--dry-run ran a step that does not support it"
+    );
+
+    let out = run(
+        &home,
+        &["workflow", "run", "rehearse", "--path", &path, "-o", "json"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_json(&out), json!({ "dry_run": "" }));
+    assert!(marker.exists(), "the real run did not run every step");
+}
+
 #[test]
 fn install_refuses_an_invalid_workflow_and_writes_nothing() {
     let home = scratch("invalid");

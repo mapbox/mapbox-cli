@@ -25,7 +25,7 @@ use anyhow::{anyhow, Context as _, Result};
 use clap::{Arg, ArgAction, Command};
 use serde_json::{json, Map, Value};
 
-use super::definition::{Action, InputType, Step, Workflow, SCRIPTS_DIR};
+use super::definition::{Action, InputType, Step, Workflow, DRY_RUN_ENV, SCRIPTS_DIR};
 use super::template::{self, Context};
 use crate::auth;
 use crate::output::{self, style, CliError};
@@ -172,7 +172,14 @@ pub fn plan(workflow: &Workflow, inputs: &Map<String, Value>) -> Value {
                 Action::Command { args, .. } => ("command", Value::Object(args.clone())),
                 Action::Script { args, .. } => ("script", Value::Array(args.clone())),
             };
-            json!({ "id": step.id, "kind": kind, "run": step.label(), "args": args, "stdin": step.stdin })
+            json!({
+                "id": step.id,
+                "kind": kind,
+                "run": step.label(),
+                "args": args,
+                "stdin": step.stdin,
+                "dry_run": step.dry_run,
+            })
         })
         .collect();
     json!({ "workflow": workflow.name, "inputs": inputs, "steps": steps, "outputs": workflow.outputs })
@@ -187,6 +194,48 @@ pub fn run(
     inputs: &Map<String, Value>,
     inherited: &Inherited,
 ) -> Result<Value> {
+    let outputs = run_steps(app, workflow, root, inputs, inherited, false)?;
+
+    let last = workflow
+        .steps
+        .last()
+        .and_then(|step| outputs.get(&step.id))
+        .cloned()
+        .unwrap_or(Value::Null);
+    match &workflow.outputs {
+        Some(declared) => template::resolve(
+            declared,
+            &Context {
+                inputs,
+                steps: &outputs,
+            },
+        )
+        .map_err(|e| CliError::new("workflow_failed", format!("`outputs`: {e:#}")).into()),
+        None => Ok(last),
+    }
+}
+
+/// Runs only the steps marked `dry_run`, each with [`DRY_RUN_ENV`] set, and
+/// returns their outputs by step id. `outputs` is not resolved: the steps it
+/// reads may not have run.
+pub fn dry_run(
+    app: &Command,
+    workflow: &Workflow,
+    root: &Path,
+    inputs: &Map<String, Value>,
+    inherited: &Inherited,
+) -> Result<BTreeMap<String, Value>> {
+    run_steps(app, workflow, root, inputs, inherited, true)
+}
+
+fn run_steps(
+    app: &Command,
+    workflow: &Workflow,
+    root: &Path,
+    inputs: &Map<String, Value>,
+    inherited: &Inherited,
+    dry_run: bool,
+) -> Result<BTreeMap<String, Value>> {
     let exe = std::env::current_exe().context("Could not find this program's own path")?;
     let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
     let total = workflow.steps.len();
@@ -194,12 +243,21 @@ pub fn run(
     let color = style::enabled(std::io::stderr().is_terminal());
     for (index, step) in workflow.steps.iter().enumerate() {
         let title = step.name.as_deref().unwrap_or(&step.id);
+        let skipped = dry_run && !step.dry_run;
+        let note = if skipped {
+            format!("({}, skipped in a dry run)", step.label())
+        } else {
+            format!("({})", step.label())
+        };
         output::progress(&format!(
             "{} {} {}",
             style::paint(&format!("[{}/{total}]", index + 1), style::DIM, color),
             style::paint(title, style::BOLD, color),
-            style::paint(&format!("({})", step.label()), style::DIM, color),
+            style::paint(&note, style::DIM, color),
         ));
+        if skipped {
+            continue;
+        }
 
         let context = Context {
             inputs,
@@ -241,6 +299,9 @@ pub fn run(
                 process
                     .env("MAPBOX_CLI", &exe)
                     .env("MAPBOX_WORKFLOW_ROOT", root);
+                if dry_run {
+                    process.env(DRY_RUN_ENV, "1");
+                }
                 process
             }
         };
@@ -252,23 +313,7 @@ pub fn run(
         outputs.insert(step.id.clone(), value);
     }
 
-    let last = workflow
-        .steps
-        .last()
-        .and_then(|step| outputs.get(&step.id))
-        .cloned()
-        .unwrap_or(Value::Null);
-    match &workflow.outputs {
-        Some(declared) => template::resolve(
-            declared,
-            &Context {
-                inputs,
-                steps: &outputs,
-            },
-        )
-        .map_err(|e| CliError::new("workflow_failed", format!("`outputs`: {e:#}")).into()),
-        None => Ok(last),
-    }
+    Ok(outputs)
 }
 
 fn step_failure(step: &Step, err: anyhow::Error) -> anyhow::Error {

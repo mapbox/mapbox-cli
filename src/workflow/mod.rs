@@ -713,8 +713,17 @@ fn run_workflow(
         .collect();
     let inputs = runner::read_inputs(workflow, &given)?;
 
+    let inherited = runner::Inherited::from_matches(globals);
+
     if executor::wants_dry_run(matches) {
-        let plan = runner::plan(workflow, &inputs);
+        let mut plan = runner::plan(workflow, &inputs);
+        // Steps that promise to write nothing run for real, so the plan can
+        // say what the rest would do with actual data rather than guess.
+        let rehearsed = workflow.steps.iter().any(|step| step.dry_run);
+        if rehearsed {
+            let results = runner::dry_run(app, workflow, &found.root, &inputs, &inherited)?;
+            plan["results"] = json!(results);
+        }
         let color = output::result_in_color();
         let input_rows: Vec<Vec<(String, &'static str)>> = inputs
             .iter()
@@ -737,14 +746,29 @@ fn run_workflow(
                         ),
                         "",
                     ),
-                    (step.label(), style::DIM),
+                    (
+                        if step.dry_run {
+                            format!("{} (ran in this dry run)", step.label())
+                        } else {
+                            step.label()
+                        },
+                        style::DIM,
+                    ),
                 ]
             })
             .collect();
-        let mut text = format!(
-            "Dry run — nothing was run. Would run {}:",
-            heading(&workflow.name, color)
-        );
+        let mut text = if rehearsed {
+            format!(
+                "Dry run — only the steps that support it ran, and they wrote nothing. \
+                 Would run {}:",
+                heading(&workflow.name, color)
+            )
+        } else {
+            format!(
+                "Dry run — nothing was run. Would run {}:",
+                heading(&workflow.name, color)
+            )
+        };
         if !input_rows.is_empty() {
             text.push_str(&format!(
                 "\n\n{}\n{}",
@@ -760,7 +784,6 @@ fn run_workflow(
         return output::emit(mode, &text, plan);
     }
 
-    let inherited = runner::Inherited::from_matches(globals);
     let result = runner::run(app, workflow, &found.root, &inputs, &inherited)?;
     output::emit_value(mode, &result, None, None, None)
 }

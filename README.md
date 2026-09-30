@@ -24,6 +24,7 @@ mapbox styles list
   - [Diagnostics and settings](#diagnostics-and-settings)
   - [Shell completion](#shell-completion)
   - [Tileset CLI](#tileset-cli)
+  - [Workflows (beta)](#workflows-beta)
 - [For AI agents](#for-ai-agents)
   - [Agent skills](#agent-skills)
   - [Generate skills](#generate-skills)
@@ -288,6 +289,17 @@ It uses the same token as every other command. `--output` and `--yes` don't
 apply here; `tilesets` has its own flags, so use `--force`/`-f` for its
 prompts. If a tileset command answers for the wrong account,
 `mapbox auth whoami` shows which token is in play.
+
+### Workflows (beta)
+
+```sh
+mapbox workflow install copy-style
+mapbox workflow run copy-style --style-id <STYLE_ID> --from-profile source --to-profile target
+```
+
+A workflow is a named, multi-step recipe of `mapbox` commands and scripts.
+`mapbox workflow` is in development and not recommended for use yet. See
+[Workflows](./docs/commands.md#workflows).
 
 ## For AI agents
 

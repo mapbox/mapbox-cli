@@ -465,7 +465,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 // error on every command.
                 .value_parser(FalseyValueParser::new())
                 .global(true)
-                .help("Don't print the name-and-version banner to stderr"),
+                .help("Don't print the name-and-version banner, or the note after a download, to stderr"),
         )
         .arg(
             Arg::new(http::TIMEOUT_ARG)

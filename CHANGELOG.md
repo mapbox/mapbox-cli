@@ -25,6 +25,11 @@ that may never merge. They are not releases and are not listed here.
   to use it. The account also needs access to this API, which Mapbox grants
   on request; without it the command fails with a 403 saying so.
 
+- A command that returns a file (`styles download`, `static get-image`, a
+  tile or glyph range) now confirms it on stderr at a terminal:
+  `Wrote application/zip (988165 bytes).` stdout is unchanged, and
+  `--quiet`/`-q` hides it.
+
 - A 403 that names a missing scope now suggests `mapbox auth login` in its
   `fix` and `next_actions`, and a 403 for an account without access to a
   prerelease API says to contact Mapbox. Other 403s are unchanged.

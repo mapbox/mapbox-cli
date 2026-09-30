@@ -3986,7 +3986,7 @@ Installed copy-style
 
 Source  ~/dev/cli/workflow/copy-style
 Path    ~/.mapbox/workflows/copy-style
-Files   README.md, scripts/prepare.py, workflow.yaml
+Files   README.md, scripts/copy_style.py, workflow.yaml
 ```
 
 </td><td>
@@ -3996,7 +3996,7 @@ Files   README.md, scripts/prepare.py, workflow.yaml
   "dry_run": false,
   "files": [
     "README.md",
-    "scripts/prepare.py",
+    "scripts/copy_style.py",
     "workflow.yaml"
   ],
   "name": "copy-style",
@@ -4036,7 +4036,7 @@ the run with `workflow_failed`, naming the step, and exit code 1.
 | --- | --- |
 | `NAME` | Name of an installed workflow. |
 | `--<input>` | One flag per input the workflow declares, spelled with dashes (`style_id` is `--style-id`). Required, typed and defaulted as its `workflow.yaml` says. `mapbox workflow run <name> --help` lists them. |
-| `--dry-run` | Check the workflow and its inputs and print the plan, then exit without running a step. |
+| `--dry-run` | Check the workflow and its inputs and print the plan. Runs only the steps marked `dry_run`, which write nothing; skips the rest. |
 
 The flags come from the installed workflow's definition, read before the
 command line is parsed, so a missing input, a misspelled flag or a value of the
@@ -4070,21 +4070,38 @@ mapbox workflow run copy-style --style-id cmm28c5rm00bj01qz9hwp69qc \
 ```
 
 `--dry-run` prints the plan: the inputs as they were read, and each step with
-its arguments as written, since nothing has run to fill them in.
+its arguments as written. A step marked `dry_run` in its `workflow.yaml` runs
+for real, with `MAPBOX_WORKFLOW_DRY_RUN=1` in its environment and the promise
+to write nothing, so the plan can show what the rest would do with real data;
+its output is under `results` in `-o json`. Every other step is skipped.
+`copy-style` marks both of its steps, so its dry run downloads the style and
+lists what it would upload:
 
 ```
-Dry run — nothing was run. Would run copy-style:
+$ mapbox workflow run copy-style --style-id cmums8rlh000301s96498hnju \
+    --from-profile default --to-profile default --dry-run
+Beta: `mapbox workflow` is in development and not recommended for use.
+
+[1/2] Download the style and plan the copy (python3 scripts/copy_style.py)
+Downloaded zhuwenlong/cmums8rlh000301s96498hnju: 561 icons, 1 custom font (1 already in zhuwenlong).
+[2/2] Copy the fonts, the style and its icons (python3 scripts/copy_style.py)
+Would copy the style into zhuwenlong as "CLI copy test: Helsinki Evening · CLI Blog Demo":
+  skip font Yellow Banana Regular (already in zhuwenlong)
+  create the style
+  upload 561 icons in 23 batches
+  point its sprite and glyphs at zhuwenlong
+
+Dry run — only the steps that support it ran, and they wrote nothing. Would run copy-style:
 
 Inputs
-  from_profile  source
+  from_profile  default
   name          (none)
-  style_id      cmm28c5rm00bj01qz9hwp69qc
-  to_profile    target
+  style_id      cmums8rlh000301s96498hnju
+  to_profile    default
 
 Steps
-  1. Read the style    mapbox styles get
-  2. Prepare the copy  python3 scripts/prepare.py
-  3. Create the copy   mapbox styles create
+  1. Download the style and plan the copy     python3 scripts/copy_style.py (ran in this dry run)
+  2. Copy the fonts, the style and its icons  python3 scripts/copy_style.py (ran in this dry run)
 ```
 
 ---

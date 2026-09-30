@@ -27,9 +27,12 @@ that may never merge. They are not releases and are not listed here.
   and `list`, `show`, `run` and `uninstall` work on what is installed.
   `run` takes each of the workflow's inputs as a flag, as in
   `mapbox workflow run copy-style --style-id <id> --from-profile source
-  --to-profile target`. The generated agent skill leaves `workflow` out. The
-  first one published is `copy-style`, which copies a style between
-  accounts. The command, the `version: 1` format and the published
+  --to-profile target`. `run --dry-run` runs only the steps a workflow
+  marks `dry_run`, which write nothing, so the plan can show real data. The
+  generated agent skill leaves `workflow` out. The first one published is
+  `copy-style`, which copies a style between accounts with its custom fonts
+  and icons, and on a partial failure lists what it created and the
+  commands that remove it. The command, the `version: 1` format and the published
   workflows may change or be removed without notice, and every `workflow`
   subcommand says so on stderr. Nothing changes for a script that does not
   use them.

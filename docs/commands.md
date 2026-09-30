@@ -4047,7 +4047,11 @@ workflow.
 
 **stdout holds only the result**: the workflow's `outputs`, or the last
 step's output if it declares none, rendered like any other result. Each
-step's progress line and anything a step writes to stderr go to stderr.
+step's progress and anything a step writes to stderr go to stderr. At a
+terminal, each step shows its title, the details its script reports, and a
+spinner that becomes `✓` or `✗` with the time it took; anywhere else, each
+step is one `[n/total]` line followed by its details, with no escape codes.
+`workflow/README.md` describes how a script reports.
 
 Each command step is this binary run again with `--output json`, so it
 resolves its token and applies its timeouts as the same command typed by
@@ -4082,14 +4086,19 @@ $ mapbox workflow run copy-style --style-id cmums8rlh000301s96498hnju \
     --from-profile default --to-profile default --dry-run
 Beta: `mapbox workflow` is in development and not recommended for use.
 
-[1/2] Download the style and plan the copy (python3 scripts/copy_style.py)
-Downloaded zhuwenlong/cmums8rlh000301s96498hnju: 561 icons, 1 custom font (1 already in zhuwenlong).
-[2/2] Copy the fonts, the style and its icons (python3 scripts/copy_style.py)
-Would copy the style into zhuwenlong as "CLI copy test: Helsinki Evening · CLI Blog Demo":
-  skip font Yellow Banana Regular (already in zhuwenlong)
-  create the style
-  upload 561 icons in 23 batches
-  point its sprite and glyphs at zhuwenlong
+▸ Download the style and plan the copy
+    Downloaded zhuwenlong/cmums8rlh000301s96498hnju (965 KB)
+    Found 561 icons and 1 custom font
+    Font Yellow Banana Regular is already in zhuwenlong; it will be skipped
+  ✓ 0.6s
+
+▸ Copy the fonts, the style and its icons
+    Would copy the style into zhuwenlong as "CLI copy test: Helsinki Evening · CLI Blog Demo":
+      skip font Yellow Banana Regular (already in zhuwenlong)
+      create the style
+      upload 561 icons in 23 batches
+      point its sprite and glyphs at zhuwenlong
+  ✓ 0.1s
 
 Dry run — only the steps that support it ran, and they wrote nothing. Would run copy-style:
 

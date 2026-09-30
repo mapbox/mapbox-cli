@@ -13,6 +13,7 @@
 //! a script step.
 
 pub mod definition;
+pub mod progress;
 mod prose;
 pub mod runner;
 pub mod store;
@@ -785,7 +786,7 @@ fn run_workflow(
     }
 
     let result = runner::run(app, workflow, &found.root, &inputs, &inherited)?;
-    output::emit_value(mode, &result, None, None, None)
+    output::emit_result(mode, &result)
 }
 
 #[cfg(test)]

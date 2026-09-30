@@ -105,10 +105,28 @@ Each command step runs this `mapbox` binary again, with `--output json`, and its
 A script runs from the installed copy of `scripts/`, in the directory `mapbox workflow run` was started from.
 
 - It gets `args` as its arguments and `stdin` on standard input, as JSON unless the value is a string. With no `stdin` it reads nothing.
-- Whatever it writes to stdout is its output: JSON when it parses as JSON, the text otherwise. It writes progress to stderr.
+- Whatever it writes to stdout is its output: JSON when it parses as JSON, the text otherwise. It reports to the person running it on stderr, as below.
 - A non-zero exit stops the workflow.
 - `MAPBOX_CLI` is the path to this `mapbox` binary, for a script that runs commands of its own. `MAPBOX_WORKFLOW_ROOT` is the installed workflow's directory.
 - The interpreter must be installed on the machine. `.sh` runs under `sh`, `.py` under `python3` and `.js` under `node`, and any other extension needs `interpreter`.
+
+### Reporting progress
+
+The runner shows every step the same way, so a script only says what it is doing and what it did:
+
+- A stderr line starting with `::progress ` is what the step is doing now, such as `::progress uploading icons 150/561`. At a terminal it is shown beside a spinner and replaced by the next one. Anywhere else it is dropped.
+- Any other stderr line is a detail, such as `Uploaded font Yellow Banana Regular`, and is kept under the step.
+
+At a terminal a step looks like this, and the last line becomes `✓ <time>` or `✗ failed after <time>` when it ends:
+
+```
+▸ Copy the fonts, the style and its icons
+    Uploaded font Yellow Banana Regular
+    Created style target-account/ckcopy000000000000000001
+  ⠹ uploading icons 150/561
+```
+
+In a pipe, a CI log or anywhere stderr is not a terminal, each step is one `[n/total]` line followed by its details, with no escape codes. A command step is never animated: it keeps the terminal, so a confirmation prompt still reaches the person running it.
 
 ### Dry runs
 

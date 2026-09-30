@@ -28,7 +28,11 @@ that may never merge. They are not releases and are not listed here.
   `run` takes each of the workflow's inputs as a flag, as in
   `mapbox workflow run copy-style --style-id <id> --from-profile source
   --to-profile target`. `run --dry-run` runs only the steps a workflow
-  marks `dry_run`, which write nothing, so the plan can show real data. The
+  marks `dry_run`, which write nothing, so the plan can show real data. At a
+  terminal each step shows a spinner, the details its script reports on
+  stderr (a `::progress ` line updates the spinner's text), and `✓` or `✗`
+  with the time it took; off a terminal, each step is a plain `[n/total]`
+  line followed by its details. The
   generated agent skill leaves `workflow` out. The first one published is
   `copy-style`, which copies a style between accounts with its custom fonts
   and icons, and on a partial failure lists what it created and the

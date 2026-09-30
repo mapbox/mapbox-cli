@@ -19,12 +19,29 @@ pub const RESET: &str = "\x1b[0m";
 pub const BOLD: &str = "\x1b[1m";
 pub const DIM: &str = "\x1b[2m";
 pub const ACCENT: &str = "\x1b[94m";
+pub const GREEN: &str = "\x1b[32m";
+pub const RED: &str = "\x1b[31m";
 
 /// Whether a stream should be written in color.
 pub fn enabled(stream_is_terminal: bool) -> bool {
     stream_is_terminal
         && allowed(
             env_value("NO_COLOR").is_some(),
+            env_value("TERM").as_deref(),
+            !cfg!(windows)
+                || env_value("WT_SESSION").is_some()
+                || env_value("TERM_PROGRAM").is_some(),
+        )
+}
+
+/// Whether a line on a stream can be redrawn in place, for a spinner.
+///
+/// Not a color question, so `NO_COLOR` does not turn it off; a terminal that
+/// would print the escapes literally does.
+pub fn redraws(stream_is_terminal: bool) -> bool {
+    stream_is_terminal
+        && allowed(
+            false,
             env_value("TERM").as_deref(),
             !cfg!(windows)
                 || env_value("WT_SESSION").is_some()

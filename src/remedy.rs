@@ -130,11 +130,13 @@ pub fn docs_for_service(service: &str) -> Option<&'static str> {
 ///
 /// `matches` and `username` are what the failed invocation actually supplied:
 /// a suggestion has to carry them, or it is a command line that will not run.
+/// `body` is the API's answer, read only where the status alone is ambiguous.
 pub fn for_http(
     status: u16,
     op: &Operation,
     matches: &ArgMatches,
     username: Option<&str>,
+    body: &str,
 ) -> Remedy {
     let remedy = Remedy::default().with_doc(docs_for_service(&op.service));
 
@@ -152,14 +154,7 @@ pub fn for_http(
                  where each one lands in the request.",
             )
             .with_action(Some(schema_command(op))),
-        403 => remedy
-            .with_fix(
-                "The token was accepted but is not allowed to do this: either it lacks \
-                 the scope the operation needs, or it belongs to an account that does \
-                 not own what the request names.",
-            )
-            .with_action(Some("mapbox auth whoami".to_string()))
-            .with_doc(Some(TOKENS_DOC)),
+        403 => for_forbidden(remedy, body),
         // `whoami` is here on every 404, not only on an account-scoped path:
         // the Mapbox APIs answer a request the token is not allowed to make
         // with 404 rather than 403 — `accounts list-tokens` with a `pk`
@@ -195,6 +190,56 @@ pub fn for_http(
         // fix costs more than a missing one.
         _ => remedy,
     }
+}
+
+/// What the shared auth middleware answers when the account lacks the
+/// feature flag an endpoint is gated on — the same text on every API that
+/// uses it, which is what makes it safe to key on.
+const ACCOUNT_FLAG_MISSING: &str = "This is a prerelease API.";
+
+/// A 403 has three causes, and they need three different answers. Two of
+/// them the API names in its message, so read it rather than guess: the
+/// wrong advice for an account flag is "log in again", which cannot help.
+fn for_forbidden(remedy: Remedy, body: &str) -> Remedy {
+    if body.contains(ACCOUNT_FLAG_MISSING) {
+        return remedy.with_fix(
+            "Your account does not have access to this API yet. Mapbox enables it \
+             per account, so a new token or a new login will not help: contact \
+             Mapbox at help@mapbox.com to request access.",
+        );
+    }
+    if let Some(scope) = missing_scope(body) {
+        return remedy
+            .with_fix(&format!(
+                "The token lacks the `{scope}` scope. A login from before this CLI \
+                 started asking for it does not have it: run `mapbox auth login` \
+                 again. A token from anywhere else needs the scope added where it \
+                 was created."
+            ))
+            .with_action(Some("mapbox auth login".to_string()))
+            .with_doc(Some(TOKENS_DOC));
+    }
+    remedy
+        .with_fix(
+            "The token was accepted but is not allowed to do this: either it lacks \
+             the scope the operation needs, or it belongs to an account that does \
+             not own what the request names.",
+        )
+        .with_action(Some("mapbox auth whoami".to_string()))
+        .with_doc(Some(TOKENS_DOC))
+}
+
+/// The scope a 403 names: "This API requires a token with styles:download
+/// scope." Checked against the shape of a scope, since it is echoed into
+/// advice the user may paste.
+fn missing_scope(body: &str) -> Option<&str> {
+    let (_, rest) = body.split_once("requires a token with ")?;
+    let (scope, _) = rest.split_once(" scope")?;
+    let well_formed = scope.contains(':')
+        && scope
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, ':' | '-'));
+    well_formed.then_some(scope)
 }
 
 /// The remedy for a request that never reached the API.
@@ -399,6 +444,7 @@ paths:
             operation(&svc, "get-style"),
             &nothing(),
             Some("someone"),
+            "",
         );
 
         assert_eq!(
@@ -424,12 +470,13 @@ paths:
             operation(&svc, "get-style"),
             &nothing(),
             Some("someone"),
+            "",
         );
         assert!(for_someone.next_actions[0].ends_with("--username someone"));
 
         // Nothing resolved an account, so there is nothing to name — and
         // guessing one would be worse than leaving the flag off.
-        let anonymous = for_http(404, operation(&svc, "get-style"), &nothing(), None);
+        let anonymous = for_http(404, operation(&svc, "get-style"), &nothing(), None, "");
         assert_eq!(anonymous.next_actions[0], "mapbox styles list-styles");
     }
 
@@ -447,6 +494,7 @@ paths:
             operation(&svc, "get-sprite-image"),
             &supplied,
             Some("someone"),
+            "",
         );
 
         assert_eq!(
@@ -467,6 +515,7 @@ paths:
             operation(&svc, "get-sprite-image"),
             &nothing(),
             Some("someone"),
+            "",
         );
 
         assert_eq!(
@@ -508,6 +557,7 @@ paths:
             operation(&svc, "get-thing"),
             &nothing(),
             Some("someone"),
+            "",
         );
         assert_eq!(remedy.next_actions[0], "mapbox styles list-things");
     }
@@ -522,6 +572,7 @@ paths:
             operation(&svc, "list-styles"),
             &nothing(),
             Some("someone"),
+            "",
         );
         assert_eq!(remedy.next_actions, ["mapbox auth whoami"]);
     }
@@ -532,7 +583,7 @@ paths:
     fn a_rejected_request_offers_the_schema() {
         let svc = styles();
         for status in [400, 422] {
-            let remedy = for_http(status, operation(&svc, "get-style"), &nothing(), None);
+            let remedy = for_http(status, operation(&svc, "get-style"), &nothing(), None, "");
             assert_eq!(
                 remedy.next_actions,
                 ["mapbox styles get-style --schema"],
@@ -547,7 +598,7 @@ paths:
     #[test]
     fn a_401_leaves_the_fix_to_auth_but_still_carries_the_page() {
         let svc = styles();
-        let remedy = for_http(401, operation(&svc, "get-style"), &nothing(), None);
+        let remedy = for_http(401, operation(&svc, "get-style"), &nothing(), None, "");
 
         assert!(remedy.fix.is_none(), "auth writes this one");
         assert!(remedy.next_actions.is_empty());
@@ -559,7 +610,7 @@ paths:
     #[test]
     fn a_403_asks_about_the_scope_and_the_account() {
         let svc = styles();
-        let remedy = for_http(403, operation(&svc, "get-style"), &nothing(), None);
+        let remedy = for_http(403, operation(&svc, "get-style"), &nothing(), None, "");
 
         let fix = remedy.fix.expect("a 403 has an explanation");
         assert!(fix.contains("scope"), "{fix}");
@@ -567,12 +618,52 @@ paths:
         assert_eq!(remedy.next_actions, ["mapbox auth whoami"]);
     }
 
+    /// The account-flag 403 is not a scope problem, and "log in again" is
+    /// the one piece of advice guaranteed not to help with it.
+    #[test]
+    fn a_403_for_a_missing_account_flag_asks_for_access() {
+        let svc = styles();
+        let body = r#"{"message":"This is a prerelease API. Please contact support at help@mapbox.com to request access."}"#;
+        let remedy = for_http(403, operation(&svc, "get-style"), &nothing(), None, body);
+
+        let fix = remedy.fix.expect("a 403 has an explanation");
+        assert!(fix.contains("help@mapbox.com"), "{fix}");
+        assert!(!fix.contains("auth login"), "{fix}");
+        assert!(remedy.next_actions.is_empty(), "{:?}", remedy.next_actions);
+    }
+
+    /// A login from before a scope was added lacks it until the next login,
+    /// so a 403 that names the scope points there.
+    #[test]
+    fn a_403_that_names_a_scope_asks_for_a_new_login() {
+        let svc = styles();
+        let body = r#"{"message":"This API requires a token with styles:download scope."}"#;
+        let remedy = for_http(403, operation(&svc, "get-style"), &nothing(), None, body);
+
+        let fix = remedy.fix.expect("a 403 has an explanation");
+        assert!(fix.contains("`styles:download`"), "{fix}");
+        assert_eq!(remedy.next_actions, ["mapbox auth login"]);
+    }
+
+    /// The scope is echoed into advice, so anything that does not look like
+    /// one falls back to the generic answer instead.
+    #[test]
+    fn a_scope_is_only_read_when_it_looks_like_one() {
+        assert_eq!(
+            missing_scope("requires a token with fonts:metadata scope"),
+            Some("fonts:metadata")
+        );
+        assert_eq!(missing_scope("requires a token with `rm -rf` scope"), None);
+        assert_eq!(missing_scope("requires a token with admin scope"), None);
+        assert_eq!(missing_scope("Forbidden"), None);
+    }
+
     /// A status nobody has written advice for still gets the page. Inventing
     /// a fix for it would cost more than saying nothing.
     #[test]
     fn a_status_with_no_advice_still_gets_the_page() {
         let svc = styles();
-        let remedy = for_http(402, operation(&svc, "get-style"), &nothing(), None);
+        let remedy = for_http(402, operation(&svc, "get-style"), &nothing(), None, "");
 
         assert!(remedy.fix.is_none());
         assert!(remedy.next_actions.is_empty());
@@ -596,7 +687,7 @@ paths:
     fn a_server_failure_says_so_and_names_the_status_page() {
         let svc = styles();
         for status in [500, 502, 503] {
-            let remedy = for_http(status, operation(&svc, "get-style"), &nothing(), None);
+            let remedy = for_http(status, operation(&svc, "get-style"), &nothing(), None, "");
             let fix = remedy.fix.expect("an explanation");
             assert!(fix.contains("Retry"), "HTTP {status}: {fix}");
             assert!(remedy.docs.contains(&STATUS_PAGE.to_string()));
@@ -622,11 +713,17 @@ paths:
         )
         .expect("fixture parses");
 
-        let remedy = for_http(403, operation(&accounts, "list-tokens"), &nothing(), None);
+        let remedy = for_http(
+            403,
+            operation(&accounts, "list-tokens"),
+            &nothing(),
+            None,
+            "",
+        );
         assert_eq!(remedy.docs, [TOKENS_DOC]);
 
         // And the ordinary case still carries both.
-        let remedy = for_http(403, operation(&svc, "get-style"), &nothing(), None);
+        let remedy = for_http(403, operation(&svc, "get-style"), &nothing(), None, "");
         assert_eq!(
             remedy.docs,
             ["https://docs.mapbox.com/api/maps/styles/", TOKENS_DOC]

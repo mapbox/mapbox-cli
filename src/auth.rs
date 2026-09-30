@@ -66,6 +66,10 @@ const VALIDATION_ENDPOINT: &str = "https://api.mapbox.com/tokens/v2";
 // `statistics:read` (needed by `mapbox usage`) registers fine — confirmed
 // live against a real `mapbox auth login` — so it rides along unconditionally
 // rather than through the now-removed `ACCOUNT_USAGE` flag.
+// `styles:download` (`styles download`) became registrable on 2026-09-30.
+// Holding it is not enough on its own: the account also needs access Mapbox
+// grants on request, and `remedy::for_http` tells that 403 apart from a
+// missing scope.
 const DEFAULT_SCOPES_LIST: &[&str] = &[
     "styles:tiles",
     "styles:read",
@@ -83,6 +87,7 @@ const DEFAULT_SCOPES_LIST: &[&str] = &[
     "tilesets:list",
     "user-feedback:read",
     "statistics:read",
+    "styles:download",
 ];
 
 /// [`DEFAULT_SCOPES_LIST`], space-joined the way the OAuth `scope` parameter
@@ -2238,6 +2243,7 @@ mod tests {
             "tilesets:write",
             "tilesets:list",
             "statistics:read",
+            "styles:download",
         ] {
             assert!(requested.contains(&needed), "{needed} is not requested");
         }
@@ -2245,7 +2251,6 @@ mod tests {
         for unavailable in [
             "tokens:write",
             "fonts:metadata",
-            "styles:download",
             // Registrable, and deliberately not asked for: the only command
             // that needed it unlocks a style for deletion, and is withheld.
             // A scope no command uses is a capability handed out for free.

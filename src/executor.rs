@@ -317,7 +317,13 @@ fn dispatch(
             .expect("a failure always takes the text path");
         return Err(CliError::http(status.as_u16(), text)
             .with_request_id(headers.request_id)
-            .with_remedy(remedy::for_http(status.as_u16(), op, matches, username))
+            .with_remedy(remedy::for_http(
+                status.as_u16(),
+                op,
+                matches,
+                username,
+                text,
+            ))
             .into());
     }
 

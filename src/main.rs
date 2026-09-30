@@ -2208,7 +2208,7 @@ mod tests {
                 let supplied = an_invocation_of(&specs, svc, op);
                 for username in [Some("someone"), None] {
                     for status in [400, 401, 403, 404, 409, 422, 429, 500, 503] {
-                        let remedy = remedy::for_http(status, op, &supplied, username);
+                        let remedy = remedy::for_http(status, op, &supplied, username, "");
                         for action in &remedy.next_actions {
                             assert!(
                                 would_run(&specs, action),

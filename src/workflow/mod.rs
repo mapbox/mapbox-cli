@@ -18,6 +18,7 @@ mod prose;
 pub mod runner;
 pub mod store;
 pub mod template;
+pub mod workdir;
 
 use std::ffi::OsString;
 use std::io::IsTerminal;

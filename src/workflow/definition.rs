@@ -88,10 +88,15 @@ pub struct Step {
     pub name: Option<String>,
     pub action: Action,
     pub stdin: Option<Value>,
-    /// Runs under `--dry-run` too, with [`DRY_RUN_ENV`] set. The script's
-    /// promise to write nothing then, which only a script can make: a
-    /// command step has no way to hold its request back and still answer.
+    /// Runs under `--dry-run` too. A script is told so through
+    /// [`DRY_RUN_ENV`] and promises to write nothing; a command step may be
+    /// marked only if its command changes nothing, which
+    /// [`super::runner::command_problems`] checks against the command tree.
     pub dry_run: bool,
+    /// A command step's stdout, written as this file in the run's
+    /// [`super::workdir`] rather than read as its output. How a binary
+    /// response, such as a style's ZIP, reaches a later step.
+    pub save: Option<String>,
 }
 
 /// Set to `1` for a `dry_run` step while `--dry-run` runs it.
@@ -162,6 +167,8 @@ struct RawStep {
     stdin: Option<Value>,
     #[serde(default)]
     dry_run: bool,
+    #[serde(default)]
+    save: Option<String>,
 }
 
 /// A workflow name is one directory name, lower-case and dash-separated —
@@ -333,10 +340,13 @@ pub fn parse(name: &str, files: &Files) -> Result<Workflow, Vec<String>> {
 
         let action = match (raw_step.command, raw_step.script) {
             (Some(command), None) => {
-                if raw_step.dry_run {
-                    problems.push(format!(
-                        "step `{id}`: `dry_run` only applies to a `script` step"
-                    ));
+                if let Some(save) = &raw_step.save {
+                    let path = Path::new(save);
+                    if !is_contained(path) || path.components().count() != 1 {
+                        problems.push(format!(
+                            "step `{id}`: `save: {save}` must be a plain file name"
+                        ));
+                    }
                 }
                 if raw_step.interpreter.is_some() {
                     problems.push(format!(
@@ -360,6 +370,12 @@ pub fn parse(name: &str, files: &Files) -> Result<Workflow, Vec<String>> {
                 Some(Action::Command { path, args })
             }
             (None, Some(script)) => {
+                if raw_step.save.is_some() {
+                    problems.push(format!(
+                        "step `{id}`: `save` only applies to a `command` step; a script \
+                         writes its own files"
+                    ));
+                }
                 let script = PathBuf::from(script);
                 let under_scripts = Path::new(SCRIPTS_DIR).join(&script);
                 if !is_contained(&script) {
@@ -439,6 +455,7 @@ pub fn parse(name: &str, files: &Files) -> Result<Workflow, Vec<String>> {
                 action,
                 stdin: raw_step.stdin,
                 dry_run: raw_step.dry_run,
+                save: raw_step.save,
             });
         }
     }
@@ -610,19 +627,31 @@ outputs:
         );
     }
 
-    /// A command step cannot hold its request back, so it cannot promise
-    /// to write nothing under `--dry-run`.
     #[test]
-    fn only_a_script_can_run_in_a_dry_run() {
+    fn save_is_a_plain_file_name_on_a_command_step() {
+        for bad in ["../x.zip", "dir/x.zip", "/tmp/x.zip"] {
+            let yaml = MINIMAL.replace(
+                "    command: styles get\n",
+                &format!("    command: styles get\n    save: '{bad}'\n"),
+            );
+            let found = problems(&[(DEFINITION_FILE, &yaml), ("scripts/shape.py", "")]);
+            assert!(
+                found
+                    .iter()
+                    .any(|p| p.contains("must be a plain file name")),
+                "{bad}: {found:?}"
+            );
+        }
+
         let yaml = MINIMAL.replace(
-            "    command: styles get\n",
-            "    command: styles get\n    dry_run: true\n",
+            "    script: shape.py\n",
+            "    script: shape.py\n    save: out.json\n",
         );
         let found = problems(&[(DEFINITION_FILE, &yaml), ("scripts/shape.py", "")]);
         assert!(
             found
                 .iter()
-                .any(|p| p.contains("only applies to a `script` step")),
+                .any(|p| p.contains("only applies to a `command` step")),
             "{found:?}"
         );
     }

@@ -4080,22 +4080,37 @@ mapbox workflow run copy-style --style-id cmm28c5rm00bj01qz9hwp69qc \
 
 `--dry-run` prints the plan: the inputs as they were read, and each step with
 its arguments as written. A step marked `dry_run` in its `workflow.yaml` runs
-for real, with `MAPBOX_WORKFLOW_DRY_RUN=1` in its environment and the promise
-to write nothing, so the plan can show what the rest would do with real data;
-its output is under `results` in `-o json`. Every other step is skipped.
-`copy-style` marks both of its steps, so its dry run downloads the style and
-lists what it would upload:
+for real, so the plan can show what the rest would do with real data: a
+command step only if its command changes nothing, and a script step with
+`MAPBOX_WORKFLOW_DRY_RUN=1` in its environment and the promise to write
+nothing. Their outputs are under `results` in `-o json`. Every other step is
+skipped. `copy-style` marks all of its steps, so its dry run downloads the
+style and lists what it would upload:
 
 ```
 $ mapbox workflow run copy-style --style-id cmums8rlh000301s96498hnju \
     --from-profile default --to-profile default --dry-run
+🗺️  mapbox · v0.3.0
+────────────────────────────────────────
 Beta: `mapbox workflow` is in development and not recommended for use.
 
-▸ Download the style and plan the copy
-    Downloaded zhuwenlong/cmums8rlh000301s96498hnju (965 KB)
+▸ Check the source login  mapbox auth status
+  ✓ 0.0s
+
+▸ Check the target login  mapbox auth status
+  ✓ 0.0s
+
+▸ Download the style  mapbox styles download
+    Saved style.zip (965 KB)
+  ✓ 0.3s
+
+▸ List the target account's fonts  mapbox fonts list
+  ✓ 0.1s
+
+▸ Plan the copy
     Found 561 icons and 1 custom font
     Font Yellow Banana Regular is already in zhuwenlong; it will be skipped
-  ✓ 0.6s
+  ✓ 0.2s
 
 ▸ Copy the fonts, the style and its icons
     Would copy the style into zhuwenlong as "CLI copy test: Helsinki Evening · CLI Blog Demo":
@@ -4114,8 +4129,12 @@ Inputs
   to_profile    default
 
 Steps
-  1. Download the style and plan the copy     python3 scripts/copy_style.py (ran in this dry run)
-  2. Copy the fonts, the style and its icons  python3 scripts/copy_style.py (ran in this dry run)
+  1. Check the source login                   mapbox auth status (ran in this dry run)
+  2. Check the target login                   mapbox auth status (ran in this dry run)
+  3. Download the style                       mapbox styles download (ran in this dry run)
+  4. List the target account's fonts          mapbox fonts list (ran in this dry run)
+  5. Plan the copy                            python3 scripts/copy_style.py (ran in this dry run)
+  6. Copy the fonts, the style and its icons  python3 scripts/copy_style.py (ran in this dry run)
 ```
 
 ---

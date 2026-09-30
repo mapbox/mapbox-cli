@@ -399,6 +399,43 @@ fn result_is_the_text_and_outputs_are_the_json() {
     assert_eq!(stdout_json(&json), json!({ "said": "hello" }));
 }
 
+/// `save` keeps a command step's stdout as a file in the run's working
+/// directory, which a later script reads, and which is gone once the run ends.
+#[test]
+fn save_keeps_a_command_output_as_a_file_for_the_run() {
+    let home = scratch("save");
+    let yaml = "version: 1\nname: keep\nsummary: Saves then reads\nsteps:\n\
+                \x20 - id: settings\n    command: config list\n    save: settings.json\n\
+                \x20 - id: read\n    script: read.sh\n    stdin: ${{ steps.settings.output.path }}\n";
+    let script = "read -r path\n\
+                  [ \"$(dirname \"$path\")\" = \"$MAPBOX_WORKFLOW_WORKDIR\" ] || exit 7\n\
+                  printf '{\"path\":\"%s\",\"saved\":' \"$path\"\n\
+                  cat \"$path\"\n\
+                  printf '}'\n";
+    let dir = write_workflow(&home, "keep", yaml, &[("read.sh", script)]);
+    assert!(run(&home, &["workflow", "install", dir.to_str().unwrap()])
+        .status
+        .success());
+
+    let out = run(&home, &["workflow", "run", "keep", "-o", "json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let result = stdout_json(&out);
+    assert!(
+        result["saved"].is_array(),
+        "the saved file is the command's JSON: {result}"
+    );
+    let path = PathBuf::from(result["path"].as_str().unwrap());
+    assert!(
+        !path.parent().unwrap().exists(),
+        "the run's working directory outlived the run: {}",
+        path.display()
+    );
+}
+
 #[test]
 fn install_refuses_an_invalid_workflow_and_writes_nothing() {
     let home = scratch("invalid");

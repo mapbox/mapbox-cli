@@ -12,14 +12,19 @@ mapbox workflow run copy-style \
   --to-profile target
 ```
 
-1. **Download the style and plan the copy.** `styles download` fetches the style's ZIP as `from_profile`. The plan lists the fonts to upload (fonts `to_profile` already has are skipped, by name), the icons, and anything the copy still depends on the source account for.
-2. **Copy the fonts, the style and its icons**, as `to_profile`: `fonts upload` for each new font, `styles create`, `sprites upload-batch` in batches of 25, then `styles update` to point the style's sprite and glyphs at the target account.
+The first four steps are `mapbox` commands, the last two a script:
 
-`--dry-run` runs step 1 for real and step 2 without writing anything, so it shows exactly which fonts would be uploaded or skipped, how many icons, and every command step 2 would run.
+1. **Check the source login** and 2. **the target login**: `auth status` for each profile, which names the account its login belongs to.
+3. **Download the style**: `styles download` as `from_profile`, kept as `style.zip` in the run's working directory with `save`.
+4. **List the target account's fonts**: `fonts list` as `to_profile`.
+5. **Plan the copy** (`scripts/copy_style.py plan`): unpacks the ZIP and lists the fonts to upload (fonts the target already has are skipped, by name), the icons, and anything the copy still depends on the source account for.
+6. **Copy the fonts, the style and its icons** (`scripts/copy_style.py apply`), as `to_profile`: `fonts upload` for each new font, `styles create`, `sprites upload-batch` in batches of 25, then `styles update` to point the style's sprite and glyphs at the target account. A script, because it loops.
+
+`--dry-run` runs steps 1 to 5 for real, since none of them writes anything, and step 6 without writing, so it shows exactly which fonts would be uploaded or skipped, how many icons, and every command step 6 would run.
 
 The source account needs access to the style download API, which Mapbox grants on request. Tilesets and imported styles that belong to the source account are not copied; the copy can use them only if the target account can read them, and the `warnings` output lists each one.
 
-If step 2 fails partway, nothing is removed. The error lists the style and fonts it created and the commands that remove them, for example:
+If step 6 fails partway, nothing is removed. The error lists the style and fonts it created and the commands that remove them, for example:
 
 ```
 Created in target-account before the failure:

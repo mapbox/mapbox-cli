@@ -42,14 +42,55 @@ inputs:
     description: Name for the copy. Defaults to the original's name
 
 steps:
-  - id: fetch
-    name: Download the style and plan the copy
+  # The first four are mapbox commands. Each runs as its profile's login and
+  # names that login's account, so a MAPBOX_ACCESS_TOKEN or MAPBOX_USERNAME in
+  # the environment cannot point it at another account.
+  - id: source_login
+    name: Check the source login
+    command: auth status
+    args:
+      profile: ${{ inputs.from_profile }}
+    dry_run: true
+
+  - id: target_login
+    name: Check the target login
+    command: auth status
+    args:
+      profile: ${{ inputs.to_profile }}
+    dry_run: true
+
+  - id: download
+    name: Download the style
+    command: styles download
+    args:
+      style-id: ${{ inputs.style_id }}
+      profile: ${{ inputs.from_profile }}
+      use-login: true
+      username: ${{ steps.source_login.output.stored_login }}
+    save: style.zip
+    dry_run: true
+
+  - id: target_fonts
+    name: List the target account's fonts
+    command: fonts list
+    args:
+      profile: ${{ inputs.to_profile }}
+      use-login: true
+      username: ${{ steps.target_login.output.stored_login }}
+    dry_run: true
+
+  # Scripts from here: the copy loops over fonts and icon batches, which a
+  # workflow step does not.
+  - id: plan
+    name: Plan the copy
     script: copy_style.py
-    args: [fetch]
+    args: [plan]
     dry_run: true
     stdin:
-      style_id: ${{ inputs.style_id }}
-      from_profile: ${{ inputs.from_profile }}
+      archive: ${{ steps.download.output.path }}
+      target_fonts: ${{ steps.target_fonts.output }}
+      source_owner: ${{ steps.source_login.output.stored_login }}
+      target_owner: ${{ steps.target_login.output.stored_login }}
       to_profile: ${{ inputs.to_profile }}
       name: ${{ inputs.name }}
 
@@ -58,7 +99,7 @@ steps:
     script: copy_style.py
     args: [apply]
     dry_run: true
-    stdin: ${{ steps.fetch.output }}
+    stdin: ${{ steps.plan.output }}
 
 outputs:
   id: ${{ steps.copy.output.id }}

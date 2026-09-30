@@ -52,6 +52,9 @@ fn sources() -> Vec<(String, String)> {
 ///   `install --force` replaces, and `workflow uninstall`. The name is
 ///   checked to be one plain directory name first, and only a directory
 ///   holding its `.install.json` marker is removed.
+/// - `workflow/workdir.rs` — the directory one workflow run keeps its files
+///   in, which it created itself under the system temp directory with a
+///   random name. No caller names it.
 const MAY_DELETE: &[&str] = &[
     "agent_skills.rs",
     "auth.rs",
@@ -61,6 +64,7 @@ const MAY_DELETE: &[&str] = &[
     "skill_dest.rs",
     "uninstall.rs",
     "workflow/store.rs",
+    "workflow/workdir.rs",
 ];
 
 /// A new module that deletes files has to say so here first.

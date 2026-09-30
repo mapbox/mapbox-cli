@@ -1,10 +1,13 @@
 """Copy a style, with its fonts and icons, from one account to another.
 
-Two steps share this file:
+The workflow's command steps have already checked both logins, downloaded
+the style's ZIP into the run's working directory and listed the target's
+fonts. Two steps share this file:
 
-  copy_style.py fetch   reads {"style_id", "from_profile", "to_profile", "name"}
-                        on stdin, downloads the style's ZIP as the source
-                        account, and writes the plan to stdout. Reads only.
+  copy_style.py plan    reads {"archive", "target_fonts", "source_owner",
+                        "target_owner", "to_profile", "name"} on stdin,
+                        unpacks the ZIP next to it, and writes the plan to
+                        stdout. Reads only.
   copy_style.py apply   reads that plan on stdin and carries it out as the
                         target account: fonts, then the style, then its icons,
                         then the style's sprite and glyph URLs.
@@ -19,10 +22,8 @@ detail, kept under the step.
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import zipfile
 
 CLI = os.environ.get("MAPBOX_CLI", "mapbox")
@@ -106,15 +107,6 @@ def counted(n, noun, plural=None):
     return f"{n} {noun if n == 1 else plural or noun + 's'}"
 
 
-def login_of(profile):
-    """The profile and the account its stored login belongs to."""
-    status = mapbox((profile, None), "auth", "status") or {}
-    account = status.get("stored_login")
-    if not account:
-        raise Failed(f"Profile `{profile}` is not logged in. Run `mapbox auth login --profile {profile}`.")
-    return (profile, account)
-
-
 def owned_references(style, owner):
     """Tilesets and imports the source account owns, which are not copied."""
     found = []
@@ -133,53 +125,37 @@ def owned_references(style, owner):
     return found
 
 
-def fetch():
+def make_plan():
     request = json.load(sys.stdin)
-    source = login_of(request["from_profile"])
-    target = login_of(request["to_profile"])
-    # Before the download: a target that cannot be written to is the likelier
-    # failure, and the cheaper one to find.
-    progress(f"checking the fonts in {target[1]}")
-    existing = set(mapbox(target, "fonts", "list") or [])
-
-    workdir = tempfile.mkdtemp(prefix="mapbox-copy-style-")
-    try:
-        plan = plan_copy(request, workdir, source, target, existing)
-    except BaseException:
-        shutil.rmtree(workdir, ignore_errors=True)
-        raise
-    json.dump(plan, sys.stdout)
-
-
-def plan_copy(request, workdir, source, target, existing):
-    archive = os.path.join(workdir, "style.zip")
-    with open(archive, "wb") as out:
-        progress(f"downloading {source[1]}/{request['style_id']}")
-        mapbox(source, "styles", "download", request["style_id"], stdout=out)
-    note(f"Downloaded {source[1]}/{request['style_id']} ({os.path.getsize(archive) // 1024} KB)")
+    archive = request["archive"]
+    # The runner removes its working directory when the run ends, so what is
+    # unpacked here needs no cleaning up.
+    workdir = os.path.dirname(archive)
     unpacked = os.path.join(workdir, "style")
+    progress("unpacking the style")
     with zipfile.ZipFile(archive) as bundle:
         bundle.extractall(unpacked)
 
     with open(os.path.join(unpacked, "style.json")) as f:
         style = json.load(f)
-    source_owner = style.get("owner") or source[1]
-    target_owner = target[1]
+    source_owner = style.get("owner") or request["source_owner"]
+    target_owner = request["target_owner"]
 
     fonts_dir = os.path.join(unpacked, "fonts")
     fonts = sorted(
         f for f in (os.listdir(fonts_dir) if os.path.isdir(fonts_dir) else [])
         if f.lower().endswith(FONT_EXTENSIONS)
     )
+    existing = set(request.get("target_fonts") or [])
     upload = [f for f in fonts if os.path.splitext(f)[0] not in existing]
     skip = [os.path.splitext(f)[0] for f in fonts if f not in upload]
 
     icons_dir = os.path.join(unpacked, "sprite_images")
     icons = sorted(f for f in (os.listdir(icons_dir) if os.path.isdir(icons_dir) else []) if f.endswith(".svg"))
 
-    plan = {
+    result = {
         "workdir": workdir,
-        "to_profile": target[0],
+        "to_profile": request["to_profile"],
         "source_owner": source_owner,
         "target_owner": target_owner,
         "name": request.get("name") or style.get("name"),
@@ -190,9 +166,9 @@ def plan_copy(request, workdir, source, target, existing):
     note(f"Found {counted(len(icons), 'icon')} and {counted(len(fonts), 'custom font')}")
     for font in skip:
         note(f"Font {font} is already in {target_owner}; it will be skipped")
-    for warning in plan["warnings"]:
+    for warning in result["warnings"]:
         warn(warning)
-    return plan
+    json.dump(result, sys.stdout)
 
 
 def style_body(plan):
@@ -327,22 +303,19 @@ def carry_out(plan):
 
 def apply():
     plan = json.load(sys.stdin)
-    try:
-        result = rehearse(plan) if DRY_RUN else carry_out(plan)
-    finally:
-        shutil.rmtree(plan["workdir"], ignore_errors=True)
+    result = rehearse(plan) if DRY_RUN else carry_out(plan)
     json.dump(result, sys.stdout)
 
 
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     try:
-        if mode == "fetch":
-            fetch()
+        if mode == "plan":
+            make_plan()
         elif mode == "apply":
             apply()
         else:
-            sys.exit(f"usage: {sys.argv[0]} fetch|apply")
+            sys.exit(f"usage: {sys.argv[0]} plan|apply")
     except Failed as failure:
         note(str(failure))
         sys.exit(1)

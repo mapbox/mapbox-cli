@@ -181,24 +181,36 @@ def plan_copy(request, workdir, source, target, existing):
 
 
 def style_body(plan):
+    """The body that creates the copy.
+
+    The Styles API checks a new style's sprite and refuses one the target
+    account cannot read, which a private sprite of the source account is.
+    So the copy is created with none and gets its own once its icons are
+    uploaded. Its fonts are uploaded first, so glyphs can move now.
+    """
     with open(os.path.join(plan["workdir"], "style", "style.json")) as f:
         style = json.load(f)
     for field in SERVER_FIELDS:
         style.pop(field, None)
+    style.pop("sprite", None)
     style["name"] = plan["name"]
-    return style
+    return with_target_glyphs(style, plan)
 
 
-def pointed_at_target(style, plan, style_id):
-    """The style with its sprite and glyphs moved to the target account."""
-    style = {k: v for k, v in style.items() if k not in SERVER_FIELDS}
-    # Without the version hash: the API appends the current one itself.
-    style["sprite"] = f"mapbox://sprites/{plan['target_owner']}/{style_id}"
+def with_target_glyphs(style, plan):
     glyphs = style.get("glyphs")
     prefix = f"mapbox://fonts/{plan['source_owner']}/"
     if isinstance(glyphs, str) and glyphs.startswith(prefix):
         style["glyphs"] = f"mapbox://fonts/{plan['target_owner']}/" + glyphs[len(prefix):]
     return style
+
+
+def pointed_at_target(style, plan, style_id):
+    """The created style with its sprite and glyphs on the target account."""
+    style = {k: v for k, v in style.items() if k not in SERVER_FIELDS}
+    # Without the version hash: the API appends the current one itself.
+    style["sprite"] = f"mapbox://sprites/{plan['target_owner']}/{style_id}"
+    return with_target_glyphs(style, plan)
 
 
 def batches(icons):

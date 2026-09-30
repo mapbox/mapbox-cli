@@ -404,14 +404,16 @@ fn result_is_the_text_and_outputs_are_the_json() {
 #[test]
 fn save_keeps_a_command_output_as_a_file_for_the_run() {
     let home = scratch("save");
+    // The path reaches the result through `outputs`, not through the script:
+    // on Windows it is full of backslashes, which a script writing its own
+    // JSON would leave unescaped.
     let yaml = "version: 1\nname: keep\nsummary: Saves then reads\nsteps:\n\
                 \x20 - id: settings\n    command: config list\n    save: settings.json\n\
-                \x20 - id: read\n    script: read.sh\n    stdin: ${{ steps.settings.output.path }}\n";
+                \x20 - id: read\n    script: read.sh\n    stdin: ${{ steps.settings.output.path }}\n\
+                outputs:\n  path: ${{ steps.settings.output.path }}\n  saved: ${{ steps.read.output }}\n";
     let script = "read -r path\n\
                   [ \"$(dirname \"$path\")\" = \"$MAPBOX_WORKFLOW_WORKDIR\" ] || exit 7\n\
-                  printf '{\"path\":\"%s\",\"saved\":' \"$path\"\n\
-                  cat \"$path\"\n\
-                  printf '}'\n";
+                  cat \"$path\"\n";
     let dir = write_workflow(&home, "keep", yaml, &[("read.sh", script)]);
     assert!(run(&home, &["workflow", "install", dir.to_str().unwrap()])
         .status

@@ -36,6 +36,10 @@ pub struct Workflow {
     pub inputs: BTreeMap<String, Input>,
     pub steps: Vec<Step>,
     pub outputs: Option<Value>,
+    /// What `run` prints in text mode instead of the outputs as fields: a
+    /// template over the same inputs and steps. `-o json` still prints the
+    /// outputs.
+    pub result: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -136,6 +140,8 @@ struct Raw {
     steps: Vec<RawStep>,
     #[serde(default)]
     outputs: Option<Value>,
+    #[serde(default)]
+    result: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -440,6 +446,10 @@ pub fn parse(name: &str, files: &Files) -> Result<Workflow, Vec<String>> {
     if let Some(outputs) = &raw.outputs {
         check_references(outputs, "`outputs`", &raw.inputs, &seen, &mut problems);
     }
+    if let Some(result) = &raw.result {
+        let result = Value::String(result.clone());
+        check_references(&result, "`result`", &raw.inputs, &seen, &mut problems);
+    }
 
     for path in files.keys().filter(|path| path.starts_with(SCRIPTS_DIR)) {
         if !referenced_scripts.contains(path) {
@@ -460,6 +470,7 @@ pub fn parse(name: &str, files: &Files) -> Result<Workflow, Vec<String>> {
         inputs: raw.inputs,
         steps,
         outputs: raw.outputs,
+        result: raw.result,
     })
 }
 
@@ -629,6 +640,18 @@ outputs:
             found
                 .iter()
                 .any(|p| p.contains("runs under --dry-run but reads `steps.fetch")),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn result_may_name_only_earlier_steps_and_declared_inputs() {
+        let yaml = format!("{MINIMAL}result: 'Made ${{{{ steps.nope.output.id }}}}'\n");
+        let found = problems(&[(DEFINITION_FILE, &yaml), ("scripts/shape.py", "")]);
+        assert!(
+            found
+                .iter()
+                .any(|p| p.starts_with("`result`") && p.contains("no earlier step")),
             "{found:?}"
         );
     }

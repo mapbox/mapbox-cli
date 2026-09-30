@@ -597,7 +597,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .value_parser(FalseyValueParser::new())
                 .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help("Hide the version banner and download notes"),
+                .help("Hide the version banner, download notes and workflow step details"),
         )
         .arg(
             Arg::new(http::TIMEOUT_ARG)

@@ -59,12 +59,16 @@ pub struct Inherited {
     pub typed_token: Option<String>,
     pub options: Vec<(&'static str, String)>,
     pub flags: Vec<&'static str>,
+    /// `--quiet`: steps show their title and how they ended, and warnings,
+    /// but not their details.
+    pub quiet: bool,
 }
 
 impl Inherited {
     pub fn from_matches(matches: &clap::ArgMatches) -> Self {
         let mut inherited = Inherited {
             typed_token: auth::typed_token(matches),
+            quiet: matches.get_flag(output::banner::ARG),
             ..Default::default()
         };
         for option in ["profile", "username", crate::http::TIMEOUT_ARG] {
@@ -186,16 +190,36 @@ pub fn plan(workflow: &Workflow, inputs: &Map<String, Value>) -> Value {
     json!({ "workflow": workflow.name, "inputs": inputs, "steps": steps, "outputs": workflow.outputs })
 }
 
-/// Runs every step and returns what `outputs` resolves to, or the last
-/// step's output when the workflow declares none.
+/// What a run ends with.
+pub struct Finished {
+    /// What `outputs` resolves to, or the last step's output when the
+    /// workflow declares none.
+    pub outputs: Value,
+    /// What `result` resolves to, when the workflow declares one.
+    pub text: Option<String>,
+}
+
+/// Runs every step.
 pub fn run(
     app: &Command,
     workflow: &Workflow,
     root: &Path,
     inputs: &Map<String, Value>,
     inherited: &Inherited,
-) -> Result<Value> {
+) -> Result<Finished> {
     let outputs = run_steps(app, workflow, root, inputs, inherited, false)?;
+    let context = Context {
+        inputs,
+        steps: &outputs,
+    };
+    let text = match &workflow.result {
+        Some(template) => Some(
+            template::resolve(&Value::String(template.clone()), &context)
+                .map(|value| template::as_text(&value).unwrap_or_default())
+                .map_err(|e| CliError::new("workflow_failed", format!("`result`: {e:#}")))?,
+        ),
+        None => None,
+    };
 
     let last = workflow
         .steps
@@ -203,17 +227,12 @@ pub fn run(
         .and_then(|step| outputs.get(&step.id))
         .cloned()
         .unwrap_or(Value::Null);
-    match &workflow.outputs {
-        Some(declared) => template::resolve(
-            declared,
-            &Context {
-                inputs,
-                steps: &outputs,
-            },
-        )
-        .map_err(|e| CliError::new("workflow_failed", format!("`outputs`: {e:#}")).into()),
-        None => Ok(last),
-    }
+    let outputs = match &workflow.outputs {
+        Some(declared) => template::resolve(declared, &context)
+            .map_err(|e| CliError::new("workflow_failed", format!("`outputs`: {e:#}")))?,
+        None => last,
+    };
+    Ok(Finished { outputs, text })
 }
 
 /// Runs only the steps marked `dry_run`, each with [`DRY_RUN_ENV`] set, and
@@ -241,7 +260,7 @@ fn run_steps(
     let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
     let total = workflow.steps.len();
 
-    let display = Display::for_stderr(total);
+    let display = Display::for_stderr(total, inherited.quiet);
     for (index, step) in workflow.steps.iter().enumerate() {
         let title = step.name.as_deref().unwrap_or(&step.id);
         if dry_run && !step.dry_run {
@@ -306,6 +325,7 @@ fn run_steps(
         outputs.insert(step.id.clone(), result?);
     }
 
+    display.finish_run();
     Ok(outputs)
 }
 

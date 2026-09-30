@@ -68,3 +68,7 @@ outputs:
   fonts: ${{ steps.copy.output.fonts }}
   icons: ${{ steps.copy.output.icons }}
   warnings: ${{ steps.copy.output.warnings }}
+
+result: |
+  Copied the style to ${{ steps.copy.output.owner }} as ${{ steps.copy.output.id }}, with ${{ steps.copy.output.icons }} icons.
+  Open it in Studio: https://studio.mapbox.com/styles/${{ steps.copy.output.owner }}/${{ steps.copy.output.id }}/edit/

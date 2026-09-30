@@ -785,8 +785,13 @@ fn run_workflow(
         return output::emit(mode, &text, plan);
     }
 
-    let result = runner::run(app, workflow, &found.root, &inputs, &inherited)?;
-    output::emit_result(mode, &result)
+    let finished = runner::run(app, workflow, &found.root, &inputs, &inherited)?;
+    match finished.text {
+        // The workflow's own wording for a person; `-o json` still gets the
+        // outputs, which is what a script reads.
+        Some(text) if !mode.is_json() => output::emit(mode, text.trim_end(), finished.outputs),
+        _ => output::emit_result(mode, &finished.outputs),
+    }
 }
 
 #[cfg(test)]

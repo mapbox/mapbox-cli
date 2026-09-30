@@ -12,7 +12,8 @@ Two steps share this file:
 Under MAPBOX_WORKFLOW_DRY_RUN=1, `apply` writes nothing and says what it
 would run instead. stdout is JSON only. On stderr, a line starting with
 `::progress ` is what the step is doing now, shown beside the runner's
-spinner; every other line is a detail, kept under the step.
+spinner; one starting with `::warn ` is a warning; every other line is a
+detail, kept under the step.
 """
 
 import json
@@ -47,6 +48,10 @@ def note(message):
 
 def progress(message):
     note(f"::progress {message}")
+
+
+def warn(message):
+    note(f"::warn {message}")
 
 
 def mapbox(login, *args, stdout=None, input=None):
@@ -186,7 +191,7 @@ def plan_copy(request, workdir, source, target, existing):
     for font in skip:
         note(f"Font {font} is already in {target_owner}; it will be skipped")
     for warning in plan["warnings"]:
-        note(warning)
+        warn(warning)
     return plan
 
 

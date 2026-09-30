@@ -3953,9 +3953,10 @@ of these is `invalid_workflow`, with every problem listed at once.
 | `--force` | Replace a workflow that is already installed. |
 | `--dry-run` | Check the workflow and list the files it would write, then exit. |
 
-The repository is read as one tarball through the GitHub API. For a private
-repository, such as `mapbox/mapbox-cli` today, set `GH_TOKEN` or `GITHUB_TOKEN`. It is
-sent only to `api.github.com`. Without one, a private repository answers 404,
+The repository is read as one tarball through the GitHub API.
+`mapbox/mapbox-cli` is public and needs no token. For a private repository
+named with `--repo`, set `GH_TOKEN` or `GITHUB_TOKEN`. It is sent only to
+`api.github.com`. Without one, a private repository answers 404,
 exactly as a ref that does not exist does, and the error says both.
 
 **An installed workflow stops the install** unless `--force` is given. The new
@@ -3967,10 +3968,12 @@ workflow's directory stops the read.
 #### Examples
 
 ```sh
-export GITHUB_TOKEN="$(gh auth token)"
 mapbox workflow install copy-style
 
 mapbox workflow install copy-style --ref v0.4.0
+
+export GITHUB_TOKEN="$(gh auth token)"
+mapbox workflow install sync-tilesets --repo my-org/private-workflows
 
 mapbox workflow install ./workflow/copy-style --force
 ```

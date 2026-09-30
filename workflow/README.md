@@ -50,11 +50,17 @@ steps:                            # required; run in order, first failure stops
       style-id: ${{ inputs.style_id }}
       profile: work               # global options too
       use-login: true             # a flag takes true or false
+    dry_run: true                 # optional; also runs under --dry-run (a command that changes nothing)
+
+  - id: bundle
+    command: styles download
+    args: { style-id: "${{ inputs.style_id }}", profile: work, use-login: true }
+    save: style.zip               # optional; keep stdout as a file, for a binary response
 
   - id: body
     script: prepare.py            # a file in scripts/
     interpreter: python3          # optional for .sh, .py and .js
-    dry_run: true                 # optional; runs under --dry-run too (scripts only)
+    dry_run: true                 # optional; runs under --dry-run too, told so in its environment
     args: ["--zoom", "${{ inputs.zoom }}"]
     stdin:                        # optional; sent to the step as JSON
       style: ${{ steps.source.output }}
@@ -102,6 +108,7 @@ Each command step runs this `mapbox` binary again, with `--output json`, and its
 - Global options given to `mapbox workflow run` (`--profile`, `--username`, `--use-login`, `--timeout`, `--yes`, `--debug`, `--token`) reach every command step that does not set its own.
 - `stdin` is sent to the command, for `--data @-`. Without it, the command reads the terminal, which is where a confirmation prompt gets its answer.
 - A step cannot run `mapbox workflow`.
+- `save: <file name>` keeps the command's stdout as that file in the run's working directory instead of reading it as the output, which is how a binary response, such as `styles download`'s ZIP, reaches a later step. The step's output is then `{"path": …, "bytes": …}`. The directory is removed when the run ends, however it ends.
 
 ### Script steps
 
@@ -110,7 +117,8 @@ A script runs from the installed copy of `scripts/`, in the directory `mapbox wo
 - It gets `args` as its arguments and `stdin` on standard input, as JSON unless the value is a string. With no `stdin` it reads nothing.
 - Whatever it writes to stdout is its output: JSON when it parses as JSON, the text otherwise. It reports to the person running it on stderr, as below.
 - A non-zero exit stops the workflow.
-- `MAPBOX_CLI` is the path to this `mapbox` binary, for a script that runs commands of its own. `MAPBOX_WORKFLOW_ROOT` is the installed workflow's directory.
+- `MAPBOX_CLI` is the path to this `mapbox` binary, for a script that runs commands of its own. `MAPBOX_WORKFLOW_ROOT` is the installed workflow's directory. `MAPBOX_WORKFLOW_WORKDIR` is the run's working directory, where a `save`d file is; anything a script writes there is removed with it when the run ends.
+- Prefer a command step where one will do, so `workflow show` and `install` can see the command. A script is for what a step cannot do: a loop, or logic.
 - The interpreter must be installed on the machine. `.sh` runs under `sh`, `.py` under `python3` and `.js` under `node`, and any other extension needs `interpreter`.
 
 ### Reporting progress
@@ -150,7 +158,8 @@ result: |
 
 ### Dry runs
 
-`mapbox workflow run --dry-run` skips every step unless it is marked `dry_run: true`. A marked step runs with `MAPBOX_WORKFLOW_DRY_RUN=1` in its environment and must write nothing then: read what it needs, and say on stderr what it would do. Its output is under `results` in the plan, so a later marked step can plan with real data.
+`mapbox workflow run --dry-run` skips every step unless it is marked `dry_run: true`. A marked step runs for real, so its output is under `results` in the plan and a later marked step can plan with real data:
 
-- Only a script step can be marked. A command step cannot hold its request back and still answer.
+- A marked command step runs as it would anyway, so it must be a command that changes nothing: one without a `--dry-run` of its own, such as `styles get`, `styles download` or `fonts list`. `install` refuses a writing command marked `dry_run`.
+- A marked script step runs with `MAPBOX_WORKFLOW_DRY_RUN=1` in its environment and must write nothing then: read what it needs, and say on stderr what it would do. That is the script's promise; the runner cannot check it.
 - A marked step can read only the outputs of earlier marked steps, since the others do not run. `install` refuses one that reads any other.

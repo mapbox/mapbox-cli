@@ -28,6 +28,7 @@ use serde_json::{json, Map, Value};
 use super::definition::{Action, InputType, Step, Workflow, DRY_RUN_ENV, SCRIPTS_DIR};
 use super::progress::{Display, StepView};
 use super::template::{self, Context};
+use super::workdir::{self, Workdir};
 use crate::auth;
 use crate::output::{self, CliError};
 
@@ -257,6 +258,7 @@ fn run_steps(
     dry_run: bool,
 ) -> Result<BTreeMap<String, Value>> {
     let exe = std::env::current_exe().context("Could not find this program's own path")?;
+    let workdir = Workdir::create()?;
     let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
     let total = workflow.steps.len();
 
@@ -307,7 +309,8 @@ fn run_steps(
                 }
                 process
                     .env("MAPBOX_CLI", &exe)
-                    .env("MAPBOX_WORKFLOW_ROOT", root);
+                    .env("MAPBOX_WORKFLOW_ROOT", root)
+                    .env(workdir::ENV, workdir.path());
                 if dry_run {
                     process.env(DRY_RUN_ENV, "1");
                 }
@@ -320,13 +323,21 @@ fn run_steps(
 
         let is_script = matches!(step.action, Action::Script { .. });
         let view = display.start(index, title, &step.label(), is_script);
-        let result = execute(&mut process, stdin.as_ref(), step, &view);
+        let result = execute(&mut process, stdin.as_ref(), step, &view, workdir.path());
         view.finish(result.is_ok());
         outputs.insert(step.id.clone(), result?);
     }
 
     display.finish_run();
     Ok(outputs)
+}
+
+fn size(bytes: usize) -> String {
+    match bytes {
+        0..=1023 => format!("{bytes} bytes"),
+        1024..=1_048_575 => format!("{} KB", bytes / 1024),
+        _ => format!("{:.1} MB", bytes as f64 / 1_048_576.0),
+    }
 }
 
 fn step_failure(step: &Step, err: anyhow::Error) -> anyhow::Error {
@@ -344,6 +355,7 @@ fn execute(
     stdin: Option<&Value>,
     step: &Step,
     view: &StepView,
+    workdir: &Path,
 ) -> Result<Value> {
     // A script with nothing to read gets nothing, rather than a terminal it
     // might block on. A command keeps the terminal, which is where a
@@ -417,10 +429,23 @@ fn execute(
         ));
     }
 
+    if let Some(save) = &step.save {
+        let path = workdir.join(save);
+        std::fs::write(&path, &finished.stdout)
+            .map_err(|e| step_failure(step, anyhow!("could not save {}: {e}", path.display())))?;
+        let bytes = finished.stdout.len();
+        view.reporter()
+            .report(&format!("Saved {save} ({})", size(bytes)));
+        return Ok(json!({ "path": path, "bytes": bytes }));
+    }
+
     let text = String::from_utf8(finished.stdout).map_err(|_| {
         step_failure(
             step,
-            anyhow!("its output is binary, which cannot be passed to another step"),
+            anyhow!(
+                "its output is binary, which cannot be passed to another step; give it \
+                 `save: <file name>` to keep it as a file instead"
+            ),
         )
     })?;
     let text = text.trim();
@@ -519,6 +544,20 @@ pub fn command_problems(app: &Command, workflow: &Workflow) -> Vec<String> {
                 continue;
             }
         };
+        // A dry run sends every step it runs, so a command step may be in one
+        // only if its command changes nothing — which is exactly a command
+        // without a `--dry-run` of its own.
+        let writes = command
+            .get_arguments()
+            .any(|arg| arg.get_long() == Some(crate::executor::DRY_RUN_ARG));
+        if step.dry_run && writes {
+            problems.push(format!(
+                "step `{}`: `dry_run` needs a command that changes nothing, and `mapbox {}` \
+                 changes something",
+                step.id,
+                path.join(" ")
+            ));
+        }
         for (key, value) in args {
             match find_arg(app, command, key) {
                 Err(e) => problems.push(format!("step `{}`: {e}", step.id)),
@@ -622,6 +661,25 @@ mod tests {
         );
         let files: Files = [(PathBuf::from(DEFINITION_FILE), yaml.into_bytes())].into();
         parse("t", &files).expect("valid")
+    }
+
+    /// A dry run sends every step it runs, so a command step can be in one
+    /// only if its command has no `--dry-run` of its own to hold back.
+    #[test]
+    fn only_a_command_that_changes_nothing_runs_in_a_dry_run() {
+        let found = command_problems(
+            &app(),
+            &workflow(
+                "  - id: read\n    command: styles get\n    args: { style-id: x }\n    dry_run: true\n\
+                 \x20 - id: write\n    command: styles create\n    dry_run: true\n",
+            ),
+        )
+        .join("\n");
+        assert!(
+            found.contains("step `write`: `dry_run` needs a command that changes nothing"),
+            "{found}"
+        );
+        assert!(!found.contains("step `read`"), "{found}");
     }
 
     #[test]

@@ -30,9 +30,11 @@ that may never merge. They are not releases and are not listed here.
   `Wrote application/zip (988165 bytes).` stdout is unchanged, and
   `--quiet`/`-q` hides it.
 
-- A 403 that names a missing scope now suggests `mapbox auth login` in its
-  `fix` and `next_actions`, and a 403 for an API the account has not been
-  given access to says to contact Mapbox. Other 403s are unchanged.
+- A 403 that names a missing scope now says which token lacks it: a login
+  is told to run `mapbox auth login` again (also in `next_actions`), and a
+  token from `--token` or `MAPBOX_ACCESS_TOKEN` to add the scope to that
+  token. A 403 for an API the account has not been given access to says to
+  contact Mapbox. Other 403s are unchanged.
 
 - A run at a terminal now opens with a `mapbox · v<version>` banner on
   stderr. stdout is unchanged, and nothing is printed when stderr is not a

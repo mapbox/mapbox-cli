@@ -209,16 +209,11 @@ fn for_forbidden(remedy: Remedy, body: &str) -> Remedy {
              at help@mapbox.com to request access.",
         );
     }
-    if let Some(scope) = missing_scope(body) {
-        return remedy
-            .with_fix(&format!(
-                "The token lacks the `{scope}` scope. A login from before this CLI \
-                 started asking for it does not have it: run `mapbox auth login` \
-                 again. A token from anywhere else needs the scope added where it \
-                 was created."
-            ))
-            .with_action(Some("mapbox auth login".to_string()))
-            .with_doc(Some(TOKENS_DOC));
+    // Whether a new login helps depends on where the token came from, which
+    // only `auth` knows. It fills the fix in through `with_auth_fix`, as it
+    // does for a 401.
+    if missing_scope(body).is_some() {
+        return remedy.with_doc(Some(TOKENS_DOC));
     }
     remedy
         .with_fix(
@@ -233,7 +228,7 @@ fn for_forbidden(remedy: Remedy, body: &str) -> Remedy {
 /// The scope a 403 names: "This API requires a token with styles:download
 /// scope." Checked against the shape of a scope, since it is echoed into
 /// advice the user may paste.
-fn missing_scope(body: &str) -> Option<&str> {
+pub fn missing_scope(body: &str) -> Option<&str> {
     let (_, rest) = body.split_once("requires a token with ")?;
     let (scope, _) = rest.split_once(" scope")?;
     let well_formed = scope.contains(':')
@@ -633,17 +628,17 @@ paths:
         assert!(remedy.next_actions.is_empty(), "{:?}", remedy.next_actions);
     }
 
-    /// A login from before a scope was added lacks it until the next login,
-    /// so a 403 that names the scope points there.
+    /// A 403 that names a scope leaves the advice to `auth`, which knows
+    /// whether a new login would change the token that was sent.
     #[test]
-    fn a_403_that_names_a_scope_asks_for_a_new_login() {
+    fn a_403_that_names_a_scope_leaves_the_fix_to_auth() {
         let svc = styles();
         let body = r#"{"message":"This API requires a token with styles:download scope."}"#;
         let remedy = for_http(403, operation(&svc, "get-style"), &nothing(), None, body);
 
-        let fix = remedy.fix.expect("a 403 has an explanation");
-        assert!(fix.contains("`styles:download`"), "{fix}");
-        assert_eq!(remedy.next_actions, ["mapbox auth login"]);
+        assert_eq!(remedy.fix, None);
+        assert!(remedy.next_actions.is_empty(), "{:?}", remedy.next_actions);
+        assert!(remedy.docs.iter().any(|d| d == TOKENS_DOC));
     }
 
     /// The scope is echoed into advice, so anything that does not look like

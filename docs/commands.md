@@ -2261,7 +2261,7 @@ extract, compression method=store
 A login without the scope:
 
 ```json
-{"code":"http_403","docs":["https://docs.mapbox.com/api/maps/styles/","https://docs.mapbox.com/api/accounts/tokens/"],"fix":"The token lacks the `styles:download` scope. A login from before this CLI started asking for it does not have it: run `mapbox auth login` again. A token from anywhere else needs the scope added where it was created.","message":"This API requires a token with styles:download scope.","next_actions":["mapbox auth login"],"status":403}
+{"code":"http_403","docs":["https://docs.mapbox.com/api/maps/styles/","https://docs.mapbox.com/api/accounts/tokens/"],"fix":"Your login lacks the `styles:download` scope; it predates this CLI asking for it. Run `mapbox auth login` again.","message":"This API requires a token with styles:download scope.","next_actions":["mapbox auth login"],"status":403}
 ```
 
 ### `mapbox styles draft get`

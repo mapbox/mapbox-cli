@@ -31,8 +31,8 @@ that may never merge. They are not releases and are not listed here.
   `--quiet`/`-q` hides it.
 
 - A 403 that names a missing scope now suggests `mapbox auth login` in its
-  `fix` and `next_actions`, and a 403 for an account without access to a
-  prerelease API says to contact Mapbox. Other 403s are unchanged.
+  `fix` and `next_actions`, and a 403 for an API the account has not been
+  given access to says to contact Mapbox. Other 403s are unchanged.
 
 - A run at a terminal now opens with a `mapbox · v<version>` banner on
   stderr. stdout is unchanged, and nothing is printed when stderr is not a

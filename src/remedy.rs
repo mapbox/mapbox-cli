@@ -194,7 +194,8 @@ pub fn for_http(
 
 /// What the shared auth middleware answers when the account lacks the
 /// feature flag an endpoint is gated on — the same text on every API that
-/// uses it, which is what makes it safe to key on.
+/// uses it, which is what makes it safe to key on. It says "prerelease"
+/// whatever the flag is for, so the advice built on it must not.
 const ACCOUNT_FLAG_MISSING: &str = "This is a prerelease API.";
 
 /// A 403 has three causes, and they need three different answers. Two of
@@ -203,9 +204,9 @@ const ACCOUNT_FLAG_MISSING: &str = "This is a prerelease API.";
 fn for_forbidden(remedy: Remedy, body: &str) -> Remedy {
     if body.contains(ACCOUNT_FLAG_MISSING) {
         return remedy.with_fix(
-            "Your account does not have access to this API yet. Mapbox enables it \
-             per account, so a new token or a new login will not help: contact \
-             Mapbox at help@mapbox.com to request access.",
+            "Your account does not have access to this API. Mapbox grants it per \
+             account, so a new token or a new login will not help: contact Mapbox \
+             at help@mapbox.com to request access.",
         );
     }
     if let Some(scope) = missing_scope(body) {

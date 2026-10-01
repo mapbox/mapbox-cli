@@ -86,6 +86,10 @@ curl -fsSL https://cli.mapbox.com/install.sh | MAPBOX_CLI_VERSION=0.3.0 sh
 $env:MAPBOX_CLI_VERSION = '0.3.0'; irm https://cli.mapbox.com/install.ps1 | iex
 ```
 
+Both scripts put the install directory on your `PATH`: `install.sh` adds a
+line to your shell profile, `install.ps1` edits the user `PATH`. Set
+`MAPBOX_NO_MODIFY_PATH=1` to skip that and only print what to add.
+
 `MAPBOX_INSTALL_DIR` chooses where the binary lands. The scripts' sources
 are [`scripts/install.sh`](./scripts/install.sh) and
 [`scripts/install.ps1`](./scripts/install.ps1).

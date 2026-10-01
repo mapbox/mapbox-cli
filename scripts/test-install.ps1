@@ -608,7 +608,9 @@ try {
     Expect-File (Join-Path $script:BinDir 'mapbox.exe') 'mapbox.exe is in the install dir'
     Expect-Out 'Installed mapbox 9.9.9' 'reports the version it ran, not the one it was promised'
     Expect-Out (Join-Path $script:BinDir 'mapbox.exe') 'reports the path'
-    Expect-Out 'channel  latest (9.9.9)' 'names the channel and the version it resolved'
+    Expect-Out 'Installing Mapbox CLI 9.9.9' 'names the version it resolved'
+    Expect-Out 'mapbox 9.9.9 is ready.' 'ends by saying it is ready'
+    Expect-Out 'mapbox auth login' 'names the first command to run'
     Expect-NoOut '.mapbox.install.' 'leaves no staging file behind'
     $staging = Get-ChildItem -LiteralPath $script:BinDir -Force | Where-Object { $_.Name -ne 'mapbox.exe' }
     Expect-Equal '' ([string]($staging | ForEach-Object { $_.Name })) 'nothing else is left in the install dir'
@@ -740,7 +742,7 @@ try {
     Invoke-Installer
     Expect-Status 0 'exits 0'
     Expect-Out 'Installed mapbox 0.1.0-dev.abc1234' 'installs that exact version'
-    Expect-Out "channel  $PinnedVersion" 'names the channel it resolved'
+    Expect-Out 'Installing Mapbox CLI 0.1.0-dev.abc1234' 'names the version it resolved'
 
     # The channel's directories carry a leading `v`. Every place a person
     # reads a version from (`mapbox --version`, CHANGELOG.md, Cargo.toml)
@@ -756,7 +758,7 @@ try {
     Invoke-Installer
     Expect-Status 0 'exits 0'
     Expect-Out 'Installed mapbox 0.1.0-dev.abc1234' 'installs that exact version'
-    Expect-Out "channel  $PinnedVersion" 'and resolved the v-prefixed directory'
+    Expect-Out 'Installing Mapbox CLI 0.1.0-dev.abc1234' 'and resolved the v-prefixed directory'
 
     # `latest` starts with a letter, so nothing is prepended. Getting this
     # wrong would break the default install rather than an edge case.
@@ -765,7 +767,7 @@ try {
     $env:MAPBOX_CLI_VERSION = 'latest'
     Invoke-Installer
     Expect-Status 0 'exits 0'
-    Expect-Out 'channel  latest' 'asked for latest, not vlatest'
+    Expect-Out 'Installing Mapbox CLI 9.9.9' 'asked for latest, not vlatest'
 
     Start-Case 'reinstalling reports the version it replaced'
     New-CaseEnv 'upgrade'

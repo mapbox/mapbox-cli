@@ -390,6 +390,13 @@ cat >"${SHIMS}/pipx-silent" <<'EOF'
 echo "fake pipx: $*"
 EOF
 
+# A pipx that fails, the way a broken network or index does.
+cat >"${SHIMS}/pipx-fail" <<'EOF'
+#!/bin/sh
+echo "fake pipx: Could not find a version that satisfies mapbox-tilesets"
+exit 1
+EOF
+
 cat >"${SHIMS}/tilesets" <<'EOF'
 #!/bin/sh
 echo "tilesets, version 1.11.0"
@@ -610,7 +617,18 @@ new_case_env() { # case-name
     MAPBOX_INSTALL_DIR="$BIN_DIR"
     PATH="${CASE_SHIMS}:${SAFE_PATH}"
     unset MAPBOX_CLI_VERSION MAPBOX_CLI_AUTH MAPBOX_INSTALL_TILESETS MAPBOX_TILESETS_CLI
-    unset MAPBOX_CLI_INSTALL_SOURCE
+    unset MAPBOX_CLI_INSTALL_SOURCE MAPBOX_NO_MODIFY_PATH ZDOTDIR
+    # A HOME of its own, because the installer now writes a PATH line into the
+    # shell's profile: no case may touch the real ~/.zshrc. /bin/sh picks
+    # ~/.profile, so a developer's own SHELL does not decide which file a case
+    # checks.
+    HOME="${CASE_DIR}/home"
+    mkdir -p "$HOME"
+    SHELL=/bin/sh
+    # Escape codes would split the substrings these cases look for; the one
+    # case about color unsets this.
+    NO_COLOR=1
+    export HOME SHELL NO_COLOR
     # A developer with either of these set in their own shell would otherwise
     # turn every marker case into a failure that looks like the marker broke.
     unset DISABLE_TELEMETRY MAPBOX_CLI_NO_TELEMETRY
@@ -633,6 +651,11 @@ expect_file "${BIN_DIR}/mapbox" 'the binary is in the install dir'
 expect_out 'Installed mapbox 9.9.9' 'reports the version it ran, not the one it was promised'
 expect_out "${BIN_DIR}/mapbox" 'reports the path'
 expect_says "$("${BIN_DIR}/mapbox" --version)" 'mapbox 9.9.9' 'the installed binary runs'
+expect_out 'mapbox 9.9.9 is ready.' 'ends by saying it is ready'
+expect_out 'mapbox auth login' 'names the first command to run'
+expect_out 'MAPBOX_CLI_NO_TELEMETRY=1' 'discloses telemetry and the way to turn it off'
+expect_order 'is ready.' 'mapbox auth login' 'the next step comes after the result'
+expect_no_out "$(printf '\033')" 'no escape codes under NO_COLOR'
 ls -a "$BIN_DIR" >"$OUT" 2>&1
 expect_no_out '.mapbox.install.' 'leaves no staging file behind'
 
@@ -835,7 +858,7 @@ export MAPBOX_INSTALL_TILESETS=no
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
 expect_out 'Installed mapbox 0.1.0-dev.abc1234' 'installs that exact version'
-expect_out 'channel  v0.1.0-dev.abc1234' 'names the channel it resolved'
+expect_out 'Installing Mapbox CLI 0.1.0-dev.abc1234' 'names the version it resolved'
 
 # The channel's directories carry a leading `v`. Every place a person reads a
 # version from — `mapbox --version`, CHANGELOG.md, Cargo.toml — shows it
@@ -848,7 +871,7 @@ export MAPBOX_INSTALL_TILESETS=no
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
 expect_out 'Installed mapbox 0.1.0-dev.abc1234' 'installs that exact version'
-expect_out 'channel  v0.1.0-dev.abc1234' 'and resolved the v-prefixed directory'
+expect_out 'Installing Mapbox CLI 0.1.0-dev.abc1234' 'and resolved the v-prefixed directory'
 
 # `latest` starts with a letter, so nothing is prepended to it. Pinning this
 # wrong would break the default install rather than an edge case.
@@ -858,7 +881,7 @@ export MAPBOX_CLI_VERSION=latest
 export MAPBOX_INSTALL_TILESETS=no
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
-expect_out 'channel  latest' 'asked for latest, not vlatest'
+expect_out 'Installing Mapbox CLI 9.9.9' 'asked for latest, not vlatest'
 
 start 'an unsupported platform stops before downloading'
 new_case_env unsupported
@@ -941,8 +964,11 @@ export PATH="${OTHER}:${PATH}"
 export MAPBOX_INSTALL_TILESETS=no
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
-expect_out 'is not on your PATH' 'says the install dir is not on PATH'
-expect_out "still resolves to ${OTHER}/mapbox" 'and names the other binary too'
+expect_out "Added ${BIN_DIR} to PATH" 'puts the install dir on PATH'
+expect_out 'Open a new terminal' 'and says the new copy wins in a new terminal'
+# The profile line prepends the install dir, so a new shell runs the copy just
+# installed; telling the reader the other one still wins would be wrong there.
+expect_no_out 'still resolves to' 'without claiming the other one still wins'
 
 start 'a mapbox further down PATH is named, with the way to clear the cache'
 new_case_env behind
@@ -974,18 +1000,82 @@ expect_no_out 'is not on your PATH' 'says nothing about PATH'
 expect_no_out 'still resolves to' 'and nothing about shadowing'
 expect_no_out 'another mapbox at' 'and nothing about a second copy, because there is none'
 
-start 'an install dir that is not on PATH is named, with the line to add'
+start 'an install dir that is not on PATH is added through the profile'
 new_case_env off-path
 export SHELL=/bin/zsh
 export MAPBOX_INSTALL_TILESETS=no
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
+# BIN_DIR is outside HOME, so the line carries it verbatim.
+expect_in_file "${HOME}/.zshrc" "export PATH=\"${BIN_DIR}:\$PATH\"" 'writes the line into ~/.zshrc'
+# The literal ~ is the point: it is a path shown, not one opened.
+# shellcheck disable=SC2088
+expect_out "Added ${BIN_DIR} to PATH in ~/.zshrc" 'says which file it changed'
+expect_out 'Open a new terminal' 'says this shell does not have it yet'
+expect_out "export PATH=\"${BIN_DIR}:\$PATH\"" 'and gives the line for this one'
+expect_no_out 'is not on your PATH' 'does not ask the reader to do it by hand'
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'a second run exits 0'
+expect_out 'already set up' 'a second run sees the line it wrote'
+lines="$(grep -cF "$BIN_DIR" "${HOME}/.zshrc")"
+expect_says "$lines" 1 'and does not write it twice'
+
+start 'a dir under HOME keeps HOME literal in the profile'
+new_case_env off-path-home
+export MAPBOX_INSTALL_DIR="${HOME}/.local/bin"
+export MAPBOX_INSTALL_TILESETS=no
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+# shellcheck disable=SC2016
+expect_in_file "${HOME}/.profile" 'export PATH="$HOME/.local/bin:$PATH"' \
+    'writes $HOME rather than this machine'"'"'s path'
+# shellcheck disable=SC2088
+expect_out 'Added ~/.local/bin to PATH in ~/.profile' 'shows the dir under ~'
+
+start 'zsh honors ZDOTDIR, and fish gets fish_add_path'
+new_case_env off-path-shells
+export SHELL=/bin/zsh
+export ZDOTDIR="${HOME}/zdot"
+export MAPBOX_INSTALL_TILESETS=no
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_file "${ZDOTDIR}/.zshrc" 'writes ZDOTDIR/.zshrc'
+expect_no_file "${HOME}/.zshrc" 'and not ~/.zshrc'
+unset ZDOTDIR
+export SHELL=/usr/local/bin/fish
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_in_file "${HOME}/.config/fish/config.fish" "fish_add_path \"${BIN_DIR}\"" \
+    'creates the fish config with fish_add_path'
+
+start 'MAPBOX_NO_MODIFY_PATH leaves the profile alone and prints the line'
+new_case_env no-modify-path
+export SHELL=/bin/zsh
+export MAPBOX_NO_MODIFY_PATH=1
+export MAPBOX_INSTALL_TILESETS=no
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_no_file "${HOME}/.zshrc" 'writes no profile'
 expect_out "${BIN_DIR} is not on your PATH" 'names the directory'
 expect_out "export PATH=\"${BIN_DIR}:\$PATH\"" 'prints the exact line'
-# The literal ~ is the point: it is advice to read, not a path to open.
 # shellcheck disable=SC2088
 expect_out '~/.zshrc' 'names the file for the shell in use'
-unset SHELL
+expect_no_out 'Open a new terminal' 'does not claim a new terminal would have it'
+export MAPBOX_NO_MODIFY_PATH=0
+run_piped && status=0 || status=$?
+expect_file "${HOME}/.zshrc" 'MAPBOX_NO_MODIFY_PATH=0 is not an opt-out'
+
+start 'a terminal gets color and NO_COLOR takes it away'
+new_case_env color
+export MAPBOX_INSTALL_TILESETS=no
+unset NO_COLOR
+export TERM=xterm
+run_interactive '' && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_out "$(printf '\033[32m')" 'colors the step marks'
+export NO_COLOR=1
+run_interactive '' && status=0 || status=$?
+expect_no_out "$(printf '\033[32m')" 'and drops it under NO_COLOR'
 
 start 'an install dir that does not exist yet'
 new_case_env fresh-dir
@@ -1018,10 +1108,9 @@ shim pipx
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0 rather than blocking (124 would be a hang)'
 expect_file "${BIN_DIR}/mapbox" 'mapbox is installed'
-expect_out 'The Mapbox Tilesets CLI is not installed' 'explains what is missing'
-expect_out 'pipx install mapbox-tilesets' 'prints the instructions instead of asking'
-expect_out 'MAPBOX_TILESETS_CLI' 'mentions the override, as the CLI does'
-expect_no_out 'Install it as well?' 'does not ask when nobody can answer'
+expect_out 'Tilesets CLI is not installed' 'says what is missing'
+expect_out 'pipx install mapbox-tilesets' 'gives the command instead of asking'
+expect_no_out 'Install the Tilesets CLI too?' 'does not ask when nobody can answer'
 expect_no_out 'fake pipx' 'installs nothing unasked'
 
 start 'a terminal, answered no'
@@ -1030,11 +1119,11 @@ shim pipx
 run_interactive n && status=0 || status=$?
 expect_status 0 "$status" 'a declined extra is not an install failure'
 expect_file "${BIN_DIR}/mapbox" 'mapbox is installed'
-expect_out 'Install it as well?' 'asks'
-expect_out 'mapbox is installed and ready to use' 'says mapbox is done before asking anything'
-expect_out 'the rest of this is optional' 'calls the extra optional'
-expect_order 'mapbox is installed and ready to use' 'Install it as well?' \
+expect_out 'Install the Tilesets CLI too?' 'asks'
+expect_out 'Only the mapbox tilesets-cli command needs it' 'says which command needs it'
+expect_order 'Installed mapbox 9.9.9' 'Install the Tilesets CLI too?' \
     'reports the finished install before the question, not after'
+expect_order 'Install the Tilesets CLI too?' 'is ready.' 'and the summary after it'
 expect_says "$("${BIN_DIR}/mapbox" --version)" 'mapbox 9.9.9' 'and mapbox runs after answering no'
 expect_out 'pipx install mapbox-tilesets' 'falls back to printing the instructions'
 expect_no_out 'fake pipx' 'runs no installer'
@@ -1044,7 +1133,7 @@ new_case_env tty-default
 shim pipx
 run_interactive '' && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
-expect_out 'Install it as well?' 'asks'
+expect_out 'Install the Tilesets CLI too?' 'asks'
 expect_no_out 'fake pipx' 'the default is no'
 
 start 'a terminal, answered yes'
@@ -1053,8 +1142,9 @@ shim pipx
 run_interactive y && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
 expect_file "${BIN_DIR}/mapbox" 'mapbox is installed'
-expect_out 'Install it as well?' 'asks'
-expect_out 'fake pipx: install mapbox-tilesets' 'prefers pipx when it is there'
+expect_out 'Install the Tilesets CLI too?' 'asks'
+expect_out 'Installing the Tilesets CLI with pipx' 'prefers pipx when it is there'
+expect_out 'fake pipx: install mapbox-tilesets' 'shows its progress while it runs'
 expect_out 'Tilesets CLI: tilesets, version 1.11.0' 'reads the version back'
 
 start 'MAPBOX_INSTALL_TILESETS=yes answers ahead of time'
@@ -1063,8 +1153,9 @@ shim pipx
 export MAPBOX_INSTALL_TILESETS=yes
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
-expect_no_out 'Install it as well?' 'does not ask'
-expect_out 'fake pipx: install mapbox-tilesets' 'installs with no terminal in sight'
+expect_no_out 'Install the Tilesets CLI too?' 'does not ask'
+expect_out 'Installing the Tilesets CLI with pipx' 'installs with no terminal in sight'
+expect_no_out 'fake pipx' 'and keeps its output out of a log nobody watches live'
 
 start 'MAPBOX_INSTALL_TILESETS with a value that is neither yes nor no'
 new_case_env preanswered-junk
@@ -1082,7 +1173,8 @@ export MAPBOX_INSTALL_TILESETS=yes
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
 expect_out 'pipx is not installed' 'says why it is not using pipx'
-expect_out 'fake python3 -m pip install --user mapbox-tilesets' 'falls back to pip --user'
+expect_out 'with pip --user' 'falls back to pip --user'
+expect_no_out 'fake python3' 'and keeps pip'"'"'s output out of the way'
 expect_out 'Tilesets CLI: tilesets, version 1.11.0' 'reads the version back'
 
 start 'no pipx and an OS-managed python3: refuse rather than run a doomed pip'
@@ -1095,7 +1187,7 @@ expect_file "${BIN_DIR}/mapbox" 'mapbox is installed'
 expect_out 'managed by your OS (PEP 668)' 'names why pip is not an option'
 expect_out 'apt install pipx' 'points at the thing that does work there'
 expect_no_out 'fake python3 -m pip' 'does not run pip at all'
-expect_no_out 'pipx is not installed; using pip instead' 'does not announce a fallback it will not take'
+expect_no_out 'with pip --user' 'does not announce a fallback it will not take'
 
 start 'no pipx and no Python 3.10+: refuse rather than guess'
 new_case_env no-python
@@ -1115,9 +1207,19 @@ shim pipx-silent pipx
 export MAPBOX_INSTALL_TILESETS=yes
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
-expect_out 'fake pipx: install mapbox-tilesets' 'ran the installer'
+expect_out 'Installing the Tilesets CLI with pipx' 'ran the installer'
 expect_out 'is not on your PATH' 'says the binary is not reachable'
 expect_out 'MAPBOX_TILESETS_CLI' 'offers the override'
+
+start 'a failed install shows what the installer said'
+new_case_env tilesets-fail
+shim pipx-fail pipx
+export MAPBOX_INSTALL_TILESETS=yes
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'still exits 0 — mapbox itself installed'
+expect_out 'did not succeed' 'says it failed'
+expect_out 'Could not find a version' 'and shows the log it hid while it ran'
+expect_out 'pipx install mapbox-tilesets' 'then the instructions'
 
 start 'a tilesets already on PATH is reported and nothing is asked'
 new_case_env tilesets-present
@@ -1127,7 +1229,7 @@ run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
 expect_out 'Tilesets CLI: tilesets, version 1.11.0' 'reports its version'
 expect_no_out 'is not installed' 'says nothing else about it'
-expect_no_out 'Install it as well?' 'does not ask'
+expect_no_out 'Install the Tilesets CLI too?' 'does not ask'
 expect_no_out 'fake pipx' 'installs nothing'
 
 start 'MAPBOX_TILESETS_CLI is honored, set or broken'
@@ -1139,7 +1241,7 @@ export MAPBOX_TILESETS_CLI="${CASE_DIR}/opt/ts"
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
 expect_out "Tilesets CLI: ${CASE_DIR}/opt/ts (MAPBOX_TILESETS_CLI)" 'reports the override'
-expect_no_out 'Install it as well?' 'does not offer to install over an override'
+expect_no_out 'Install the Tilesets CLI too?' 'does not offer to install over an override'
 expect_no_out 'fake pipx' 'installs nothing'
 
 export MAPBOX_TILESETS_CLI="${CASE_DIR}/opt/gone"

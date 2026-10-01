@@ -51,6 +51,14 @@ that may never merge. They are not releases and are not listed here.
   match on is new. Documented in docs/commands.md's "Where they go"
   section.
 
+- `install.sh` now adds its install directory to `PATH` by appending one
+  line to your shell profile (`~/.zshrc`, `~/.bash_profile` or `~/.bashrc`,
+  fish's `config.fish`, otherwise `~/.profile`), the way `install.ps1`
+  already edits the user `PATH` on Windows. It never writes the line twice.
+  Set `MAPBOX_NO_MODIFY_PATH=1` to keep the old behavior of only printing
+  the line. Both installers' output is also shorter and ends with what to
+  run next.
+
 - New command: `mapbox styles download <style-id> > style.zip` saves a
   style as a ZIP with its sprite icons and custom fonts. `mapbox auth login`
   now also asks for the `styles:download` scope it needs, so log in again

@@ -481,18 +481,13 @@ Three kinds of reason sit behind those decisions, and they are worth
 telling apart:
 
 - **No token can carry the scope.** `POST /oauth/register` refuses
-  `fonts:metadata`, `tokens:write` and `styles:download`, so a login can
-  never obtain them. `src/spec.rs`'s `UNSUPPORTED_OPERATIONS` records
-  which operations need one, and an entry comes off that list once the
-  scope becomes registrable — nothing here can force that.
-  `fonts:list` and `fonts:write` used to be on that list —
-  both became registrable on 2026-09-08, which is what shipped
-  `fonts list`, `fonts upload` and `fonts delete`. `styles
-  download-style-zip`'s real blocker turned out to be one level deeper:
-  production answers it 403 "This is a prerelease API. Please contact
-  support," regardless of scope — access is granted per-account by Mapbox
-  support, not by OAuth, so adding `styles:download` to the allowlist would
-  not unblock it by itself.
+  `fonts:metadata` and `tokens:write`, so a login can never obtain them.
+  `src/spec.rs`'s `UNSUPPORTED_OPERATIONS` records which operations need
+  one, and an entry comes off that list once the scope becomes
+  registrable — nothing here can force that. `fonts:list` and
+  `fonts:write` became registrable on 2026-09-08, which shipped
+  `fonts list`, `fonts upload` and `fonts delete`; `styles:download`
+  followed on 2026-09-30 and shipped `styles download`.
 - **Withheld deliberately.** `styles set-style-protected` unlocks a style
   for deletion — a live token holding `styles:protect` (which *is*
   registrable) can call it successfully, this CLI just declines to offer a
@@ -535,6 +530,7 @@ either.
 | `--profile <name>` | Which stored credentials to use. |
 | `--output`, `-o` | `auto` \| `text` \| `json`. |
 | `--id <value>` | On a command that returns a list, print just the row with that `id` or `name`. |
+| `--quiet`, `-q` | Don't print the `mapbox · v<version>` banner, which goes to stderr and only when stderr is a terminal. Also `MAPBOX_QUIET`. |
 | `--timeout <seconds>` | How long one request may take, connection included. Defaults to 60 seconds, or 900 for a body read from `--file` or from a `--data @<path>`/`@-`. Also `MAPBOX_TIMEOUT`. |
 
 An operation with a request body takes `--data`/`-d` when that body is text
@@ -2223,6 +2219,54 @@ Error: Style not found (HTTP 404)
 Unlike `styles draft delete`, which cannot tell a real id from a typo, this
 one does.
 
+### `mapbox styles download`
+
+The style as a ZIP: `style.json`, every sprite icon as an SVG under
+`sprite_images/`, the custom fonts it uses under `fonts/`, and a license
+file. Only the style's owner can download it.
+
+The account also needs access to this API, which Mapbox grants on request.
+Without it the answer is a 403 whose `fix` says to contact Mapbox at
+help@mapbox.com; a new token or login does not change it. A login from
+before this command shipped lacks the `styles:download` scope, and that
+403 asks for `mapbox auth login` instead.
+
+#### Examples
+
+```sh
+mapbox styles download cmums8rlh000301s96498hnju --username user > style.zip
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%">Terminal — refuses</th><th width="50%">Redirected — raw bytes</th></tr>
+<tr><td>
+
+```
+Error: Response is application/zip (988165 bytes).
+Refusing to write it to the terminal — redirect
+it to a file, e.g. `... > out.zip`.
+```
+
+</td><td>
+
+```
+$ mapbox styles download … > style.zip
+$ file style.zip
+style.zip: Zip archive data, at least v1.0 to
+extract, compression method=store
+```
+
+</td></tr>
+</table>
+
+A login without the scope:
+
+```json
+{"code":"http_403","docs":["https://docs.mapbox.com/api/maps/styles/","https://docs.mapbox.com/api/accounts/tokens/"],"fix":"Your login lacks the `styles:download` scope; it predates this CLI asking for it. Run `mapbox auth login` again.","message":"This API requires a token with styles:download scope.","next_actions":["mapbox auth login"],"status":403}
+```
+
 ### `mapbox styles draft get`
 
 The draft version of a style. Every style carries a published version and a
@@ -3494,9 +3538,9 @@ mapbox config list
 <tr><td>
 
 ```
-update-check	on
-history	on
-log	off
+update-check  on
+history       on
+log           off
 ```
 
 </td><td>
@@ -3937,10 +3981,10 @@ Tips:
 </table>
 
 `-o text`'s table is this CLI's own summary (`render_text` in
-`src/account_usage.rs`), not `render_human` in `src/output.rs`: the response
-nests a `daily` array and a `dimensions` object under each product, too deep
-for that generic renderer, which would fall back to the same pretty JSON
-`-o json` prints. Each row is a product's total for the period plus a
+`src/account_usage.rs`), not `render_human` in `src/output/render.rs`: the
+response nests a `daily` array and a `dimensions` object under each product,
+too deep for that generic renderer, which would fall back to the same pretty
+JSON `-o json` prints. Each row is a product's total for the period plus a
 sparkline of its daily values — a padded one: a day the API's `daily` array
 leaves out (it omits a day rather than sending `usage: 0` for it) still gets
 its own zero-height glyph at the right position in the line, computed from

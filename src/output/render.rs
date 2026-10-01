@@ -1,470 +1,13 @@
-//! How a command's result reaches its caller.
+//! Turning a response into something a person reads.
 //!
-//! Two audiences read this CLI's output and they want opposite things: a
-//! person at a terminal wants prose, a script or an agent wants something
-//! `jq` can parse. `--output` picks between them, and its default — `auto` —
-//! decides by asking whether stdout is a terminal.
-//!
-//! The split is by *stream*, not by mode: stdout carries the result and
-//! nothing else, stderr carries progress, warnings and errors. That holds in
-//! both modes, so `mapbox ... > out.json` is always a clean document and
-//! never has a "Waiting for authorization..." line wedged into it.
-//!
-//! Errors go to stderr in both modes, JSON-shaped under `json`. Keeping them
-//! off stdout means a consumer never has to tell a result from a failure by
-//! inspecting it — the exit code already says which it got.
+//! Tables for lists, aligned field lists for single objects, and numbered
+//! feature lists for the geocoding, search and tilequery services. Every
+//! function here returns text rather than printing it, so the shape of each
+//! rendering is testable; `super::emit_value` decides where it goes.
 
-use std::ffi::OsString;
-use std::io::{IsTerminal, Write};
+use serde_json::Value;
 
-use anyhow::Result;
-use clap::parser::ValueSource;
-use clap::ArgMatches;
-use serde_json::{json, Value};
-
-/// `--id`'s arg id. Not `id`: see the comment where it is declared.
-pub const FILTER_ARG: &str = "filter-id";
-
-/// Picks one row out of a list response.
-///
-/// The Tokens API has no way to fetch one token by id, and neither do
-/// several other listings — but the row is right there in the response the
-/// listing already returned. Filtering it here is the difference between
-/// "the data exists somewhere" and "you can see it", and it needs no query
-/// language and no `jq` on the machine.
-///
-/// Matches on `id`, or on `name` when the rows are keyed that way instead.
-/// A miss is an error rather than an empty result: asking for one row and
-/// silently getting none reads like the row exists and is empty.
-pub fn pick_row(value: &Value, wanted: &str) -> Result<Value> {
-    let rows = value.as_array().ok_or_else(|| {
-        CliError::new(
-            "not_a_list",
-            "`--id` only applies to a command that returns a list.",
-        )
-    })?;
-
-    for key in ["id", "name"] {
-        let found = rows
-            .iter()
-            .find(|row| row.get(key).and_then(Value::as_str) == Some(wanted));
-        if let Some(row) = found {
-            return Ok(row.clone());
-        }
-    }
-
-    Err(CliError::new("not_found", format!("No row has the id `{wanted}`.")).into())
-}
-
-/// The `--output` arg's id, and its three accepted values.
-pub const ARG: &str = "output";
-pub const AUTO: &str = "auto";
-pub const TEXT: &str = "text";
-pub const JSON: &str = "json";
-pub const ENV: &str = "MAPBOX_OUTPUT";
-
-/// Code carried by an error that nothing has classified further.
-pub const GENERIC_CODE: &str = "error";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mode {
-    Text,
-    Json {
-        /// Indented, because a person is reading it. JSON asked for at a
-        /// terminal is being looked at; JSON in a pipe is being parsed, and
-        /// there one document per line is the more useful promise. The bytes
-        /// differ, the document does not.
-        pretty: bool,
-    },
-}
-
-impl Mode {
-    /// Resolves a requested value against the terminal-ness of stdout.
-    ///
-    /// Takes that as an argument rather than probing: it is the only input
-    /// that cannot be arranged in a test, and every interesting case here is
-    /// a combination of the two.
-    ///
-    /// An unrecognized `requested` is treated as `auto`. Clap rejects those
-    /// before they reach us for both the flag and `MAPBOX_OUTPUT`; the one
-    /// caller that can pass one is [`Mode::early`], which reads argv and the
-    /// environment itself, before clap has had a chance to complain.
-    pub fn resolve(requested: &str, stdout_is_terminal: bool) -> Self {
-        match requested {
-            JSON => Mode::Json {
-                pretty: stdout_is_terminal,
-            },
-            TEXT => Mode::Text,
-            _ if stdout_is_terminal => Mode::Text,
-            _ => Mode::Json { pretty: false },
-        }
-    }
-
-    /// The mode for a parsed command line.
-    ///
-    /// `MAPBOX_OUTPUT` is read here rather than declared as clap's `.env()`
-    /// on the arg, because clap would *validate* it: `export MAPBOX_OUTPUT=`
-    /// is a common way to clear a variable, and under `.env()` it made every
-    /// command — including the ones needed to recover — fail with a usage
-    /// error. An unusable value earns a warning and `auto`, never a dead CLI.
-    pub fn from_matches(matches: &ArgMatches) -> Self {
-        let typed = matches.value_source(ARG) == Some(ValueSource::CommandLine);
-        let requested = if typed {
-            matches
-                .get_one::<String>(ARG)
-                .cloned()
-                .unwrap_or_else(|| AUTO.to_string())
-        } else {
-            environment_request().unwrap_or_else(|| AUTO.to_string())
-        };
-
-        Self::resolve(&requested, std::io::stdout().is_terminal())
-    }
-
-    /// The mode for failures raised before clap has produced any matches —
-    /// a spec that will not parse, or a command line clap rejects.
-    ///
-    /// An explicit `--output` has to win even then: a usage error is exactly
-    /// the moment a caller who asked for one shape and got the other has no
-    /// way to recover. So argv is read directly, by
-    /// [`requested_in_argv`], in clap's own precedence: command line, then
-    /// environment, then `auto`.
-    pub fn early(argv: &[OsString]) -> Self {
-        let requested = requested_in_argv(argv)
-            .or_else(environment_request)
-            .unwrap_or_default();
-        Self::resolve(&requested, std::io::stdout().is_terminal())
-    }
-
-    pub fn is_json(self) -> bool {
-        matches!(self, Mode::Json { .. })
-    }
-}
-
-/// `MAPBOX_OUTPUT`, if it holds anything at all.
-///
-/// An unrecognized value is passed through to [`Mode::resolve`], which falls
-/// back to `auto` — but it is worth saying so, since the caller plainly meant
-/// something by it.
-fn environment_request() -> Option<String> {
-    let value = std::env::var(ENV).ok()?;
-    let value = value.trim().to_string();
-    if value.is_empty() {
-        return None;
-    }
-    if ![AUTO, TEXT, JSON].contains(&value.as_str()) {
-        eprintln!(
-            "Warning: {ENV}={value} is not one of {AUTO}, {TEXT}, {JSON} — falling back to {AUTO}."
-        );
-    }
-    Some(value)
-}
-
-/// Reads `--output`'s value straight off argv.
-///
-/// A deliberately small re-implementation of one flag's parsing, used only
-/// when clap has already refused to parse the line — never in place of it.
-/// It accepts the spellings clap does (`--output json`, `--output=json`,
-/// `-o json`, `-ojson`, `-o=json`) and stops at `--`, past which nothing is
-/// ours. It does not understand short-flag groups (`-do json`), it skips a
-/// non-UTF-8 argument rather than stopping at it, and it does not know that
-/// everything after `tilesets-cli` belongs to the child. Every one of those
-/// misreads resolves to `auto`, which is what reading nothing would have
-/// given — and all three only arise on a line clap already rejected, where a
-/// best guess at the caller's intent beats ignoring what they wrote.
-fn requested_in_argv(argv: &[OsString]) -> Option<String> {
-    let mut args = argv.iter().filter_map(|arg| arg.to_str());
-
-    while let Some(arg) = args.next() {
-        if arg == "--" {
-            return None;
-        }
-        if arg == "--output" || arg == "-o" {
-            return args.next().map(String::from);
-        }
-        if let Some(value) = arg
-            .strip_prefix("--output=")
-            .or_else(|| arg.strip_prefix("-o="))
-            .or_else(|| arg.strip_prefix("-o"))
-        {
-            if !value.is_empty() && !value.starts_with('-') {
-                return Some(value.to_string());
-            }
-        }
-    }
-
-    None
-}
-
-/// A failure with a machine-readable code.
-///
-/// Most errors in this crate are plain `anyhow`, and render under
-/// [`GENERIC_CODE`]. This exists for the ones a caller may reasonably want to
-/// branch on — an HTTP status, a missing login — where "read the message"
-/// is not a workable contract.
-///
-/// One caveat if you extend it: [`emit_error`] renders `message` alone, so
-/// `.context("while creating the style")` wrapped *around* a `CliError`
-/// is dropped in both modes. Put the context in the message instead.
-#[derive(Debug)]
-pub struct CliError {
-    pub code: String,
-    pub message: String,
-    /// HTTP status, when the failure came from an API response.
-    pub status: Option<u16>,
-    /// The upstream response body, when it parsed as JSON. Preserved because
-    /// Mapbox APIs put detail there that the message alone drops.
-    pub body: Option<Value>,
-    /// The raw response body, when it was not JSON. The message is capped at
-    /// a readable length, so without this an HTML error page from a proxy
-    /// would be truncated with nowhere to read the rest.
-    pub body_text: Option<String>,
-    /// What to do about the failure, in prose. Rendered as a line under the
-    /// error in text, and as a field in JSON so a caller can surface or act
-    /// on it rather than parse advice out of the message.
-    pub fix: Option<String>,
-    /// Commands to run next — shell lines and nothing else, so a caller can
-    /// execute one without reading it first. Empty when there is nothing
-    /// concrete to suggest; the reasoning lives in `fix` either way.
-    pub next_actions: Vec<String>,
-    /// The documentation for what failed. Attached per service and per
-    /// status by [`crate::remedy`], which is where the URLs live.
-    pub docs: Vec<String>,
-    /// The request id from the response that failed — see
-    /// `executor::REQUEST_ID_HEADERS` for which header it comes from.
-    ///
-    /// Always in the `json` rendering, where a field costs a reader nothing.
-    /// In `text` only for a 5xx, because that is the failure a person takes
-    /// to support — a 404 on a mistyped style id is theirs to fix, and an id
-    /// under it would be noise on the common case.
-    pub request_id: Option<String>,
-}
-
-impl CliError {
-    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
-        CliError {
-            code: code.into(),
-            message: message.into(),
-            status: None,
-            body: None,
-            body_text: None,
-            fix: None,
-            next_actions: Vec::new(),
-            docs: Vec::new(),
-            request_id: None,
-        }
-    }
-
-    /// Attaches [`crate::remedy::Remedy`]'s advice, filling gaps rather
-    /// than overwriting.
-    ///
-    /// Two layers contribute to one error and they know different things:
-    /// the executor knows the status and the operation, `auth` knows where
-    /// the token that just failed came from. They are complementary, not
-    /// competing — `remedy::for_http` deliberately leaves a 401's `fix`
-    /// empty because only `auth` can write it — so the second caller adds to
-    /// the first's advice instead of replacing it.
-    pub fn with_remedy(mut self, remedy: crate::remedy::Remedy) -> Self {
-        if self.fix.is_none() {
-            self.fix = remedy.fix;
-        }
-        for action in remedy.next_actions {
-            if !self.next_actions.contains(&action) {
-                self.next_actions.push(action);
-            }
-        }
-        for url in remedy.docs {
-            if !self.docs.contains(&url) {
-                self.docs.push(url);
-            }
-        }
-        self
-    }
-
-    /// A non-2xx API response. The message is taken from the body's
-    /// `message` field — what every Mapbox API puts the human explanation in
-    /// — falling back to the status line when there is no such field.
-    pub fn http(status: u16, body_text: &str) -> Self {
-        let parsed: Option<Value> = serde_json::from_str(body_text).ok();
-        // A body of literal `null` is no more informative than no body, and
-        // carrying it would print a bare `null` under the error. It is still
-        // *valid* JSON, though, so it must not fall through to the raw-text
-        // arm below — that would make the message the string "null".
-        let body = parsed.clone().filter(|value: &Value| !value.is_null());
-
-        let from_field = body
-            .as_ref()
-            .and_then(|b| b.get("message"))
-            .and_then(Value::as_str);
-        // The Tilesets API answers a wrong-account token with a bare
-        // `"Not found"` — a JSON string, not an object. Without this arm the
-        // one thing it said would survive only inside `body`.
-        let from_string = body.as_ref().and_then(Value::as_str);
-        let from_text = parsed.is_none().then_some(body_text);
-
-        let message = from_field
-            .or(from_string)
-            .or(from_text)
-            .map(str::trim)
-            .filter(|m| !m.is_empty())
-            .map(truncate_for_message)
-            .unwrap_or_else(|| format!("Request failed with HTTP {status}"));
-
-        let body_text = parsed
-            .is_none()
-            .then(|| body_text.trim())
-            .filter(|text| !text.is_empty())
-            .map(String::from);
-
-        CliError {
-            code: format!("http_{status}"),
-            message,
-            status: Some(status),
-            body,
-            body_text,
-            fix: None,
-            next_actions: Vec::new(),
-            docs: Vec::new(),
-            request_id: None,
-        }
-    }
-
-    /// Records the response's request id for this failure.
-    ///
-    /// Takes the `Option` rather than a value so the caller hands over
-    /// whatever the response had without a branch of its own.
-    pub fn with_request_id(mut self, request_id: Option<String>) -> Self {
-        self.request_id = request_id;
-        self
-    }
-
-    /// The request id worth showing a person, as opposed to a program.
-    ///
-    /// A 5xx only. The server broke, nothing the reader typed will fix it,
-    /// and this is what lets support find the request. Under a 404 on a
-    /// mistyped id it would be a line of noise beneath an error the reader
-    /// can already act on — so the `json` rendering carries it always and
-    /// this decides the `text` one.
-    fn support_request_id(&self) -> Option<&str> {
-        self.request_id
-            .as_deref()
-            .filter(|_| self.status.is_some_and(|status| status >= 500))
-    }
-}
-
-/// Caps a message taken from a response body.
-///
-/// An error page from a proxy or WAF in front of the API is HTML, not JSON,
-/// and can run to kilobytes; under `json` that would all land on one line in
-/// the single field a caller reads. The first line is the part that ever
-/// says anything, and the whole body is still carried under `body_text`.
-fn truncate_for_message(text: &str) -> String {
-    const LIMIT: usize = 200;
-
-    let first_line = text.lines().next().unwrap_or_default().trim();
-    if first_line.chars().count() <= LIMIT {
-        return first_line.to_string();
-    }
-    let clipped: String = first_line.chars().take(LIMIT).collect();
-    format!("{clipped}…")
-}
-
-impl std::fmt::Display for CliError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for CliError {}
-
-/// Prints a command's result. The only thing that writes to stdout.
-///
-/// `text` is the prose a person should see; `json` the object a program
-/// should. Both are built eagerly — every result here is small enough that
-/// deferring one behind a closure costs more at the call site than it saves.
-pub fn emit(mode: Mode, text: &str, json: Value) -> Result<()> {
-    match mode {
-        Mode::Text => write_stdout(text),
-        Mode::Json { pretty } => write_stdout(&encode(&json, pretty)?),
-    }
-}
-
-/// One document, indented or not.
-fn encode(value: &Value, pretty: bool) -> Result<String> {
-    Ok(if pretty {
-        serde_json::to_string_pretty(value)?
-    } else {
-        serde_json::to_string(value)?
-    })
-}
-
-/// Prints an API response.
-///
-/// Under `json` it goes out as one compact line, untouched. Under `text` it
-/// is rendered as a table or a field list when the response has a shape that
-/// suits one, and pretty-printed otherwise.
-///
-/// `service` gates the exception — see [`list_rendering`]: `search`'s,
-/// `geocoder`'s and `tilequery`'s GeoJSON render as a list instead. Every
-/// other value takes the path it always has.
-///
-/// `page` is the note that this response is one page of several. It goes to
-/// stderr **in both modes**, unlike the other notes here: the result is just
-/// as incomplete under `json`, and the API's own answer cannot carry the
-/// fact without wrapping it in an envelope this CLI has promised not to add.
-pub fn emit_value(
-    mode: Mode,
-    value: &Value,
-    footer: Option<&str>,
-    service: Option<&str>,
-    page: Option<&str>,
-) -> Result<()> {
-    if let Mode::Json { pretty } = mode {
-        write_stdout(&encode(value, pretty)?)?;
-        // The only thing `json` prints to stderr on a success. A consumer
-        // reading stdout alone is unaffected; one that would otherwise
-        // believe it had the whole list is told. Through `print_tips` like
-        // every other note, so the one thing `json` says on stderr is not
-        // also the one thing shaped differently.
-        print_tips(page.map(String::from).as_slice());
-        return Ok(());
-    }
-
-    match list_rendering(value, service).or_else(|| render_human(value)) {
-        Some(rendered) => {
-            write_stdout(&rendered.text)?;
-            // Advice about the result, so stderr — a `-o text > file` keeps
-            // the table alone, and a reader still sees where to go next.
-            // A blank line first. These are notes about the table, not more
-            // of it, and butted against the last row they read as one.
-            let next = match (footer, &rendered.identifier) {
-                (Some(command), _) => Some(format!("To see one row: {command}")),
-                // Every listing can answer this, so none of them has to send
-                // the reader to a tool that ships with no operating system.
-                // An earlier version suggested a `jq` pipeline here.
-                (None, Some(example)) => Some(format!("To see one row: add `--id {example}`")),
-                (None, None) => None,
-            };
-
-            // Every human rendering says where the machine one is. A table
-            // that clipped something has a stronger reason to; a field list
-            // shows every value already, so for it this is discoverability
-            // rather than a warning, and the wording says which.
-            let mut tips = vec![if rendered.shortened {
-                "Values are shortened to fit; `-o json` prints each row whole.".to_string()
-            } else {
-                "`-o json` for the response as the API sent it.".to_string()
-            }];
-            tips.extend(next);
-            // Last, because it is about the response as a whole rather than
-            // about the rendering above it.
-            tips.extend(page.map(String::from));
-            print_tips(&tips);
-            Ok(())
-        }
-        None => write_stdout(&serde_json::to_string_pretty(value)?),
-    }
-}
+use super::style;
 
 /// The list rendering a response earns, if it earns one.
 ///
@@ -473,7 +16,7 @@ pub fn emit_value(
 /// somebody has looked at its features and decided what a line of them should
 /// say. `None` — an unlisted service, no service at all, or a value that is
 /// not a `FeatureCollection` — falls through to [`render_human`].
-fn list_rendering(value: &Value, service: Option<&str>) -> Option<Rendered> {
+pub(super) fn list_rendering(value: &Value, service: Option<&str>) -> Option<Rendered> {
     match service {
         Some("search") => match search_feature_rows(value) {
             Some(rows) => Some(render_feature_list(&rows)),
@@ -488,13 +31,21 @@ fn list_rendering(value: &Value, service: Option<&str>) -> Option<Rendered> {
 }
 
 /// A human rendering, what it had to cut, and the first identifier in it.
-struct Rendered {
-    text: String,
-    shortened: bool,
+pub(super) struct Rendered {
+    pub(super) text: String,
+    pub(super) shortened: bool,
+    /// Whether the first line is a table's column names.
+    header: bool,
+    /// The labels and values of a field list, kept so they can be drawn
+    /// again with the labels highlighted.
+    fields: Option<Vec<(String, String)>>,
+    /// The whole text again in color, for a rendering that styles more than
+    /// one header line or a column of labels.
+    colored: Option<String>,
     /// The first row's key, when the table has one — a real value for the
     /// `--id` suggestion, so the line can be copied and edited rather than
     /// filled in from scratch.
-    identifier: Option<String>,
+    pub(super) identifier: Option<String>,
 }
 
 /// Widest a table column may start out, before `fit_to_line` narrows it.
@@ -738,9 +289,17 @@ fn render_geocoder_list(value: &Value) -> Option<Rendered> {
     let rows = feature_collection_rows(value)?;
     let mut rendered = render_feature_list(&rows);
     if let Some(notice) = attribution(value) {
-        rendered.text.push_str(&format!("\n\n{notice}"));
+        rendered.text.push_str(&notice_text(notice, false));
+        if let Some(colored) = &mut rendered.colored {
+            colored.push_str(&notice_text(notice, true));
+        }
     }
     Some(rendered)
+}
+
+/// The terms under a list, dimmed so the results stay what the eye lands on.
+fn notice_text(notice: &str, color: bool) -> String {
+    format!("\n\n{}", style::paint(notice, style::DIM, color))
 }
 
 /// A `FeatureCollection`'s `attribution`, when it carries a usable one.
@@ -844,7 +403,7 @@ fn tilequery_feature_rows(value: &Value) -> Option<Vec<Value>> {
 /// rejects is a `-o json` away.
 ///
 /// The `tilequery` object's leftovers come in on dotted keys
-/// (`tilequery.band`), the same shape `render_fields` flattens one level of
+/// (`tilequery.band`), the same shape `field_pairs` flattens one level of
 /// nesting onto — a tileset may carry a top-level `zoom` or `geometry` of its
 /// own, and a bare key would let one quietly overwrite the other.
 ///
@@ -921,7 +480,7 @@ fn tilequery_row(feature: &Value) -> Value {
     // The `tilequery` object's own leftovers — `band`, `zoom`, `units` on a
     // raster-array result — sit a level down and read the same way as the
     // top-level ones, so they are flattened in beside them, on the dotted
-    // keys `render_fields` already flattens one level of nesting onto.
+    // keys `field_pairs` already flattens one level of nesting onto.
     // Qualifying them is not cosmetic: a tileset is free to carry a top-level
     // attribute named `geometry` or `zoom` too, and a bare key let one
     // silently overwrite the other on the way in.
@@ -962,11 +521,31 @@ fn render_feature_list(rows: &[Value]) -> Rendered {
     if rows.is_empty() {
         return Rendered {
             text: "(none)".to_string(),
+            header: false,
+            fields: None,
+            colored: None,
             shortened: false,
             identifier: None,
         };
     }
 
+    // Never clipped, so nothing to warn about; no column to suggest `--id`
+    // against either.
+    Rendered {
+        text: feature_list_text(rows, false),
+        header: false,
+        fields: None,
+        colored: Some(feature_list_text(rows, true)),
+        shortened: false,
+        identifier: None,
+    }
+}
+
+/// [`render_feature_list`]'s text. In color, the name is bold and the
+/// category, distance, coordinates and attribute names are dimmed, leaving
+/// the name and address as what a reader scans.
+fn feature_list_text(rows: &[Value], color: bool) -> String {
+    let dim = |text: &str| style::paint(text, style::DIM, color);
     let mut out = String::new();
     for (index, row) in rows.iter().enumerate() {
         if index > 0 {
@@ -976,18 +555,22 @@ fn render_feature_list(rows: &[Value]) -> Rendered {
             .get("name")
             .and_then(Value::as_str)
             .unwrap_or("(unnamed)");
-        out.push_str(&format!("{}. {name}", index + 1));
+        out.push_str(&format!(
+            "{}. {}",
+            index + 1,
+            style::paint(name, style::BOLD, color)
+        ));
         if let Some(category) = row.get("category").and_then(Value::as_str) {
-            out.push_str(&format!(" ({category})"));
+            out.push_str(&format!(" {}", dim(&format!("({category})"))));
         }
         if let Some(distance) = row.get("distance").and_then(Value::as_str) {
-            out.push_str(&format!(" — {distance}"));
+            out.push_str(&format!(" {}", dim(&format!("— {distance}"))));
         }
         if let Some(address) = row.get("address").and_then(Value::as_str) {
             out.push_str(&format!("\n   {address}"));
         }
         if let Some(coordinates) = row.get("coordinates").and_then(Value::as_str) {
-            out.push_str(&format!("\n   {coordinates}"));
+            out.push_str(&format!("\n   {}", dim(coordinates)));
         }
         // Only `tilequery` fills this in; a geocoding row never carries it.
         if let Some(extra) = row.get("extra").and_then(Value::as_object) {
@@ -996,18 +579,11 @@ fn render_feature_list(rows: &[Value]) -> Rendered {
                     Value::Array(items) => join_list(items),
                     scalar => cell(Some(scalar)),
                 };
-                out.push_str(&format!("\n   {key}: {rendered}"));
+                out.push_str(&format!("\n   {} {rendered}", dim(&format!("{key}:"))));
             }
         }
     }
-
-    // Never clipped, so nothing to warn about; no column to suggest `--id`
-    // against either.
-    Rendered {
-        text: out,
-        shortened: false,
-        identifier: None,
-    }
+    out
 }
 
 /// `batch-geocode`'s `{"batch": [FeatureCollection, …]}`, one query's list
@@ -1026,18 +602,6 @@ fn render_batch_feature_list(value: &Value) -> Option<Rendered> {
         .map(feature_collection_rows)
         .collect::<Option<_>>()?;
 
-    let mut out = String::new();
-    for (index, rows) in lists.iter().enumerate() {
-        if index > 0 {
-            out.push_str("\n\n");
-        }
-        // One query needs no header: there is nothing to tell it apart from.
-        if lists.len() > 1 {
-            out.push_str(&format!("Query {}:\n", index + 1));
-        }
-        out.push_str(&render_feature_list(rows).text);
-    }
-
     // Every entry carries its own `attribution` and it is the API's terms
     // rather than the query's, so all fifty of them say the same thing. Once
     // under the whole batch, then — the same notice repeated under every
@@ -1049,12 +613,35 @@ fn render_batch_feature_list(value: &Value) -> Option<Rendered> {
             notices.push(notice);
         }
     }
-    for notice in notices {
-        out.push_str(&format!("\n\n{notice}"));
-    }
+
+    let text = |color: bool| {
+        let mut out = String::new();
+        for (index, rows) in lists.iter().enumerate() {
+            if index > 0 {
+                out.push_str("\n\n");
+            }
+            // One query needs no header: there is nothing to tell it apart from.
+            if lists.len() > 1 {
+                let header = format!("Query {}:", index + 1);
+                out.push_str(&format!("{}\n", style::paint(&header, style::BOLD, color)));
+            }
+            let list = render_feature_list(rows);
+            match (color, list.colored) {
+                (true, Some(colored)) => out.push_str(&colored),
+                _ => out.push_str(&list.text),
+            }
+        }
+        for notice in &notices {
+            out.push_str(&notice_text(notice, color));
+        }
+        out
+    };
 
     Some(Rendered {
-        text: out,
+        text: text(false),
+        header: false,
+        fields: None,
+        colored: Some(text(true)),
         shortened: false,
         identifier: None,
     })
@@ -1067,7 +654,7 @@ fn render_batch_feature_list(value: &Value) -> Option<Rendered> {
 /// resolution, and it works the same for a service nobody has looked at.
 /// Giving up is a real answer — GeoJSON, a bare value, or rows with nothing
 /// in common all read better as JSON than as a table pretending they fit.
-fn render_human(value: &Value) -> Option<Rendered> {
+pub(super) fn render_human(value: &Value) -> Option<Rendered> {
     match value {
         Value::Array(rows) => render_table(rows),
         Value::Object(map) => {
@@ -1079,8 +666,11 @@ fn render_human(value: &Value) -> Option<Rendered> {
                 return Some(table);
             }
             // Field lists never clip: they have the room.
-            render_fields(value).map(|text| Rendered {
-                text,
+            field_pairs(value).map(|fields| Rendered {
+                text: field_lines(&fields, false),
+                header: false,
+                fields: Some(fields),
+                colored: None,
                 shortened: false,
                 identifier: None,
             })
@@ -1105,6 +695,9 @@ fn render_table(rows: &[Value]) -> Option<Rendered> {
     if rows.is_empty() {
         return Some(Rendered {
             text: "(none)".to_string(),
+            header: false,
+            fields: None,
+            colored: None,
             shortened: false,
             identifier: None,
         });
@@ -1160,19 +753,22 @@ fn render_table(rows: &[Value]) -> Option<Rendered> {
 
     Some(Rendered {
         text: out,
+        header: true,
+        fields: None,
+        colored: None,
         shortened,
         identifier,
     })
 }
 
-/// A single object as aligned `name  value` lines.
+/// A single object as the `(name, value)` pairs of a field list.
 ///
 /// One level of nesting is flattened onto dotted keys, because dropping it
 /// loses the answer: `accounts retrieve-token` puts everything worth reading
 /// inside `token`, and a scalars-only view rendered the whole response as
 /// `code  TokenValid`. Deeper than that, or an array, and the structure is
 /// the information — those fall back to JSON.
-fn render_fields(value: &Value) -> Option<String> {
+fn field_pairs(value: &Value) -> Option<Vec<(String, String)>> {
     let object = value.as_object()?;
     let mut fields: Vec<(String, String)> = Vec::new();
 
@@ -1202,12 +798,30 @@ fn render_fields(value: &Value) -> Option<String> {
         return None;
     }
 
-    let width = fields.iter().map(|(k, _)| k.chars().count()).max()?;
-    let lines: Vec<String> = fields
+    Some(fields)
+}
+
+/// Aligned `label  value` lines, with the labels in bold.
+///
+/// Every key/value list a person reads goes through here — a response's
+/// fields, `auth whoami`, `doctor` — so they align and highlight the same
+/// way. Padding is added outside the escapes, so color never shifts a
+/// column.
+pub fn field_lines<L: AsRef<str>>(fields: &[(L, String)], color: bool) -> String {
+    let width = fields
         .iter()
-        .map(|(k, v)| format!("{k:width$}  {v}"))
-        .collect();
-    Some(lines.join("\n"))
+        .map(|(label, _)| label.as_ref().chars().count())
+        .max()
+        .unwrap_or(0);
+    fields
+        .iter()
+        .map(|(label, value)| {
+            let label = label.as_ref();
+            let pad = " ".repeat(width - label.chars().count() + 2);
+            format!("{}{pad}{value}", style::paint(label, style::BOLD, color))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// A list of scalars on one line. One row of a table cannot afford this, but
@@ -1416,185 +1030,25 @@ fn join_row(cells: &[String], widths: &[usize]) -> String {
     padded.join(&" ".repeat(SEPARATOR)).trim_end().to_string()
 }
 
-/// Prints an API response body that did not parse as JSON.
-///
-/// Under `json` the body becomes a JSON string, which is a valid document on
-/// its own — a caller piping into `jq` gets something parseable rather than
-/// a syntax error, and the response really is just text.
-pub fn emit_text_body(mode: Mode, body: &str) -> Result<()> {
-    match mode {
-        Mode::Text => write_stdout(body),
-        Mode::Json { pretty } => write_stdout(&encode(&Value::String(body.to_string()), pretty)?),
+/// The rendered text, with a table's column names, a field list's labels or
+/// a feature list's names in bold.
+pub(super) fn styled(rendered: &Rendered, color: bool) -> String {
+    if !color {
+        return rendered.text.clone();
     }
-}
-
-/// Progress and diagnostics. Always stderr, in both modes: this is not the
-/// result, and a caller redirecting stdout must not collect it.
-pub fn progress(message: &str) {
-    eprintln!("{message}");
-}
-
-/// A `CliError` as the object `json` mode prints.
-///
-/// Split out from [`emit_error`] because it is the machine-readable contract
-/// — a consumer branches on these keys — and a function returning a value
-/// can be tested, where one that writes to stderr cannot.
-fn error_payload(e: &CliError) -> Value {
-    let mut obj = json!({ "code": e.code, "message": e.message });
-    if let Some(status) = e.status {
-        obj["status"] = json!(status);
+    if let Some(colored) = &rendered.colored {
+        return colored.clone();
     }
-    // Same rule the text rendering uses: a body whose only key is `message`
-    // has already been said, and repeating it makes a consumer wonder which
-    // of the two to read.
-    if let Some(body) = e.body.as_ref().filter(|b| adds_detail(b)) {
-        obj["body"] = body.clone();
+    if let Some(fields) = &rendered.fields {
+        return field_lines(fields, true);
     }
-    if let Some(text) = &e.body_text {
-        obj["body_text"] = json!(text);
+    if !rendered.header {
+        return rendered.text.clone();
     }
-    if let Some(fix) = &e.fix {
-        obj["fix"] = json!(fix);
+    match rendered.text.split_once('\n') {
+        Some((header, rows)) => format!("{}\n{rows}", style::paint(header, style::BOLD, true)),
+        None => style::paint(&rendered.text, style::BOLD, true),
     }
-    // Absent rather than empty. `[]` invites a consumer to wonder whether the
-    // list was computed and came out empty, which is the question a missing
-    // key already answers.
-    if !e.next_actions.is_empty() {
-        obj["next_actions"] = json!(e.next_actions);
-    }
-    if !e.docs.is_empty() {
-        obj["docs"] = json!(e.docs);
-    }
-    // Here whatever the status, unlike the `text` rendering: a field costs a
-    // consumer nothing to ignore, and a caller logging failures wants the id
-    // on all of them, not only the ones a person would escalate.
-    if let Some(request_id) = &e.request_id {
-        obj["request_id"] = json!(request_id);
-    }
-    obj
-}
-
-/// Renders a failure to stderr.
-///
-/// Flat, not wrapped in an `{"error": …}` object. Under `json`, stderr never
-/// carries anything else machine-readable and stdout never carries a failure
-/// at all, so a key naming the shape would answer a question nothing can
-/// ask. `jq .message` beats `jq .error.message` for the same reason there is
-/// no `state` field: the streams already separate the two cases.
-pub fn emit_error(mode: Mode, err: &anyhow::Error) {
-    let cli = err.downcast_ref::<CliError>();
-    let code = cli.map_or(GENERIC_CODE, |e| e.code.as_str());
-    crate::run_record::set_error(code, &format!("{err:#}"));
-
-    if mode.is_json() {
-        let payload = match cli {
-            Some(e) => error_payload(e),
-            // `{:#}` flattens anyhow's context chain into one line, so a
-            // wrapped error keeps the context that explains it.
-            None => json!({ "code": GENERIC_CODE, "message": format!("{err:#}") }),
-        };
-        // Serializing a `json!` object cannot fail; fall back rather than
-        // panic while already on the error path.
-        let pretty = matches!(mode, Mode::Json { pretty: true });
-        let line = encode(&payload, pretty)
-            .unwrap_or_else(|_| r#"{"code":"error","message":"unserializable error"}"#.to_string());
-        eprintln!("{line}");
-        return;
-    }
-
-    match cli {
-        Some(e) => {
-            match e.status {
-                Some(status) => eprintln!("Error: {} (HTTP {})", e.message, status),
-                None => eprintln!("Error: {}", e.message),
-            }
-            // The message is only ever one field of the body; print the rest
-            // when there is a rest, so a person loses nothing that the old
-            // dump-the-body behavior showed them.
-            if let Some(body) = e.body.as_ref().filter(|b| adds_detail(b)) {
-                if let Ok(pretty) = serde_json::to_string_pretty(body) {
-                    eprintln!("{pretty}");
-                }
-            }
-            // Only worth repeating when the cap actually dropped something.
-            if let Some(text) = e.body_text.as_ref().filter(|t| *t != &e.message) {
-                eprintln!("{text}");
-            }
-            if let Some(fix) = &e.fix {
-                eprintln!("Fix: {fix}");
-            }
-            if let Some(request_id) = e.support_request_id() {
-                eprintln!("Request ID: {request_id} (quote this to Mapbox support)");
-            }
-            eprint_labeled("Next", &e.next_actions);
-            eprint_labeled("Docs", &e.docs);
-        }
-        None => eprintln!("Error: {err:#}"),
-    }
-}
-
-/// Prints one or more tips on stderr, in the one shape every command uses:
-/// a single tip reads `Tip: …`; two or more get a `Tips:` header with each
-/// one indented on its own line below it. Nothing for an empty list, so the
-/// caller needs no guard. A blank line first — these are notes about
-/// whatever was just printed, not more of it, and butted against the last
-/// line they'd read as one.
-fn print_tips(tips: &[String]) {
-    if tips.is_empty() {
-        return;
-    }
-    eprintln!();
-    if let [tip] = tips {
-        eprintln!("Tip: {tip}");
-    } else {
-        eprintln!("Tips:");
-        for tip in tips {
-            eprintln!("  {tip}");
-        }
-    }
-}
-
-/// A labeled group of lines on stderr. Nothing for an empty list, so the
-/// caller needs no guard.
-fn eprint_labeled(label: &str, values: &[String]) {
-    for line in labeled_lines(label, values) {
-        eprintln!("{line}");
-    }
-}
-
-/// Labels the first line and aligns the rest under it.
-///
-/// `Next: mapbox styles list` reads as one thing; a second `Next:` on
-/// the line below reads as two unrelated ones. Continuation lines are
-/// indented to the label's width instead.
-fn labeled_lines(label: &str, values: &[String]) -> Vec<String> {
-    values
-        .iter()
-        .enumerate()
-        .map(|(index, value)| {
-            if index == 0 {
-                format!("{label}: {value}")
-            } else {
-                format!("{:width$}  {value}", "", width = label.len())
-            }
-        })
-        .collect()
-}
-
-/// Whether a response body carries anything past the message already shown.
-fn adds_detail(body: &Value) -> bool {
-    match body.as_object() {
-        Some(map) => map.keys().any(|k| k != "message"),
-        None => true,
-    }
-}
-
-fn write_stdout(line: &str) -> Result<()> {
-    crate::run_record::add_stdout_bytes(line.len() + 1);
-    let mut out = std::io::stdout().lock();
-    writeln!(out, "{line}")?;
-    out.flush()?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1605,26 +1059,68 @@ mod tests {
         serde_json::from_str(json).expect("test fixture parses")
     }
 
-    /// Two commands under one `Next:` have to read as two commands, not as
-    /// one wrapped line and not as two unrelated labels.
     #[test]
-    fn a_second_labeled_line_is_aligned_under_the_first() {
-        let lines = labeled_lines(
-            "Next",
-            &[
-                "mapbox styles list-styles".to_string(),
-                "mapbox auth whoami".to_string(),
-            ],
-        );
+    fn only_a_tables_first_line_is_bold() {
+        let table =
+            render_table(rows(r#"[{"id":"a","name":"x"}]"#).as_array().unwrap()).expect("renders");
+        let colored = styled(&table, true);
+        let (header, rest) = colored.split_once('\n').expect("two lines");
+        assert!(header.starts_with(style::BOLD) && header.ends_with(style::RESET));
+        assert!(!rest.contains('\x1b'), "{rest:?}");
+        assert_eq!(style::strip(&colored), table.text);
+        assert_eq!(styled(&table, false), table.text);
+    }
 
+    #[test]
+    fn a_field_lists_labels_are_bold_and_stay_aligned() {
+        let fields = render_human(&rows(r#"{"id":"a","owner":"x"}"#)).expect("renders");
+        assert_eq!(fields.text, "id     a\nowner  x");
+        let colored = styled(&fields, true);
         assert_eq!(
-            lines,
-            [
-                "Next: mapbox styles list-styles",
-                "      mapbox auth whoami"
-            ]
+            colored,
+            format!(
+                "{b}id{r}     a\n{b}owner{r}  x",
+                b = style::BOLD,
+                r = style::RESET
+            )
         );
-        assert!(labeled_lines("Next", &[]).is_empty());
+        assert_eq!(style::strip(&colored), fields.text);
+    }
+
+    #[test]
+    fn a_feature_lists_names_are_bold_and_its_details_dim() {
+        let value = rows(
+            r#"{"type":"FeatureCollection","attribution":"NOTICE: terms","features":[{"type":"Feature","geometry":{"coordinates":[24.941822,60.167507],"type":"Point"},"properties":{"name":"Helsinki","feature_type":"place","full_address":"Helsinki, Uusimaa, Finland"}}]}"#,
+        );
+        let list = list_rendering(&value, Some("geocoder")).expect("renders");
+        let colored = styled(&list, true);
+        let (b, d, r) = (style::BOLD, style::DIM, style::RESET);
+        assert_eq!(
+            colored,
+            format!(
+                "1. {b}Helsinki{r} {d}(place){r}\n   Helsinki, Uusimaa, Finland\n   \
+                 {d}24.941822,60.167507{r}\n\n{d}NOTICE: terms{r}"
+            )
+        );
+        assert_eq!(style::strip(&colored), list.text);
+        assert_eq!(styled(&list, false), list.text);
+    }
+
+    #[test]
+    fn a_batchs_query_headers_are_bold_and_color_changes_no_text() {
+        let value = rows(
+            r#"{"batch":[
+                {"type":"FeatureCollection","attribution":"NOTICE: terms","features":[{"properties":{"name":"Helsinki"}}]},
+                {"type":"FeatureCollection","attribution":"NOTICE: terms","features":[{"properties":{"name":"Tampere"}}]}
+            ]}"#,
+        );
+        let list = list_rendering(&value, Some("geocoder")).expect("renders");
+        let colored = styled(&list, true);
+        assert!(
+            colored.starts_with(&format!("{}Query 1:{}", style::BOLD, style::RESET)),
+            "{colored:?}"
+        );
+        assert_eq!(style::strip(&colored), list.text);
     }
 
     #[test]
@@ -1663,37 +1159,6 @@ mod tests {
         for absent in ["MODIFIED", "USAGE", "TOKEN"] {
             assert!(!header.contains(absent), "{absent} should be out: {header}");
         }
-    }
-
-    #[test]
-    fn a_row_can_be_picked_out_of_a_list_by_id_or_name() {
-        let list = rows(r#"[{"id":"a1","note":"first"},{"id":"b2","note":"second"}]"#);
-        assert_eq!(pick_row(&list, "b2").unwrap()["note"], "second");
-
-        let named = rows(r#"[{"name":"streets"},{"name":"dark"}]"#);
-        assert_eq!(pick_row(&named, "dark").unwrap()["name"], "dark");
-    }
-
-    /// A miss is an error, not an empty result: asking for one row and
-    /// silently getting none reads like the row exists and is empty.
-    #[test]
-    fn picking_reports_a_miss_and_a_shape_it_cannot_search() {
-        let list = rows(r#"[{"id":"a1"}]"#);
-        let missing = pick_row(&list, "nope").unwrap_err();
-        assert_eq!(
-            missing.downcast_ref::<CliError>().expect("a CliError").code,
-            "not_found"
-        );
-
-        let single = rows(r#"{"id":"a1"}"#);
-        let wrong_shape = pick_row(&single, "a1").unwrap_err();
-        assert_eq!(
-            wrong_shape
-                .downcast_ref::<CliError>()
-                .expect("a CliError")
-                .code,
-            "not_a_list"
-        );
     }
 
     /// The identifier a table was keyed by, so the advice underneath names a
@@ -1971,29 +1436,6 @@ mod tests {
         // Neither shape: falls through to the generic renderer, same as any
         // other service's response would.
         assert!(search_category_rows(&rows(r#"{"scopes":["a"]}"#)).is_none());
-    }
-
-    /// `render_table` alone would suggest `--id <name>` here, the same as it
-    /// does for any other table — but `pick_row` only accepts a bare
-    /// top-level array, and this response is `{"listItems": […],
-    /// "attribution": …}`, an object. That suggestion is a command
-    /// guaranteed to fail, so `render_category_table` must not carry it.
-    #[test]
-    fn list_category_never_suggests_an_id_pick_row_cannot_use() {
-        let response = rows(
-            r#"{"listItems":[{"canonical_id":"food_and_drink","name":"Food and Drink"}],"attribution":"x"}"#,
-        );
-        let rendered = render_category_table(&response).expect("a table");
-        assert_eq!(rendered.identifier, None);
-
-        // The identifier really would exist if this went through the plain
-        // `render_table` path unwrapped — confirming the suppression is what
-        // is doing the work here, not some other reason it is absent.
-        let extracted = search_category_rows(&response).expect("listItems extracts");
-        assert_eq!(
-            render_table(&extracted).expect("a table").identifier,
-            Some("Food and Drink".to_string())
-        );
     }
 
     /// The format the readability complaint against the table asked for:
@@ -2830,229 +2272,26 @@ mod tests {
         assert!(tilequery_feature_rows(&rows(r#"[{"type":"retail"}]"#)).is_none());
     }
 
+    /// `render_table` alone would suggest `--id <name>` here, the same as it
+    /// does for any other table — but `pick_row` only accepts a bare
+    /// top-level array, and this response is `{"listItems": […],
+    /// "attribution": …}`, an object. That suggestion is a command
+    /// guaranteed to fail, so `render_category_table` must not carry it.
     #[test]
-    fn auto_follows_the_terminal() {
-        assert_eq!(Mode::resolve(AUTO, true), Mode::Text);
-        assert_eq!(Mode::resolve(AUTO, false), Mode::Json { pretty: false });
-    }
+    fn list_category_never_suggests_an_id_pick_row_cannot_use() {
+        let response = rows(
+            r#"{"listItems":[{"canonical_id":"food_and_drink","name":"Food and Drink"}],"attribution":"x"}"#,
+        );
+        let rendered = render_category_table(&response).expect("a table");
+        assert_eq!(rendered.identifier, None);
 
-    #[test]
-    fn an_explicit_value_ignores_the_terminal() {
-        for is_tty in [true, false] {
-            assert_eq!(Mode::resolve(JSON, is_tty), Mode::Json { pretty: is_tty });
-            assert_eq!(Mode::resolve(TEXT, is_tty), Mode::Text);
-        }
-    }
-
-    /// `-o json` is asked for by a person as often as by a program, and the
-    /// two want different whitespace out of the same document.
-    #[test]
-    fn json_is_indented_at_a_terminal_and_one_line_in_a_pipe() {
-        assert_eq!(Mode::resolve(JSON, true), Mode::Json { pretty: true });
-        assert_eq!(Mode::resolve(JSON, false), Mode::Json { pretty: false });
-        // `auto` only ever reaches JSON by way of a pipe, so never indented.
-        assert_eq!(Mode::resolve(AUTO, false), Mode::Json { pretty: false });
-    }
-
-    #[test]
-    fn an_unrecognized_value_falls_back_to_auto() {
-        assert_eq!(Mode::resolve("", true), Mode::Text);
-        assert_eq!(Mode::resolve("yaml", false), Mode::Json { pretty: false });
-    }
-
-    fn argv(args: &[&str]) -> Vec<OsString> {
-        args.iter().map(OsString::from).collect()
-    }
-
-    #[test]
-    fn every_spelling_clap_accepts_is_recognized_on_argv() {
-        for line in [
-            &["mapbox", "--output", "json", "styles", "list"][..],
-            &["mapbox", "--output=json", "styles", "list"][..],
-            &["mapbox", "-o", "json", "styles", "list"][..],
-            &["mapbox", "-ojson", "styles", "list"][..],
-            &["mapbox", "-o=json", "styles", "list"][..],
-            &["mapbox", "styles", "list", "-o", "json"][..],
-        ] {
-            assert_eq!(
-                requested_in_argv(&argv(line)).as_deref(),
-                Some("json"),
-                "{line:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_line_without_the_flag_requests_nothing() {
+        // The identifier really would exist if this went through the plain
+        // `render_table` path unwrapped — confirming the suppression is what
+        // is doing the work here, not some other reason it is absent.
+        let extracted = search_category_rows(&response).expect("listItems extracts");
         assert_eq!(
-            requested_in_argv(&argv(&["mapbox", "styles", "list"])),
-            None
+            render_table(&extracted).expect("a table").identifier,
+            Some("Food and Drink".to_string())
         );
-        // A bare `-o` with nothing after it, and a value that is another flag.
-        assert_eq!(requested_in_argv(&argv(&["mapbox", "-o"])), None);
-        assert_eq!(
-            requested_in_argv(&argv(&["mapbox", "-o", "--debug"])).as_deref(),
-            Some("--debug")
-        );
-    }
-
-    #[test]
-    fn nothing_past_a_double_dash_is_ours() {
-        assert_eq!(
-            requested_in_argv(&argv(&["mapbox", "tilesets-cli", "--", "-o", "json"])),
-            None
-        );
-    }
-
-    #[test]
-    fn http_errors_take_their_message_from_the_body() {
-        let e = CliError::http(401, r#"{"message":"Not Authorized - Invalid Token"}"#);
-        assert_eq!(e.code, "http_401");
-        assert_eq!(e.message, "Not Authorized - Invalid Token");
-        assert_eq!(e.status, Some(401));
-        assert!(e.body.is_some());
-    }
-
-    #[test]
-    fn a_non_json_body_becomes_the_message_itself() {
-        let e = CliError::http(404, "Not found\n");
-        assert_eq!(e.message, "Not found");
-        assert!(e.body.is_none());
-    }
-
-    #[test]
-    fn a_bare_json_string_body_keeps_its_text() {
-        // What the Tilesets API answers a wrong-account token with.
-        let e = CliError::http(404, r#""Not found""#);
-        assert_eq!(e.message, "Not found");
-    }
-
-    #[test]
-    fn a_blank_message_field_does_not_become_the_message() {
-        for body in [r#"{"message":""}"#, r#"{"message":"   "}"#] {
-            assert_eq!(
-                CliError::http(403, body).message,
-                "Request failed with HTTP 403",
-                "{body}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_null_body_is_treated_as_no_body() {
-        let e = CliError::http(500, "null");
-        assert!(e.body.is_none(), "a literal null would print as `null`");
-        assert_eq!(e.message, "Request failed with HTTP 500");
-    }
-
-    #[test]
-    fn an_html_error_page_is_capped_but_kept_in_full() {
-        let page = format!("<html><body>{}</body></html>", "x".repeat(5_000));
-        let e = CliError::http(502, &page);
-
-        assert!(
-            e.message.chars().count() <= 201,
-            "message ran to {} chars",
-            e.message.chars().count()
-        );
-        assert!(e.message.ends_with('…'));
-        assert_eq!(e.body_text.as_deref(), Some(page.as_str()));
-    }
-
-    #[test]
-    fn only_the_first_line_of_a_text_body_becomes_the_message() {
-        let e = CliError::http(
-            500,
-            "Internal Server Error
-request-id: abc123
-",
-        );
-        assert_eq!(e.message, "Internal Server Error");
-        assert!(e.body_text.as_deref().is_some_and(|t| t.contains("abc123")));
-    }
-
-    #[test]
-    fn an_empty_or_messageless_body_falls_back_to_the_status() {
-        assert_eq!(
-            CliError::http(500, "").message,
-            "Request failed with HTTP 500"
-        );
-        assert_eq!(
-            CliError::http(500, r#"{"detail":"boom"}"#).message,
-            "Request failed with HTTP 500"
-        );
-    }
-
-    #[test]
-    fn a_body_that_only_repeats_the_message_is_dropped_from_both_renderings() {
-        let bare = CliError::http(401, r#"{"message":"Not Authorized - No Token"}"#);
-        assert_eq!(bare.message, "Not Authorized - No Token");
-        assert!(!adds_detail(bare.body.as_ref().expect("parsed")));
-
-        let detailed = CliError::http(401, r#"{"error_code":"INVALID_TOKEN","message":"nope"}"#);
-        assert!(adds_detail(detailed.body.as_ref().expect("parsed")));
-    }
-
-    #[test]
-    fn only_a_body_with_more_than_a_message_is_worth_printing() {
-        assert!(!adds_detail(&json!({ "message": "nope" })));
-        assert!(adds_detail(&json!({ "message": "nope", "code": 12 })));
-        assert!(adds_detail(&json!(["a"])));
-    }
-
-    /// The `json` rendering carries the request id on every failure that had
-    /// one. A consumer logging errors wants it on all of them, and a field
-    /// costs nothing to ignore.
-    #[test]
-    fn the_json_error_carries_the_request_id_at_any_status() {
-        for status in [404u16, 429, 500, 503] {
-            let err = CliError::http(status, r#"{"message":"nope"}"#)
-                .with_request_id(Some("req-abc123".to_string()));
-            let payload = error_payload(&err);
-            assert_eq!(
-                payload["request_id"],
-                json!("req-abc123"),
-                "missing at {status}"
-            );
-        }
-    }
-
-    /// Absent rather than null, the same rule the other optional keys follow.
-    #[test]
-    fn a_failure_without_a_request_id_has_no_such_key() {
-        let payload = error_payload(&CliError::http(404, r#"{"message":"nope"}"#));
-        assert!(payload.get("request_id").is_none(), "{payload}");
-    }
-
-    /// The `text` rendering shows it for a server fault and nothing else:
-    /// a 404 on a mistyped id is the reader's to fix, and an id under it
-    /// would be noise on the common case.
-    #[test]
-    fn the_text_error_shows_the_request_id_only_for_a_server_fault() {
-        let with_id = |status: u16| {
-            CliError::http(status, r#"{"message":"nope"}"#)
-                .with_request_id(Some("req-abc123".to_string()))
-        };
-
-        for quiet in [400u16, 401, 403, 404, 422, 429] {
-            assert_eq!(with_id(quiet).support_request_id(), None, "at {quiet}");
-        }
-        for loud in [500u16, 502, 503, 504] {
-            assert_eq!(
-                with_id(loud).support_request_id(),
-                Some("req-abc123"),
-                "at {loud}"
-            );
-        }
-    }
-
-    /// A failure with no HTTP status at all — a local one, like an unreadable
-    /// `--file` — cannot have come with a request id, and must not claim one.
-    #[test]
-    fn a_local_failure_shows_no_request_id() {
-        let err = CliError::new("invalid_file", "no such file")
-            .with_request_id(Some("req-abc123".to_string()));
-        assert_eq!(err.status, None);
-        assert_eq!(err.support_request_id(), None);
     }
 }

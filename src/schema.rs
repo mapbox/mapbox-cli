@@ -1008,7 +1008,6 @@ mod tests {
         for withheld in [
             "mapbox styles set-style-protected",
             "mapbox styles admin-get-style",
-            "mapbox styles download-style-zip",
             "mapbox accounts create-token",
             "mapbox tilesets get-legacy-tile",
         ] {

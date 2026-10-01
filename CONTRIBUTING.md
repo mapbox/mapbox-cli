@@ -39,6 +39,10 @@ and not a style note.
 and a fake server, so the suite runs offline and on a machine that has never
 logged in.
 
+`scripts/test-install.sh` and `scripts/test-install.ps1` exercise the
+installers end to end without touching the network, and
+`scripts/test-completion.sh` does the same for the completion scripts.
+
 Four rules the compiler holds rather than a reviewer, declared in
 `Cargo.toml` with the reasoning beside each: no `unsafe`, no `println!`
 (stdout belongs to `output::emit`, the single place `--output` is honored),

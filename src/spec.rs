@@ -477,6 +477,12 @@ pub struct DetailOperation {
 /// finished propagating yet. Moved back here rather than left in
 /// `WITHHELD_OPERATIONS`, since the 404 was a propagation delay, not a real
 /// problem with the operation.
+///
+/// `styles:download` came off on 2026-09-30, once it became registrable,
+/// which ships `downloadStyleZip` as `styles download`. The scope was never
+/// its only gate: the endpoint also wants the account to have access, which
+/// Mapbox grants per account and no token can carry. `remedy::for_http`
+/// turns that 403 into a request for access rather than a scope problem.
 const UNSUPPORTED_OPERATIONS: &[(&str, &str, &str)] = &[
     // Confirmed live 2026-09-08: `fonts:metadata` is a real scope name, not
     // a typo in the docs — the endpoint literally answers 403 "This API
@@ -491,19 +497,6 @@ const UNSUPPORTED_OPERATIONS: &[(&str, &str, &str)] = &[
     ("accounts", "createToken", "tokens:write"),
     ("accounts", "updateToken", "tokens:write"),
     ("accounts", "deleteToken", "tokens:write"),
-    // Found by testing it, not by reading the spec: the styles spec
-    // documents no scope, but an early probe got 403 "requires a token
-    // with styles:download scope". `POST /oauth/register` then drops
-    // `styles:download` from the granted set, so no login can get it.
-    //
-    // Deeper problem too (verified 2026-09-08 with a real token, no scope
-    // involved): the endpoint now answers 403 "This is a prerelease API.
-    // Please contact support at help@mapbox.com to request access." So
-    // access is gated per-account, not by OAuth scope at all — making
-    // `styles:download` registrable wouldn't unblock this command by
-    // itself, which is why it wasn't registered alongside the other two
-    // fonts scopes.
-    ("styles", "downloadStyleZip", "styles:download"),
 ];
 
 fn unsupported_scope_for(service_name: &str, operation_id: &str) -> Option<&'static str> {

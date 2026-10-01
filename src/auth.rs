@@ -66,6 +66,10 @@ const VALIDATION_ENDPOINT: &str = "https://api.mapbox.com/tokens/v2";
 // `statistics:read` (needed by `mapbox usage`) registers fine — confirmed
 // live against a real `mapbox auth login` — so it rides along unconditionally
 // rather than through the now-removed `ACCOUNT_USAGE` flag.
+// `styles:download` (`styles download`) became registrable on 2026-09-30.
+// Holding it is not enough on its own: the account also needs access Mapbox
+// grants on request, and `remedy::for_http` tells that 403 apart from a
+// missing scope.
 const DEFAULT_SCOPES_LIST: &[&str] = &[
     "styles:tiles",
     "styles:read",
@@ -83,6 +87,7 @@ const DEFAULT_SCOPES_LIST: &[&str] = &[
     "tilesets:list",
     "user-feedback:read",
     "statistics:read",
+    "styles:download",
 ];
 
 /// [`DEFAULT_SCOPES_LIST`], space-joined the way the OAuth `scope` parameter
@@ -846,6 +851,9 @@ fn time_until(expires_at: u64, now: u64) -> String {
 /// request. A stale token in the environment outranks a stored login, so
 /// logging in again will not fix it; a token typed with `--token` outranks
 /// both, so neither `--use-login` nor a fresh login touches it.
+///
+/// A 403 that names a missing scope gets the same treatment, for the same
+/// reason: a new login only adds the scope to a token that came from a login.
 pub fn with_auth_fix(
     err: anyhow::Error,
     matches: &clap::ArgMatches,
@@ -856,6 +864,16 @@ pub fn with_auth_fix(
         Ok(cli) if cli.status == Some(401) => cli
             .with_remedy(credential_remedy(matches, use_login, profile))
             .into(),
+        Ok(cli) if cli.status == Some(403) => {
+            match remedy::missing_scope(&cli.message).map(str::to_owned) {
+                Some(scope) => {
+                    let (source, stored) = token_source(matches, use_login, profile);
+                    cli.with_remedy(scope_remedy_for(source, CLAP_TOKEN_ENV, stored, &scope))
+                        .into()
+                }
+                None => cli.into(),
+            }
+        }
         Ok(cli) => cli.into(),
         Err(other) => other,
     }
@@ -870,6 +888,17 @@ pub fn with_auth_fix(
 /// wording is in [`remedy_for`], which takes the facts, so every branch is
 /// reachable from a test without an environment or a credential store.
 fn credential_remedy(matches: &clap::ArgMatches, use_login: bool, profile: Option<&str>) -> Remedy {
+    let (source, stored) = token_source(matches, use_login, profile);
+    remedy_for(source, CLAP_TOKEN_ENV, stored)
+}
+
+/// Where the token that was just sent came from, and whether a login is
+/// stored behind it.
+fn token_source(
+    matches: &clap::ArgMatches,
+    use_login: bool,
+    profile: Option<&str>,
+) -> (Option<TokenSource>, bool) {
     // The same three candidates in the same order the service arm applies
     // and `whoami` reports — through `resolve_source`, so there is one copy
     // of that order and not a third.
@@ -888,7 +917,57 @@ fn credential_remedy(matches: &clap::ArgMatches, use_login: bool, profile: Optio
     )
     .map(|(source, _)| source);
 
-    remedy_for(source, CLAP_TOKEN_ENV, stored.is_some())
+    (source, stored.is_some())
+}
+
+/// The advice for a token that lacks a scope, by where it came from.
+///
+/// A login gets every scope this CLI asks for, so one from before a scope
+/// was added is fixed by logging in again. A token from `--token` or the
+/// environment outranks the login, so the scope has to be added to that
+/// token instead; `whoami` is the action there, as it is for a 401.
+fn scope_remedy_for(
+    source: Option<TokenSource>,
+    environment: &str,
+    stored: bool,
+    scope: &str,
+) -> Remedy {
+    let (fix, action) = match source {
+        Some(TokenSource::Flag) => (
+            format!(
+                "The token passed with `--token` lacks the `{scope}` scope. Add the scope \
+                 to that token, or drop the flag to use another."
+            ),
+            "mapbox auth whoami",
+        ),
+        Some(TokenSource::Environment) if stored => (
+            format!(
+                "The token from {environment} lacks the `{scope}` scope, and it outranks \
+                 your login. Add the scope to that token, or run the same command with \
+                 `--use-login`."
+            ),
+            "mapbox auth whoami",
+        ),
+        Some(TokenSource::Environment) => (
+            format!(
+                "The token from {environment} lacks the `{scope}` scope. Add the scope to \
+                 that token, or unset {environment} and run `mapbox auth login`."
+            ),
+            "mapbox auth whoami",
+        ),
+        Some(TokenSource::Login) | None => (
+            format!(
+                "Your login lacks the `{scope}` scope; it predates this CLI asking for \
+                 it. Run `mapbox auth login` again."
+            ),
+            "mapbox auth login",
+        ),
+    };
+
+    Remedy::default()
+        .with_fix(&fix)
+        .with_action(Some(action.to_string()))
+        .with_doc(Some(remedy::TOKENS_DOC))
 }
 
 /// The advice for each place a token can come from.
@@ -2204,8 +2283,8 @@ pub fn login(debug: bool, profile: Option<&str>, mode: Mode) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_scopes, fix_for, remedy_for, time_until, with_auth_fix, TokenSource,
-        DEFAULT_SCOPES_LIST,
+        default_scopes, fix_for, remedy_for, scope_remedy_for, time_until, with_auth_fix,
+        TokenSource, DEFAULT_SCOPES_LIST,
     };
 
     /// Every scope the CLI's live operations need, that Mapbox will actually
@@ -2238,6 +2317,7 @@ mod tests {
             "tilesets:write",
             "tilesets:list",
             "statistics:read",
+            "styles:download",
         ] {
             assert!(requested.contains(&needed), "{needed} is not requested");
         }
@@ -2245,7 +2325,6 @@ mod tests {
         for unavailable in [
             "tokens:write",
             "fonts:metadata",
-            "styles:download",
             // Registrable, and deliberately not asked for: the only command
             // that needed it unlocks a style for deletion, and is withheld.
             // A scope no command uses is a capability handed out for free.
@@ -2338,6 +2417,56 @@ mod tests {
             "`--use-login` re-sends the same typed token — following this \
              would loop: {typed}"
         );
+    }
+
+    /// A new login only changes the token when the token came from a login.
+    /// Suggesting one for a `--token` or environment token sends a script
+    /// round a loop that ends in the same 403.
+    #[test]
+    fn a_missing_scope_suggests_a_login_only_for_a_login_token() {
+        let scope = "styles:download";
+        let action = |source, stored| scope_remedy_for(source, ENV, stored, scope).next_actions;
+
+        assert_eq!(
+            action(Some(TokenSource::Login), true),
+            ["mapbox auth login"]
+        );
+        assert_eq!(action(None, false), ["mapbox auth login"]);
+        assert_eq!(
+            action(Some(TokenSource::Flag), true),
+            ["mapbox auth whoami"]
+        );
+        assert_eq!(
+            action(Some(TokenSource::Environment), true),
+            ["mapbox auth whoami"]
+        );
+        assert_eq!(
+            action(Some(TokenSource::Environment), false),
+            ["mapbox auth whoami"]
+        );
+    }
+
+    #[test]
+    fn a_missing_scope_names_the_scope_and_the_token_it_is_missing_from() {
+        let scope = "styles:download";
+        for (source, stored, mentions) in [
+            (Some(TokenSource::Login), true, "mapbox auth login"),
+            (Some(TokenSource::Flag), true, "--token"),
+            (Some(TokenSource::Environment), true, ENV),
+            (Some(TokenSource::Environment), false, ENV),
+        ] {
+            let fix = scope_remedy_for(source, ENV, stored, scope)
+                .fix
+                .expect("a missing scope has an explanation");
+            assert!(fix.contains("`styles:download`"), "{fix}");
+            assert!(fix.contains(mentions), "{fix}");
+        }
+
+        let typed = scope_remedy_for(Some(TokenSource::Flag), ENV, true, scope)
+            .fix
+            .unwrap();
+        assert!(!typed.contains("auth login"), "{typed}");
+        assert!(!typed.contains("--use-login"), "{typed}");
     }
 
     /// `next_actions` is for a command that runs, so it is `whoami` wherever

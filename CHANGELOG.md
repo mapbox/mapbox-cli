@@ -19,6 +19,23 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- New command: `mapbox styles download <style-id> > style.zip` saves a
+  style as a ZIP with its sprite icons and custom fonts. `mapbox auth login`
+  now also asks for the `styles:download` scope it needs, so log in again
+  to use it. The account also needs access to this API, which Mapbox grants
+  on request; without it the command fails with a 403 saying so.
+
+- A command that returns a file (`styles download`, `static get-image`, a
+  tile or glyph range) now confirms it on stderr at a terminal:
+  `Wrote application/zip (988165 bytes).` stdout is unchanged, and
+  `--quiet`/`-q` hides it.
+
+- A 403 that names a missing scope now says which token lacks it: a login
+  is told to run `mapbox auth login` again (also in `next_actions`), and a
+  token from `--token` or `MAPBOX_ACCESS_TOKEN` to add the scope to that
+  token. A 403 for an API the account has not been given access to says to
+  contact Mapbox. Other 403s are unchanged.
+
 - A run at a terminal now opens with a `mapbox · v<version>` banner on
   stderr. stdout is unchanged, and nothing is printed when stderr is not a
   terminal or for `mapbox completion`. `--quiet`/`-q` or `MAPBOX_QUIET=1`

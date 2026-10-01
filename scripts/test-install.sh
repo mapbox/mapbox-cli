@@ -211,10 +211,20 @@ make_channel() { # dir version [bad-sha|broken]
         # for another platform.
         printf '#!/bin/sh\nexit 1\n' >"${channel_dir}/build/mapbox"
     else
+        # generate-skills/agent-skills default to "no agent detected" —
+        # exit 1, the real CLI's own no_agent_detected shape — so every
+        # scenario built on this fixture reaches the coding-agent-skill
+        # section of install.sh and finds nothing to do, same as a plain
+        # machine with no ~/.claude, ~/.codex, etc. Scenarios that need a
+        # detected agent use make_agent_channel below instead.
         cat >"${channel_dir}/build/mapbox" <<EOF
 #!/bin/sh
 case "\${1:-}" in
     --version) echo "mapbox ${channel_version#v}" ;;
+    generate-skills | agent-skills)
+        echo '{"code":"no_agent_detected"}' >&2
+        exit 1
+        ;;
     *) echo "fake mapbox: \$*" ;;
 esac
 EOF
@@ -262,6 +272,76 @@ EOF
 CHANNEL="${ROOT}/channel"
 make_channel "${CHANNEL}/latest" v9.9.9
 make_channel "${CHANNEL}/v0.1.0-dev.abc1234" v0.1.0-dev.abc1234
+
+# A channel whose fake binary reports one detected coding agent and answers
+# generate-skills/agent-skills accordingly, driven at runtime (not baked in,
+# since the same tarball is reused across every case below) by two
+# environment variables: MAPBOX_TEST_INSTALL_MODE (ok | already_installed)
+# and MAPBOX_TEST_UPDATE_MODE (clean | dirty, read only once install
+# reports already_installed). Defaults match the plain first-install case.
+AGENT_CHANNEL="${ROOT}/agent-channel"
+mkdir -p "${AGENT_CHANNEL}/latest/build"
+cat >"${AGENT_CHANNEL}/latest/build/mapbox" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+    --version) echo "mapbox 9.9.9" ;;
+    generate-skills)
+        for a in "$@"; do
+            if [ "$a" = "--dry-run" ]; then
+                echo '{"written":true,"skills":[{"source":"claude, all projects"}]}'
+                exit 0
+            fi
+        done
+        echo '{"written":true}'
+        ;;
+    agent-skills)
+        sub="$2"
+        case "$sub" in
+            install)
+                if [ "${MAPBOX_TEST_INSTALL_MODE:-ok}" = already_installed ]; then
+                    echo '{"code":"already_installed"}' >&2
+                    exit 1
+                fi
+                echo '{"installed":true}'
+                ;;
+            update)
+                is_dry=no
+                for a in "$@"; do [ "$a" = "--dry-run" ] && is_dry=yes; done
+                if [ "$is_dry" = yes ]; then
+                    if [ "${MAPBOX_TEST_UPDATE_MODE:-clean}" = dirty ]; then
+                        echo '{"updated":["some-skill"],"unchanged":[]}'
+                    else
+                        echo '{"updated":[],"unchanged":["some-skill"]}'
+                    fi
+                else
+                    echo '{"updated":["some-skill"]}'
+                fi
+                ;;
+        esac
+        ;;
+    *) echo "fake mapbox: $*" ;;
+esac
+EOF
+chmod 755 "${AGENT_CHANNEL}/latest/build/mapbox"
+tar czf "${AGENT_CHANNEL}/latest/mapbox-v9.9.9-${TARGET}.tar.gz" \
+    -C "${AGENT_CHANNEL}/latest/build" mapbox
+rm -rf "${AGENT_CHANNEL}/latest/build"
+agent_real_sha="$(sha256_of "${AGENT_CHANNEL}/latest/mapbox-v9.9.9-${TARGET}.tar.gz")"
+cat >"${AGENT_CHANNEL}/latest/manifest.json" <<EOF
+{
+  "version": "9.9.9",
+  "commit": "0000000000000000000000000000000000000000",
+  "released": "2026-01-01T00:00:00Z",
+  "artifacts": {
+    "${TARGET}": {
+      "file": "mapbox-v9.9.9-${TARGET}.tar.gz",
+      "sha256": "${agent_real_sha}"
+    }
+  }
+}
+EOF
+printf '%s  %s\n' "$agent_real_sha" "mapbox-v9.9.9-${TARGET}.tar.gz" \
+    >"${AGENT_CHANNEL}/latest/SHA256SUMS"
 
 # A channel whose manifest advertises a checksum the tarball does not have.
 BAD_SHA="${ROOT}/bad-sha-channel"
@@ -534,6 +614,7 @@ new_case_env() { # case-name
     # A developer with either of these set in their own shell would otherwise
     # turn every marker case into a failure that looks like the marker broke.
     unset DISABLE_TELEMETRY MAPBOX_CLI_NO_TELEMETRY
+    unset MAPBOX_CLI_NO_AGENT_SETUP MAPBOX_TEST_INSTALL_MODE MAPBOX_TEST_UPDATE_MODE
     export MAPBOX_CLI_BASE_URL MAPBOX_INSTALL_DIR PATH
 }
 
@@ -1066,6 +1147,80 @@ run_piped && status=0 || status=$?
 expect_status 0 "$status" 'a broken override is not an install failure'
 expect_out 'where there is no' 'says the override points nowhere'
 expect_no_out 'fake pipx' 'does not install over a deliberate override'
+
+# --- the coding agent skill -------------------------------------------------
+
+start 'no coding agent detected: silent, nothing offered'
+new_case_env no-agent
+export MAPBOX_INSTALL_TILESETS=no
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_no_out 'coding agent' 'says nothing about a step that has nothing to do'
+
+start 'MAPBOX_CLI_NO_AGENT_SETUP opts out even though an agent was detected'
+new_case_env agent-opt-out
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_CLI_NO_AGENT_SETUP=1
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_no_out 'coding agent' 'skips the question entirely'
+
+start 'no terminal: the question is skipped, not answered yes'
+new_case_env agent-no-tty
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0 rather than blocking (124 would be a hang)'
+expect_out 'A coding agent was detected on this machine: claude.' 'names the agent'
+expect_out 'Not set up. Run these any time:' 'gives the manual commands instead of asking'
+expect_out 'mapbox generate-skills --global' 'the first manual command'
+expect_out 'mapbox agent-skills install --global' 'the second manual command'
+
+start 'a terminal, answered no'
+new_case_env agent-tty-no
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+run_interactive n && status=0 || status=$?
+expect_status 0 "$status" 'a declined setup is not an install failure'
+expect_out 'A coding agent was detected on this machine: claude.' 'names the agent'
+expect_out 'Set up the mapbox CLI skill' 'asks'
+expect_out 'Not set up. Run these any time:' 'falls back to the manual commands'
+
+start 'a terminal, answered yes: fresh install'
+new_case_env agent-tty-yes-fresh
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_TEST_INSTALL_MODE=ok
+run_interactive y && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_out 'Wrote the mapbox CLI skill for: claude.' 'reports the skill written'
+expect_out 'Installed the Mapbox Agent Skills library for: claude.' 'reports the library installed'
+
+start 'a terminal, answered yes: reinstall with nothing locally changed'
+new_case_env agent-tty-yes-reinstall-clean
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_TEST_INSTALL_MODE=already_installed
+export MAPBOX_TEST_UPDATE_MODE=clean
+run_interactive y && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_out 'Updated the Mapbox Agent Skills library for: claude.' 'updates in place'
+expect_no_out 'have local changes and were left alone' 'nothing was skipped'
+
+start 'a terminal, answered yes: reinstall with a local edit is never overwritten'
+new_case_env agent-tty-yes-reinstall-dirty
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_TEST_INSTALL_MODE=already_installed
+export MAPBOX_TEST_UPDATE_MODE=dirty
+run_interactive y && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_out 'Some Mapbox Agent Skills have local changes and were left alone.' \
+    'reports the local edit rather than discarding it'
+expect_out "Run 'mapbox agent-skills update --global' to review and replace them." \
+    'points at the command to review it by hand'
+expect_no_out 'Updated the Mapbox Agent Skills library' 'does not claim to have updated it'
 
 # --- result ----------------------------------------------------------------
 

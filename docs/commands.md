@@ -2667,6 +2667,21 @@ not in the table is what `--dir` is for.
 An agent counts as installed when its home directory exists — the presence of
 somewhere to read a skill from, not a `PATH` lookup.
 
+**With no `--agent`, no `--global`, and no `--dir`, and no agent detected:**
+`no_agent_detected` — both `generate-skills` and `agent-skills
+install`/`update`/`uninstall` refuse rather than silently writing nowhere.
+`agent-skills list` is the exception: it reports what's published either
+way, since it never writes anything.
+
+```
+Error: Nowhere to write skills: no --agent was named, and no agent's home directory was found.
+Fix: Pass --agent to write for one anyway (claude-code, codex, amp, …), --global to write under its home directory, or --dir to write somewhere specific.
+```
+
+An explicit `--agent <name>` for an agent whose home directory genuinely
+isn't there is a different case — that's a mistake worth a specific
+message of its own, not this code, since something *was* asked for.
+
 ---
 
 ### `mapbox agent-skills list`

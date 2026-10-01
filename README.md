@@ -89,6 +89,14 @@ $env:MAPBOX_CLI_VERSION = '0.3.0'; irm https://cli.mapbox.com/install.ps1 | iex
 are [`scripts/install.sh`](./scripts/install.sh) and
 [`scripts/install.ps1`](./scripts/install.ps1).
 
+If the script finds a coding agent on the machine ([Claude Code](#agent-skills)
+and the rest of the fifteen `agent-skills` supports), it asks, once, whether
+to set up this CLI's own [skill](#generate-skills) and the Mapbox Agent
+Skills library for it, naming the agent before it writes anything. Answer no,
+or run the script somewhere with no terminal to ask on (CI, a container), and
+it does neither, printing the two commands to run by hand instead. Set
+`MAPBOX_CLI_NO_AGENT_SETUP=1` to skip the question entirely.
+
 ### Download the archive yourself
 
 If piping a script into a shell is not allowed where you work, the archives

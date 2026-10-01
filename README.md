@@ -25,6 +25,7 @@ mapbox styles list
   - [Shell completion](#shell-completion)
   - [Tileset CLI](#tileset-cli)
 - [For AI agents](#for-ai-agents)
+  - [Quick start: Mapbox agent setup](#quick-start-mapbox-agent-setup)
   - [Agent skills](#agent-skills)
   - [Generate skills](#generate-skills)
 - [Global options](#global-options)
@@ -291,12 +292,22 @@ prompts. If a tileset command answers for the wrong account,
 
 ## For AI agents
 
-Two commands, for two different jobs: `agent-skills` installs guidance on
-using Mapbox, and `generate-skills` writes a skill describing this CLI.
+### Quick start: Mapbox agent setup
 
-To set up an agent with the skills, the Mapbox MCP servers and this CLI in
-one go, ask it to follow <https://cli.mapbox.com/agent-setup/prompt.md>. Its
-source is [site/agent-setup/prompt.md](./site/agent-setup/prompt.md).
+Paste this into your coding agent to install this CLI, the Mapbox Agent
+Skills and the Mapbox MCP servers in one go:
+
+```text
+Set up Mapbox for me by following https://cli.mapbox.com/agent-setup/prompt.md
+```
+
+The agent runs the steps itself and asks you only to sign in to Mapbox in
+the browser. The instructions it follows are in
+[site/agent-setup/prompt.md](./site/agent-setup/prompt.md).
+
+To set things up by hand instead, there are two commands for two different
+jobs: `agent-skills` installs guidance on using Mapbox, and
+`generate-skills` writes a skill describing this CLI.
 
 ### Agent skills
 

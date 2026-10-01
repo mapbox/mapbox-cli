@@ -447,7 +447,7 @@ fn prose_files() -> Vec<(String, String)> {
         ));
     }
 
-    for dir in ["src", "tests", "docs", "scripts"] {
+    for dir in ["src", "tests", "docs", "scripts", "site"] {
         for (name, path) in files_under(&root.join(dir), &["rs", "md", "sh", "ps1"]) {
             out.push((
                 format!("{dir}/{name}"),

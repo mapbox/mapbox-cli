@@ -294,6 +294,10 @@ prompts. If a tileset command answers for the wrong account,
 Two commands, for two different jobs: `agent-skills` installs guidance on
 using Mapbox, and `generate-skills` writes a skill describing this CLI.
 
+To set up an agent with the skills, the Mapbox MCP servers and this CLI in
+one go, ask it to follow <https://cli.mapbox.com/agent-setup/prompt.md>. Its
+source is [site/agent-setup/prompt.md](./site/agent-setup/prompt.md).
+
 ### Agent skills
 
 ```sh

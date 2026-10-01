@@ -3258,14 +3258,14 @@ mapbox-devkit   cursor       not installed
 ```json
 {
   "servers": [
-    { "server": "mapbox", "client": "claude-code", "status": "not installed" },
-    { "server": "mapbox-devkit", "client": "claude-code", "status": "not installed" },
-    { "server": "mapbox", "client": "codex", "status": "not installed" },
-    { "server": "mapbox-devkit", "client": "codex", "status": "not installed" },
-    { "server": "mapbox", "client": "vscode", "status": "client not found" },
-    { "server": "mapbox-devkit", "client": "vscode", "status": "client not found" },
-    { "server": "mapbox", "client": "cursor", "status": "not installed" },
-    { "server": "mapbox-devkit", "client": "cursor", "status": "not installed" }
+    { "server": "mapbox", "client": "claude-code", "status": "not_installed" },
+    { "server": "mapbox-devkit", "client": "claude-code", "status": "not_installed" },
+    { "server": "mapbox", "client": "codex", "status": "not_installed" },
+    { "server": "mapbox-devkit", "client": "codex", "status": "not_installed" },
+    { "server": "mapbox", "client": "vscode", "status": "client_not_found" },
+    { "server": "mapbox-devkit", "client": "vscode", "status": "client_not_found" },
+    { "server": "mapbox", "client": "cursor", "status": "not_installed" },
+    { "server": "mapbox-devkit", "client": "cursor", "status": "not_installed" }
   ]
 }
 ```
@@ -3276,16 +3276,23 @@ mapbox-devkit   cursor       not installed
 `client not found` in place of a status is that client's own CLI not being on
 `PATH` at all — see [`mcp install`](#mapbox-mcp-install) below for what that
 means for installing. `config unreadable` means VS Code's or Cursor's own
-config file exists but didn't parse.
+config file exists but didn't parse (checked as JSONC, so an ordinary
+commented file is not what triggers this). `-o json` spells every status in
+snake_case (`not_installed`, `client_not_found`, `config_unreadable`); this
+page's prose and the `text` column above use the spaced form for reading,
+never for matching against.
 
 ---
 
 ### `mapbox mcp install`
 
-Registers every known server for every detected client. With no client's CLI
-on `PATH`, the one request this makes is to check that, and it reports
-nothing was done rather than failing the run — the same shape
-`generate-skills` gives a machine with no coding agent on it.
+Registers every known server for every detected client. With no `--client`
+named and no known client's CLI reachable at all, this is an error —
+`mcp_client_not_found`, exit 1 — rather than a silent no-op; see the end of
+this section for its exact shape. A client named explicitly, or detected,
+but whose CLI goes unreachable partway through (or whose config can't be
+read) is different: that one pair is skipped and named, the rest of the run
+continues.
 
 #### Parameters
 
@@ -3339,12 +3346,16 @@ Mapbox MCP: https://mcp.mapbox.com/mcp for VS Code — installed.
 
 Run again, `installed` reads `already installed` (`already_installed` in
 JSON) for each — the server is left exactly as it is, nothing is re-written.
-`--dry-run` reads `would install` instead of attempting anything. A client
-whose CLI isn't reachable reads `is not on PATH, skipped`
+`--dry-run` reads `would install` (`would_install`) instead of attempting
+anything. A client whose CLI isn't reachable reads `is not on PATH, skipped`
 (`"status": "client_not_found"`) rather than stopping the rest of the run,
 and one whose config exists but couldn't be parsed (VS Code, Cursor) reads
 `'s config could not be read, skipped` (`"status": "config_unreadable"`),
-also without stopping the rest of the run.
+also without stopping the rest of the run. A registration that actually
+fails reads `failed`, with the detail in `"error"`, and makes the whole
+command exit 1 once everything has been attempted and reported — a skipped
+pair (client not found, config unreadable) does not count toward that,
+since nothing was attempted there to call a failure.
 
 With no `--client` named and no known client's CLI reachable at all, this is
 an error rather than a silent no-op — `mcp_client_not_found` in `-o json`,

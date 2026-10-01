@@ -80,9 +80,9 @@
 //! [`AddMcpConfig`]), since nothing about the flag or either file format
 //! offers an existence check any other way.
 
-use std::io;
-use std::path::PathBuf;
-use std::process::Command;
+use std::io::{self, BufRead, BufReader};
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus, Stdio};
 
 use anyhow::Result;
 use clap::builder::PossibleValuesParser;
@@ -233,6 +233,102 @@ impl Client {
     }
 }
 
+/// `binary`, then — on Windows only, and only when it carries no extension
+/// of its own — the same name again with `.cmd`, `.bat` and `.exe`
+/// appended, in that order.
+///
+/// `CreateProcessW`, what `std::process::Command` calls on Windows, does
+/// not probe `PATHEXT` the way `cmd.exe` does for a bare name, so a CLI
+/// installed as a `.cmd` shim (every npm-installed one — VS Code's and
+/// Cursor's own launchers are `.cmd` too) is invisible to a plain
+/// `Command::new("code")` there. Not verified live (no Windows machine
+/// here), but this is the documented shape of the gap, and trying the
+/// extensions costs nothing extra on a bare name that already resolves.
+fn command_candidates(binary: &Path) -> Vec<PathBuf> {
+    if !cfg!(windows) || binary.extension().is_some() {
+        return vec![binary.to_path_buf()];
+    }
+    let mut out = vec![binary.to_path_buf()];
+    for ext in ["cmd", "bat", "exe"] {
+        let mut candidate = binary.as_os_str().to_os_string();
+        candidate.push(".");
+        candidate.push(ext);
+        out.push(PathBuf::from(candidate));
+    }
+    out
+}
+
+/// Runs `client`'s binary with `args`, captured, trying
+/// [`command_candidates`] in turn until one is not `NotFound`. For a quick
+/// check (`--version`, `mcp get`) where nothing the child prints needs to
+/// reach a person live — see [`spawn_live`] for the one call site where
+/// that is not true.
+fn spawn(client: &Client, args: &[&str]) -> io::Result<std::process::Output> {
+    let mut last_err = None;
+    for candidate in command_candidates(&client.binary()) {
+        match Command::new(&candidate).args(args).output() {
+            Ok(output) => return Ok(output),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => last_err = Some(e),
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| io::Error::from(io::ErrorKind::NotFound)))
+}
+
+/// [`spawn`], but for the one family of calls that can have something worth
+/// a person seeing *while it runs*: registering a server. Codex's own `add`
+/// starts an OAuth flow for a server that advertises support for it, which
+/// can print a URL to open — captured alone, as every other call here is,
+/// that URL is never shown and the run looks like it hung. Forwards both of
+/// the child's streams to this process's own stderr line by line as they
+/// arrive, on a second thread for stdout so draining one pipe can never
+/// block behind the other filling up, and returns the exit status plus
+/// everything printed, concatenated, for a caller that still wants the text
+/// (an error detail, Codex's login-incomplete message).
+fn spawn_live(client: &Client, args: &[&str]) -> io::Result<(ExitStatus, String)> {
+    let mut last_err = None;
+    for candidate in command_candidates(&client.binary()) {
+        let mut child = match Command::new(&candidate)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                last_err = Some(e);
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+
+        let stdout = child.stdout.take().expect("stdout is piped above");
+        let stderr = child.stderr.take().expect("stderr is piped above");
+
+        let stdout_thread = std::thread::spawn(move || {
+            let mut captured = String::new();
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                eprintln!("{line}");
+                captured.push_str(&line);
+                captured.push('\n');
+            }
+            captured
+        });
+
+        let mut captured = String::new();
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            eprintln!("{line}");
+            captured.push_str(&line);
+            captured.push('\n');
+        }
+        captured.push_str(&stdout_thread.join().unwrap_or_default());
+
+        let status = child.wait()?;
+        return Ok((status, captured));
+    }
+    Err(last_err.unwrap_or_else(|| io::Error::from(io::ErrorKind::NotFound)))
+}
+
 pub fn command() -> ClapCommand {
     let server_flags: Vec<&'static str> = SERVERS.iter().map(|s| s.flag).collect();
     let client_flags: Vec<&'static str> = CLIENTS.iter().map(|c| c.flag).collect();
@@ -309,26 +405,26 @@ fn client_get(client: &Client, server_name: &str) -> GetOutcome {
 /// `<binary> mcp get <name>` — the same invocation for every `Verb` client;
 /// only `add` differs per client. See the module docs.
 fn verb_get(client: &Client, server_name: &str) -> GetOutcome {
-    match Command::new(client.binary())
-        .args(["mcp", "get", server_name])
-        .output()
-    {
+    match spawn(client, &["mcp", "get", server_name]) {
         Ok(output) if output.status.success() => GetOutcome::Installed,
         Ok(_) => GetOutcome::NotInstalled,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => GetOutcome::ClientNotFound,
-        // Some other failure to spawn at all (permissions, an
-        // interpreter missing for a script wrapper): treated the same as
-        // "not found," since either way this client can't be driven.
+        // Every spawn failure, not only `NotFound`: this client's `mcp get`
+        // cannot be driven either way, which is what `ClientNotFound`
+        // means here.
         Err(_) => GetOutcome::ClientNotFound,
     }
 }
 
 /// `AddMcpFlag` clients: reads the config file directly rather than writing
 /// it. A file that doesn't exist yet is "not installed" (a fresh client);
-/// one that exists but won't parse is `Unreadable` rather than guessed past
-/// as either state — proceeding past content this command can't understand
-/// is exactly the kind of guess that could silently discard something
-/// `--add-mcp` itself would have clobbered.
+/// one that exists but can't be read or doesn't parse is `Unreadable`
+/// rather than guessed past as either state — proceeding past content this
+/// command can't understand is exactly the kind of guess that could
+/// silently discard something `--add-mcp` itself would have clobbered.
+/// Parsed as JSONC, not plain JSON: VS Code's `mcp.json` and Cursor's
+/// `settings.json` both allow comments and a trailing comma, and a normal,
+/// untouched file of either kind otherwise reads as unreadable on first
+/// contact.
 fn file_get(client: &Client, server_name: &str) -> GetOutcome {
     if !client_reachable(client) {
         return GetOutcome::ClientNotFound;
@@ -341,24 +437,31 @@ fn file_get(client: &Client, server_name: &str) -> GetOutcome {
     };
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
-        Err(_) => return GetOutcome::NotInstalled,
+        // Only "the file isn't there yet" means "not installed." Anything
+        // else reading it, no permission, it's a directory, invalid UTF-8,
+        // means this command cannot tell, and must not guess: a `NotFound`
+        // only check here was the actual bug — every other error used to
+        // fall into "not installed" too, which then ran `--add-mcp` over a
+        // file this command had never actually looked at.
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return GetOutcome::NotInstalled,
+        Err(_) => return GetOutcome::Unreadable,
     };
-    match serde_json::from_str::<serde_json::Value>(&text) {
-        Ok(value) => {
-            let mut cursor = &value;
-            for key in config.servers_path {
-                match cursor.get(key) {
-                    Some(next) => cursor = next,
-                    None => return GetOutcome::NotInstalled,
-                }
-            }
-            if cursor.get(server_name).is_some() {
-                GetOutcome::Installed
-            } else {
-                GetOutcome::NotInstalled
-            }
+    let value: serde_json::Value =
+        match jsonc_parser::parse_to_serde_value(&text, &jsonc_parser::ParseOptions::default()) {
+            Ok(value) => value,
+            Err(_) => return GetOutcome::Unreadable,
+        };
+    let mut cursor = &value;
+    for key in config.servers_path {
+        match cursor.get(key) {
+            Some(next) => cursor = next,
+            None => return GetOutcome::NotInstalled,
         }
-        Err(_) => GetOutcome::Unreadable,
+    }
+    if cursor.get(server_name).is_some() {
+        GetOutcome::Installed
+    } else {
+        GetOutcome::NotInstalled
     }
 }
 
@@ -390,10 +493,7 @@ fn config_path(config: &AddMcpConfig) -> Option<PathBuf> {
 /// up. The same check for every kind: `AddMcpFlag` clients answer
 /// `--version` too, confirmed live for both `code` and `cursor`.
 fn client_reachable(client: &Client) -> bool {
-    Command::new(client.binary())
-        .arg("--version")
-        .output()
-        .is_ok()
+    spawn(client, &["--version"]).is_ok()
 }
 
 /// What attempting to register a server found, once it wasn't already
@@ -423,24 +523,21 @@ fn verb_add(client: &Client, server: &Server, global: bool) -> Result<AddOutcome
                 args.push("--scope");
                 args.push("user");
             }
-            let output = Command::new(client.binary())
-                .args(&args)
-                .output()
-                .map_err(|e| spawn_failed(client, e))?;
-            if output.status.success() {
+            let (status, captured) =
+                spawn_live(client, &args).map_err(|e| spawn_failed(client, e))?;
+            if status.success() {
                 Ok(AddOutcome::Installed)
             } else {
-                Err(add_failed(client, server, &output))
+                Err(add_failed(client, server, &captured))
             }
         }
         "codex" => {
             // No local/user scope distinction in codex's own CLI (every
             // add is what it calls a "global" server), so `global` is
             // unused here — same as it is for VS Code.
-            let output = Command::new(client.binary())
-                .args(["mcp", "add", server.flag, "--url", server.url])
-                .output()
-                .map_err(|e| spawn_failed(client, e))?;
+            let (status, captured) =
+                spawn_live(client, &["mcp", "add", server.flag, "--url", server.url])
+                    .map_err(|e| spawn_failed(client, e))?;
 
             // Codex starts an OAuth flow as part of `add` for a server
             // that advertises support for it, and its exit code reflects
@@ -450,17 +547,19 @@ fn verb_add(client: &Client, server: &Server, global: bool) -> Result<AddOutcome
             // Codex's OAuth client and this server), but `codex mcp get`
             // immediately afterward shows the entry present regardless.
             // So the truth this reports is a follow-up `get`, not this
-            // exit code.
+            // exit code. Its output is forwarded live rather than only
+            // captured (`spawn_live`, not `spawn`) because that OAuth step
+            // can print a URL to open, and a captured-only child would
+            // leave it unshown while the run looks hung.
             let written = matches!(verb_get(client, server.flag), GetOutcome::Installed);
             if !written {
-                return Err(add_failed(client, server, &output));
+                return Err(add_failed(client, server, &captured));
             }
-            if output.status.success() {
+            if status.success() {
                 Ok(AddOutcome::Installed)
             } else {
-                let detail = String::from_utf8_lossy(&output.stderr);
                 Ok(AddOutcome::InstalledLoginIncomplete(
-                    detail.trim().to_string(),
+                    captured.trim().to_string(),
                 ))
             }
         }
@@ -469,8 +568,10 @@ fn verb_add(client: &Client, server: &Server, global: bool) -> Result<AddOutcome
 }
 
 /// `<binary> --add-mcp '<json>'`. `global` is accepted for symmetry with
-/// `verb_add` but unused: VS Code's `--add-mcp` has no per-project scope at
-/// all (checked directly in `code --help` — no such flag exists), so this
+/// `verb_add` but unused: neither VS Code's nor Cursor's `--add-mcp` has a
+/// working per-project scope (checked directly: `code --help` names no such
+/// flag at all, and Cursor's documented `--mcp-workspace` is rejected by
+/// its own CLI as an unrecognized option in the version tested), so this
 /// always registers in the user profile and says so once, plainly, rather
 /// than silently ignoring what was asked for.
 fn add_mcp_flag_add(client: &Client, server: &Server, global: bool) -> Result<AddOutcome> {
@@ -488,33 +589,24 @@ fn add_mcp_flag_add(client: &Client, server: &Server, global: bool) -> Result<Ad
     })
     .to_string();
 
-    let output = Command::new(client.binary())
-        .arg("--add-mcp")
-        .arg(&payload)
-        .output()
-        .map_err(|e| spawn_failed(client, e))?;
+    let (status, captured) =
+        spawn_live(client, &["--add-mcp", &payload]).map_err(|e| spawn_failed(client, e))?;
 
-    if output.status.success() {
+    if status.success() {
         Ok(AddOutcome::Installed)
     } else {
-        Err(add_failed(client, server, &output))
+        Err(add_failed(client, server, &captured))
     }
 }
 
-fn add_failed(client: &Client, server: &Server, output: &std::process::Output) -> anyhow::Error {
-    let detail = String::from_utf8_lossy(&output.stderr);
-    let detail = if detail.trim().is_empty() {
-        String::from_utf8_lossy(&output.stdout).into_owned()
-    } else {
-        detail.into_owned()
-    };
+fn add_failed(client: &Client, server: &Server, captured: &str) -> anyhow::Error {
     CliError::new(
         "error",
         format!(
             "{} could not register {}: {}",
             client.label,
             server.label,
-            detail.trim()
+            captured.trim()
         ),
     )
     .into()
@@ -603,12 +695,60 @@ fn wanted_clients(matches: &ArgMatches) -> Result<Vec<&'static Client>> {
     Ok(detected)
 }
 
-fn status_text(outcome: &GetOutcome) -> &'static str {
+/// Every status either `list` or `install` can report, in both the text a
+/// person reads and the JSON value a script matches on. A fixed table
+/// rather than deriving one rendering from the other: that was the actual
+/// bug behind `installed__login_incomplete` (two underscores) — replacing
+/// each space *and* comma in "installed, login incomplete" one character at
+/// a time hits both the comma and the space that follows it. Also what
+/// keeps `list` and `install` naming the same state the same way, since
+/// both read `.json()` off the one list here instead of building their own
+/// spelling.
+enum Status {
+    Installed,
+    NotInstalled,
+    AlreadyInstalled,
+    WouldInstall,
+    InstalledLoginIncomplete,
+    Failed,
+    ClientNotFound,
+    ConfigUnreadable,
+}
+
+impl Status {
+    fn text(&self) -> &'static str {
+        match self {
+            Self::Installed => "installed",
+            Self::NotInstalled => "not installed",
+            Self::AlreadyInstalled => "already installed",
+            Self::WouldInstall => "would install",
+            Self::InstalledLoginIncomplete => "installed, login incomplete",
+            Self::Failed => "failed",
+            Self::ClientNotFound => "client not found",
+            Self::ConfigUnreadable => "config unreadable",
+        }
+    }
+
+    fn json(&self) -> &'static str {
+        match self {
+            Self::Installed => "installed",
+            Self::NotInstalled => "not_installed",
+            Self::AlreadyInstalled => "already_installed",
+            Self::WouldInstall => "would_install",
+            Self::InstalledLoginIncomplete => "installed_login_incomplete",
+            Self::Failed => "failed",
+            Self::ClientNotFound => "client_not_found",
+            Self::ConfigUnreadable => "config_unreadable",
+        }
+    }
+}
+
+fn status_for(outcome: &GetOutcome) -> Status {
     match outcome {
-        GetOutcome::Installed => "installed",
-        GetOutcome::NotInstalled => "not installed",
-        GetOutcome::ClientNotFound => "not installed",
-        GetOutcome::Unreadable => "config unreadable",
+        GetOutcome::Installed => Status::Installed,
+        GetOutcome::NotInstalled => Status::NotInstalled,
+        GetOutcome::ClientNotFound => Status::ClientNotFound,
+        GetOutcome::Unreadable => Status::ConfigUnreadable,
     }
 }
 
@@ -620,15 +760,20 @@ fn list(mode: Mode) -> Result<()> {
         let reachable = client_reachable(client);
         for server in SERVERS {
             let status = if !reachable {
-                "client not found"
+                Status::ClientNotFound
             } else {
-                status_text(&client_get(client, server.flag))
+                status_for(&client_get(client, server.flag))
             };
-            lines.push(format!("{:14}  {:10}  {status}", server.flag, client.flag));
+            lines.push(format!(
+                "{:14}  {:10}  {}",
+                server.flag,
+                client.flag,
+                status.text()
+            ));
             rows.push(json!({
                 "server": server.flag,
                 "client": client.flag,
-                "status": status,
+                "status": status.json(),
             }));
         }
     }
@@ -644,12 +789,13 @@ fn install(matches: &ArgMatches, mode: Mode) -> Result<()> {
 
     let mut lines = Vec::new();
     let mut results = Vec::new();
+    let mut any_failed = false;
 
     for client in &clients {
         for server in &servers {
             let outcome = client_get(client, server.flag);
             let (status, error) = match outcome {
-                GetOutcome::Installed => ("already installed", None),
+                GetOutcome::Installed => (Status::AlreadyInstalled, None),
                 GetOutcome::ClientNotFound => {
                     lines.push(format!(
                         "{}: {} is not on PATH, skipped.",
@@ -658,7 +804,7 @@ fn install(matches: &ArgMatches, mode: Mode) -> Result<()> {
                     results.push(json!({
                         "server": server.flag,
                         "client": client.flag,
-                        "status": "client_not_found",
+                        "status": Status::ClientNotFound.json(),
                     }));
                     continue;
                 }
@@ -670,28 +816,34 @@ fn install(matches: &ArgMatches, mode: Mode) -> Result<()> {
                     results.push(json!({
                         "server": server.flag,
                         "client": client.flag,
-                        "status": "config_unreadable",
+                        "status": Status::ConfigUnreadable.json(),
                     }));
                     continue;
                 }
-                GetOutcome::NotInstalled if dry_run => ("would install", None),
+                GetOutcome::NotInstalled if dry_run => (Status::WouldInstall, None),
                 GetOutcome::NotInstalled => match client_add(client, server, global) {
-                    Ok(AddOutcome::Installed) => ("installed", None),
+                    Ok(AddOutcome::Installed) => (Status::Installed, None),
                     Ok(AddOutcome::InstalledLoginIncomplete(detail)) => {
-                        ("installed, login incomplete", Some(detail))
+                        (Status::InstalledLoginIncomplete, Some(detail))
                     }
-                    Err(e) => ("failed", Some(e.to_string())),
+                    Err(e) => {
+                        any_failed = true;
+                        (Status::Failed, Some(e.to_string()))
+                    }
                 },
             };
 
             lines.push(format!(
-                "{}: {} for {} — {status}.",
-                server.label, server.url, client.label
+                "{}: {} for {} — {}.",
+                server.label,
+                server.url,
+                client.label,
+                status.text()
             ));
             let mut row = json!({
                 "server": server.flag,
                 "client": client.flag,
-                "status": status.replace([' ', ','], "_"),
+                "status": status.json(),
             });
             if let Some(message) = error {
                 row["error"] = json!(message);
@@ -700,7 +852,20 @@ fn install(matches: &ArgMatches, mode: Mode) -> Result<()> {
         }
     }
 
-    output::emit(mode, &lines.join("\n"), json!({ "results": results }))
+    output::emit(mode, &lines.join("\n"), json!({ "results": results }))?;
+
+    // The structured result above already names which pair failed and why
+    // — this only decides the exit code, for a caller that checks that and
+    // nothing else. Skipped pairs (client not found, config unreadable)
+    // don't count: nothing was attempted there to call a failure.
+    if any_failed {
+        return Err(CliError::new(
+            "error",
+            "At least one server could not be registered; see the results above.",
+        )
+        .into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -756,5 +921,79 @@ mod tests {
         command()
             .try_get_matches_from(["mcp", "list"])
             .expect("parses");
+    }
+
+    /// The actual bug: deriving JSON from the display text by replacing
+    /// each space and comma one at a time turned "installed, login
+    /// incomplete" into "installed__login_incomplete" (two underscores,
+    /// one per character replaced, not one per word boundary). A fixed
+    /// table per status can't make that mistake.
+    #[test]
+    fn every_json_status_is_single_underscore_snake_case() {
+        for status in [
+            Status::Installed,
+            Status::NotInstalled,
+            Status::AlreadyInstalled,
+            Status::WouldInstall,
+            Status::InstalledLoginIncomplete,
+            Status::Failed,
+            Status::ClientNotFound,
+            Status::ConfigUnreadable,
+        ] {
+            let json = status.json();
+            assert!(!json.contains("__"), "{json:?} has a double underscore");
+            assert!(!json.contains(' '), "{json:?} has a space");
+            assert!(!json.contains(','), "{json:?} has a comma");
+            assert_eq!(json, json.to_lowercase(), "{json:?} is not lowercase");
+        }
+        assert_eq!(
+            Status::InstalledLoginIncomplete.json(),
+            "installed_login_incomplete"
+        );
+    }
+
+    /// `list` and `install` share one status table now, rather than each
+    /// spelling the same state differently in JSON (`"not installed"` with
+    /// a space from one, `"client_not_found"` snake_case from the other).
+    #[test]
+    fn list_and_install_json_statuses_agree_for_shared_states() {
+        assert_eq!(
+            status_for(&GetOutcome::ClientNotFound).json(),
+            Status::ClientNotFound.json()
+        );
+        assert_eq!(
+            status_for(&GetOutcome::Unreadable).json(),
+            Status::ConfigUnreadable.json()
+        );
+        assert_eq!(
+            status_for(&GetOutcome::Installed).json(),
+            Status::Installed.json()
+        );
+    }
+
+    #[test]
+    fn a_bare_name_tries_cmd_bat_and_exe_only_on_windows() {
+        let candidates = command_candidates(Path::new("code"));
+        if cfg!(windows) {
+            let exts: Vec<_> = candidates
+                .iter()
+                .skip(1)
+                .map(|p| p.extension().and_then(|e| e.to_str()).unwrap_or(""))
+                .collect();
+            assert_eq!(exts, ["cmd", "bat", "exe"]);
+            assert_eq!(candidates[0], Path::new("code"));
+        } else {
+            assert_eq!(candidates, vec![PathBuf::from("code")]);
+        }
+    }
+
+    #[test]
+    fn a_name_that_already_has_an_extension_is_tried_once() {
+        // Windows or not: a caller that named `.exe` explicitly meant it,
+        // and guessing further extensions on top would be wrong either way.
+        assert_eq!(
+            command_candidates(Path::new("code.exe")),
+            vec![PathBuf::from("code.exe")]
+        );
     }
 }

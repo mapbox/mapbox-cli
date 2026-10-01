@@ -195,7 +195,10 @@ fn a_failed_add_is_reported_without_failing_the_whole_run() {
             "text",
         ],
     );
-    assert!(output.status.success(), "{}", stderr(&output));
+    // A failed add makes the whole run exit non-zero (for a caller that
+    // only checks the exit code), but the result is still reported in full
+    // rather than cut short.
+    assert_eq!(output.status.code(), Some(1));
     assert!(marker_was_written(&marker));
     assert!(stdout(&output).contains("failed"), "{}", stdout(&output));
 }
@@ -296,6 +299,7 @@ case "$1" in
                 ;;
             add)
                 echo "add-called:$*" >>"$STUB_MARKER"
+                echo "codex-stub-stderr-line" >&2
                 if [ "${STUB_CODEX_WRITES:-1}" = "1" ]; then
                     echo installed >"$STUB_STATE"
                 fi
@@ -404,7 +408,10 @@ fn codex_add_that_writes_nothing_is_reported_as_failed() {
             "install", "--server", "mapbox", "--client", "codex", "-o", "text",
         ],
     );
-    assert!(output.status.success(), "{}", stderr(&output));
+    // A failed add makes the whole run exit non-zero (for a caller that
+    // only checks the exit code), but the result is still reported in full
+    // rather than cut short.
+    assert_eq!(output.status.code(), Some(1));
     assert!(marker_was_written(&marker));
     assert!(stdout(&output).contains("failed"), "{}", stdout(&output));
 }
@@ -560,6 +567,101 @@ fn vscode_unreadable_config_is_reported_rather_than_guessed_past() {
         stdout(&output).contains("could not be read"),
         "{}",
         stdout(&output)
+    );
+}
+
+/// VS Code's `mcp.json` and Cursor's `settings.json` are both JSONC: real
+/// comments and a trailing comma are normal in a file a person has actually
+/// looked at, and `serde_json` alone refuses both.
+#[test]
+fn vscode_config_with_comments_and_a_trailing_comma_still_parses() {
+    let (stub, marker) = add_mcp_flag_stub_for("vscode-jsonc");
+    let config_dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("vscode-config-jsonc");
+    let user_dir = config_dir.join("User");
+    std::fs::create_dir_all(&user_dir).expect("create config dir");
+    std::fs::write(
+        user_dir.join("mcp.json"),
+        "{\n  // my servers\n  \"servers\": {\n    \"mapbox\": {\"type\": \"http\", \"url\": \"https://mcp.mapbox.com/mcp\"},\n  },\n}\n",
+    )
+    .expect("seed mcp.json");
+
+    let output = run_vscode(
+        &stub,
+        &marker,
+        &config_dir,
+        "0",
+        &[
+            "install", "--server", "mapbox", "--client", "vscode", "-o", "text",
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        !marker_was_written(&marker),
+        "--add-mcp was called for a server a commented file already lists"
+    );
+    assert!(
+        stdout(&output).contains("already installed"),
+        "a JSONC file with comments and a trailing comma was treated as unreadable: {}",
+        stdout(&output)
+    );
+}
+
+/// Only `NotFound` means "not installed." Every other read error (no
+/// permission, the path is a directory, not valid UTF-8) must not be
+/// guessed past as the same thing — that guess is what let `install` run
+/// `--add-mcp` over a server that may already be there under a config this
+/// command had never actually managed to read.
+#[test]
+fn a_config_path_that_is_a_directory_is_unreadable_not_not_installed() {
+    let (stub, marker) = add_mcp_flag_stub_for("vscode-dir");
+    let config_dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("vscode-config-dir");
+    // `User/mcp.json` is a directory, not a file — reading it fails with
+    // something other than `NotFound`.
+    std::fs::create_dir_all(config_dir.join("User").join("mcp.json")).expect("create dir");
+
+    let output = run_vscode(
+        &stub,
+        &marker,
+        &config_dir,
+        "0",
+        &[
+            "install", "--server", "mapbox", "--client", "vscode", "-o", "json",
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        !marker_was_written(&marker),
+        "--add-mcp was called despite mcp.json being unreadable (a directory)"
+    );
+    assert!(
+        stdout(&output).contains("\"status\":\"config_unreadable\""),
+        "{}",
+        stdout(&output)
+    );
+}
+
+/// Codex's OAuth step can print a URL to open as part of `add` itself —
+/// captured-and-shown-only-on-failure would leave that unseen while the run
+/// looks hung. `spawn_live` forwards both of the child's streams to this
+/// process's own stderr as they arrive, not only after the child exits.
+#[test]
+fn codex_add_output_is_forwarded_to_stderr_live() {
+    let (stub, marker, state) = codex_stub_for("live-output");
+    let output = run_codex(
+        &stub,
+        &marker,
+        &state,
+        "0",
+        "1",
+        &[
+            "install", "--server", "mapbox", "--client", "codex", "-o", "text",
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("codex-stub-stderr-line"),
+        "the child's own stderr never reached ours: {}",
+        stderr(&output)
     );
 }
 

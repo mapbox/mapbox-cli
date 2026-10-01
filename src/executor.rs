@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::io::IsTerminal;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -317,7 +318,13 @@ fn dispatch(
             .expect("a failure always takes the text path");
         return Err(CliError::http(status.as_u16(), text)
             .with_request_id(headers.request_id)
-            .with_remedy(remedy::for_http(status.as_u16(), op, matches, username))
+            .with_remedy(remedy::for_http(
+                status.as_u16(),
+                op,
+                matches,
+                username,
+                text,
+            ))
             .into());
     }
 
@@ -378,7 +385,13 @@ fn dispatch(
         // `--output json` on a tile endpoint is far more likely to be a
         // global flag riding along than a deliberate request to mangle
         // the image.
-        None => write_binary(&body, &content_type)?,
+        None => {
+            write_binary(&body, &content_type)?;
+            let quiet = matches.get_flag(output::banner::ARG);
+            if binary_notice_enabled(std::io::stderr().is_terminal(), quiet) {
+                output::progress(&binary_notice(body.len(), &content_type));
+            }
+        }
     }
 
     Ok(())
@@ -1377,11 +1390,27 @@ fn suggested_extension(content_type: &str) -> &'static str {
     }
 }
 
+/// A redirected download otherwise ends in silence, which reads as nothing
+/// having happened. Shown under the banner's rules: only to someone watching
+/// stderr, and not under `--quiet`.
+fn binary_notice_enabled(stderr_is_terminal: bool, quiet: bool) -> bool {
+    stderr_is_terminal && !quiet
+}
+
+fn binary_notice(bytes: usize, content_type: &str) -> String {
+    let kind = if content_type.is_empty() {
+        "binary"
+    } else {
+        content_type
+    };
+    format!("Wrote {kind} ({bytes} bytes).")
+}
+
 /// Writes raw bytes to stdout, refusing to do so when that's a terminal —
 /// same as `curl`, and for the same reason: a few hundred KB of PNG would
 /// otherwise scramble the shell.
 fn write_binary(body: &[u8], content_type: &str) -> Result<()> {
-    use std::io::{IsTerminal, Write};
+    use std::io::Write;
 
     let mut stdout = std::io::stdout();
     if stdout.is_terminal() {
@@ -1412,13 +1441,29 @@ fn write_binary(body: &[u8], content_type: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        describe_body, empty_success_line, extra_query_from_env, file_name_of,
-        is_binary_content_type, part_media_type, path_segment, payload_of, query_pairs,
-        redacted_url, request_id, resolve_body_source, resolve_data, shell_value,
-        substitute_path_param, with_page_context, BodySource, NextPage, ResponseHeaders,
-        ACCESS_TOKEN, EXTRA_QUERY_ENV, REQUEST_ID_HEADERS,
+        binary_notice, binary_notice_enabled, describe_body, empty_success_line,
+        extra_query_from_env, file_name_of, is_binary_content_type, part_media_type, path_segment,
+        payload_of, query_pairs, redacted_url, request_id, resolve_body_source, resolve_data,
+        shell_value, substitute_path_param, with_page_context, BodySource, NextPage,
+        ResponseHeaders, ACCESS_TOKEN, EXTRA_QUERY_ENV, REQUEST_ID_HEADERS,
     };
     use std::borrow::Cow;
+
+    #[test]
+    fn a_binary_notice_is_shown_only_at_a_terminal_and_not_when_quiet() {
+        assert!(binary_notice_enabled(true, false));
+        assert!(!binary_notice_enabled(false, false));
+        assert!(!binary_notice_enabled(true, true));
+    }
+
+    #[test]
+    fn a_binary_notice_names_the_type_and_size() {
+        assert_eq!(
+            binary_notice(988165, "application/zip"),
+            "Wrote application/zip (988165 bytes)."
+        );
+        assert_eq!(binary_notice(3, ""), "Wrote binary (3 bytes).");
+    }
 
     use crate::http::Payload;
     use crate::output::CliError;

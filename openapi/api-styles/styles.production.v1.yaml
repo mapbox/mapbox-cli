@@ -439,6 +439,48 @@ paths:
       - styles
       - draft
       - delete
+  /styles/v1/{username}/{style_id}.zip:
+    get:
+      operationId: downloadStyleZip
+      x-mapbox-docs-examples:
+      - example-id: request-style-bundle-published
+        title: Request the style bundle for a published style
+      - example-id: request-style-bundle-draft
+        title: Request the style bundle for a draft style
+      summary: Download a style as a ZIP bundle
+      description: |
+        Retrieves a ZIP file containing the style JSON, sprite images, referenced
+        custom fonts, and a license file. The response is cached for several minutes.
+        Access to this endpoint is available by request.
+      tags:
+      - Styles
+      parameters:
+      - $ref: '#/components/parameters/username'
+      - $ref: '#/components/parameters/style_id'
+      responses:
+        '200':
+          description: ZIP archive of the style.
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+              examples:
+                request-style-bundle-published:
+                  summary: Published style ZIP bundle
+                  externalValue: https://api.mapbox.com/styles/v1/examples/cjikt35x83t1z2rnxpdmjs7y7.zip?access_token=YOUR_MAPBOX_ACCESS_TOKEN
+                request-style-bundle-draft:
+                  summary: Draft style ZIP bundle
+                  externalValue: https://api.mapbox.com/styles/v1/examples/cjikt35x83t1z2rnxpdmjs7y7/draft.zip?access_token=YOUR_MAPBOX_ACCESS_TOKEN
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      x-mapbox-cli-command:
+      - styles
+      - download
   /styles/v1/{username}/{style_id}/sprite:
     get:
       operationId: getSpriteJson

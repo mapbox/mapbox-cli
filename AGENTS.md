@@ -52,11 +52,16 @@ easy thing to add:
 - `tests/output_contract.rs` checks which stream each kind of output actually
   lands on, in a real child process.
 
+Everything about how output looks lives in `src/output/`: `mod.rs` is the
+entry point (modes, `emit`, tips), `error.rs` shapes and prints failures,
+`render.rs` builds tables and field lists, `style.rs` decides when color is
+allowed, and `banner.rs` is the version line a run opens with.
+
 Four modules may touch stdout, and the guard lists each with its reason:
-`output.rs`, which is the machinery; `completion.rs`, because a shell script
-wrapped in JSON is unsourceable; `executor.rs`, because a binary API response
-wrapped in JSON is a corrupt PNG; and `telemetry.rs`, which does not write at
-all and only reads `stdout().is_terminal()`. Adding a fifth means editing that
+`output/mod.rs`, which is the machinery; `completion.rs`, because a shell
+script wrapped in JSON is unsourceable; `executor.rs`, because a binary API
+response wrapped in JSON is a corrupt PNG; and `telemetry.rs`, which does not
+write at all and only reads `stdout().is_terminal()`. Adding a fifth means editing that
 list, on purpose, in front of a reviewer.
 
 ## One HTTP client
@@ -98,6 +103,10 @@ at twice. Today they hold which modules may delete from the filesystem, which
 may write to stdout, which must carry a request id into an error, that every
 telemetry marker is disclosed in README.md, and that the prose is American
 English.
+
+They read `src/` recursively and name a file by its path under it
+(`output/mod.rs`), so a module that moves into a directory stays covered —
+and its entry in a guard's list has to move with it.
 
 Each keeps a list with a reason per entry, and each fails with a message
 saying what to do. **If a guard fails, the fix is almost never to add

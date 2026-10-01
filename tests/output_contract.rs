@@ -1,6 +1,6 @@
 //! End-to-end tests for the `--output` contract.
 //!
-//! The unit tests in `src/output.rs` cover mode resolution as a pure
+//! The unit tests in `src/output/mod.rs` cover mode resolution as a pure
 //! function. What they cannot cover is the thing the contract is actually
 //! about: which stream each kind of output lands on, in a real process, with
 //! a real exit code. Cargo runs a test's child with pipes for stdout and
@@ -840,4 +840,33 @@ fn whoami_reports_its_source_and_fails_when_there_is_nothing_to_report() {
         .output()
         .expect("run mapbox");
     assert_eq!(json(&stdout(&typed))["source"], "flag");
+}
+
+/// Color and the banner are for a terminal, and a test process has none: with
+/// `-o text` forcing the human rendering into a pipe, neither stream may carry
+/// an escape or the banner. `NO_COLOR` is cleared and `TERM` set so that
+/// nothing but the missing terminal is what keeps them out.
+#[test]
+fn text_into_a_pipe_carries_no_color_and_no_banner() {
+    let runs: [&[&str]; 3] = [
+        &["-o", "text", "auth", "whoami"],
+        &["-o", "text", "doctor"],
+        &["-o", "text", "config", "list"],
+    ];
+    for args in runs {
+        let out = command()
+            .args(UNUSED_PROFILE)
+            .args(args)
+            .env("MAPBOX_ACCESS_TOKEN", TOKEN_FOR_SOMEONE)
+            .env_remove("NO_COLOR")
+            .env_remove("MAPBOX_QUIET")
+            .env("TERM", "xterm-256color")
+            .output()
+            .expect("run mapbox");
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+        for (stream, text) in [("stdout", stdout(&out)), ("stderr", stderr(&out))] {
+            assert!(!text.contains('\x1b'), "{args:?} {stream}: {text:?}");
+            assert!(!text.contains("mapbox · v"), "{args:?} {stream}: {text:?}");
+        }
+    }
 }

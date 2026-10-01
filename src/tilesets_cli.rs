@@ -313,7 +313,7 @@ fn short_cluster_takes_next(app: &Command, cluster: &str) -> bool {
 /// `the_misplaced_globals_list_matches_the_app`: the spellings so a new
 /// global forces a decision about forwarding it, and the value flag so the
 /// hint below stays a command line that actually works.
-const MAPBOX_ONLY_GLOBALS: [(&str, bool); 12] = [
+const MAPBOX_ONLY_GLOBALS: [(&str, bool); 13] = [
     ("--use-login", false),
     ("--schema", false),
     ("--profile", true),
@@ -336,6 +336,10 @@ const MAPBOX_ONLY_GLOBALS: [(&str, bool); 12] = [
     // warning in `warn_yes_ignored` for the other half of the mistake.
     ("--yes", false),
     ("-y", false),
+    // Only the short spelling: `upload-source` and `upload-raster-source`
+    // take a `--quiet` of their own, and forwarding it is how a caller hides
+    // their progress bar.
+    ("-q", false),
 ];
 
 /// Warns when a `mapbox` global was written after the subcommand name.
@@ -1017,8 +1021,12 @@ mod tests {
             .iter()
             .map(|(spelling, wants_value)| (spelling.to_string(), *wants_value))
             // `tilesets` has its own --token; forwarding both spellings is
-            // intended.
-            .chain([("--token".to_string(), true), ("-t".to_string(), true)])
+            // intended. It also has its own `--quiet`, but no `-q`.
+            .chain([
+                ("--token".to_string(), true),
+                ("-t".to_string(), true),
+                ("--quiet".to_string(), false),
+            ])
             .collect();
         expected.sort();
 

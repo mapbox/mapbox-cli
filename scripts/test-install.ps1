@@ -148,14 +148,150 @@ function New-FakeBinary([string]$Path, [string]$VersionText) {
         }
         if (-not (Test-Path -LiteralPath $csc)) { throw 'no csc.exe to build the stand-in binary with' }
         $source = "$Path.cs"
+        # generate-skills/agent-skills answer no_agent_detected here, same as
+        # the real CLI on a machine with no coding agent - every other
+        # existing case in this file calls only --version, so without this
+        # the coding-agent-skill step in install.ps1 would see the fallback
+        # branch below succeed and think an agent (spuriously named after
+        # $VersionText) had been found.
         Set-Content -LiteralPath $source -Encoding ASCII -Value @"
-class Program { static void Main() { System.Console.WriteLine("$VersionText"); } }
+class Program {
+    static int Main(string[] args) {
+        string a0 = args.Length > 0 ? args[0] : "";
+        if (a0 == "generate-skills" || a0 == "agent-skills") {
+            System.Console.Error.WriteLine("{\"code\":\"no_agent_detected\"}");
+            return 1;
+        }
+        System.Console.WriteLine("$VersionText");
+        return 0;
+    }
+}
 "@
         & $csc /nologo "/out:$Path" $source | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "csc.exe could not build the stand-in binary" }
         Remove-Item -LiteralPath $source -Force
     } else {
-        Set-Content -LiteralPath $Path -Value "#!/bin/sh`necho '$VersionText'"
+        Set-Content -LiteralPath $Path -Value @"
+#!/bin/sh
+case "`${1:-}" in
+    generate-skills | agent-skills)
+        echo '{"code":"no_agent_detected"}' >&2
+        exit 1
+        ;;
+    *) echo '$VersionText' ;;
+esac
+"@
+        & /bin/chmod '+x' $Path
+    }
+}
+
+# A fake binary that reports one detected coding agent, "claude", for the
+# cases below that exercise install.ps1's coding-agent-skill step - the
+# stand-in above always answers no_agent_detected instead, which every other
+# case in this file relies on. Driven at runtime by two environment
+# variables so the same binary covers every branch: MAPBOX_TEST_INSTALL_MODE
+# (ok | already_installed) and MAPBOX_TEST_UPDATE_MODE (clean | dirty, read
+# only once install reports already_installed) - the same two knobs
+# test-install.sh's agent-channel fixture uses.
+function New-AgentFakeBinary([string]$Path, [string]$VersionText) {
+    $ErrorActionPreference = 'Continue'
+    if ($OnWindows) {
+        $csc = Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+        if (-not (Test-Path -LiteralPath $csc)) {
+            $csc = Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
+        }
+        if (-not (Test-Path -LiteralPath $csc)) { throw 'no csc.exe to build the stand-in binary with' }
+        $source = "$Path.cs"
+        Set-Content -LiteralPath $source -Encoding ASCII -Value @"
+using System;
+using System.Linq;
+class Program {
+    static int Main(string[] args) {
+        string a0 = args.Length > 0 ? args[0] : "";
+        if (a0 == "--version") { Console.WriteLine("$VersionText"); return 0; }
+        if (a0 == "generate-skills") {
+            if (args.Contains("--dry-run")) {
+                Console.WriteLine("{\"written\":true,\"skills\":[{\"source\":\"claude, all projects\"}]}");
+            } else {
+                Console.WriteLine("{\"written\":true}");
+            }
+            return 0;
+        }
+        if (a0 == "agent-skills") {
+            string sub = args.Length > 1 ? args[1] : "";
+            string installMode = Environment.GetEnvironmentVariable("MAPBOX_TEST_INSTALL_MODE") ?? "ok";
+            string updateMode = Environment.GetEnvironmentVariable("MAPBOX_TEST_UPDATE_MODE") ?? "clean";
+            if (sub == "install") {
+                if (installMode == "already_installed") {
+                    Console.Error.WriteLine("{\"code\":\"already_installed\"}");
+                    return 1;
+                }
+                Console.WriteLine("{\"installed\":true}");
+                return 0;
+            }
+            if (sub == "update") {
+                if (args.Contains("--dry-run")) {
+                    if (updateMode == "dirty") {
+                        Console.WriteLine("{\"updated\":[\"some-skill\"],\"unchanged\":[]}");
+                    } else {
+                        Console.WriteLine("{\"updated\":[],\"unchanged\":[\"some-skill\"]}");
+                    }
+                } else {
+                    Console.WriteLine("{\"updated\":[\"some-skill\"]}");
+                }
+                return 0;
+            }
+        }
+        Console.WriteLine("$VersionText");
+        return 0;
+    }
+}
+"@
+        & $csc /nologo "/out:$Path" $source | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "csc.exe could not build the agent-aware stand-in binary" }
+        Remove-Item -LiteralPath $source -Force
+    } else {
+        Set-Content -LiteralPath $Path -Value @"
+#!/bin/sh
+case "`${1:-}" in
+    --version) echo '$VersionText' ;;
+    generate-skills)
+        for a in "`$@"; do
+            if [ "`$a" = "--dry-run" ]; then
+                echo '{"written":true,"skills":[{"source":"claude, all projects"}]}'
+                exit 0
+            fi
+        done
+        echo '{"written":true}'
+        ;;
+    agent-skills)
+        sub="`$2"
+        case "`$sub" in
+            install)
+                if [ "`${MAPBOX_TEST_INSTALL_MODE:-ok}" = already_installed ]; then
+                    echo '{"code":"already_installed"}' >&2
+                    exit 1
+                fi
+                echo '{"installed":true}'
+                ;;
+            update)
+                is_dry=no
+                for a in "`$@"; do [ "`$a" = "--dry-run" ] && is_dry=yes; done
+                if [ "`$is_dry" = yes ]; then
+                    if [ "`${MAPBOX_TEST_UPDATE_MODE:-clean}" = dirty ]; then
+                        echo '{"updated":["some-skill"],"unchanged":[]}'
+                    else
+                        echo '{"updated":[],"unchanged":["some-skill"]}'
+                    fi
+                else
+                    echo '{"updated":["some-skill"]}'
+                fi
+                ;;
+        esac
+        ;;
+    *) echo '$VersionText' ;;
+esac
+"@
         & /bin/chmod '+x' $Path
     }
 }
@@ -200,7 +336,8 @@ function New-ChannelVersion {
         [string]$ArtifactName = $Target,
         [switch]$BadSha,
         [switch]$Broken,
-        [switch]$Empty
+        [switch]$Empty,
+        [switch]$Agent
     )
 
     $dir = Join-Path $Root $Dir
@@ -225,6 +362,8 @@ function New-ChannelVersion {
             Set-Content -LiteralPath $payload -Value "#!/bin/sh`nexit 1"
             & /bin/chmod '+x' $payload
         }
+    } elseif ($Agent) {
+        New-AgentFakeBinary $payload $VersionText
     } else {
         New-FakeBinary $payload $VersionText
     }
@@ -390,6 +529,9 @@ function New-CaseEnv([string]$Name) {
     # turn every marker case into a failure that looks like the marker broke.
     Clear-Env 'DISABLE_TELEMETRY'
     Clear-Env 'MAPBOX_CLI_NO_TELEMETRY'
+    Clear-Env 'MAPBOX_CLI_NO_AGENT_SETUP'
+    Clear-Env 'MAPBOX_TEST_INSTALL_MODE'
+    Clear-Env 'MAPBOX_TEST_UPDATE_MODE'
     # What install.ps1 reads to decide where it is running. Set explicitly so
     # the same case means the same thing on Windows and on the machine this is
     # written on.
@@ -429,6 +571,7 @@ $armRoot = Join-Path $Root 'arm-channel'
 $emptyRoot = Join-Path $Root 'empty-channel'
 
 $badShaRoot = Join-Path $Root 'bad-sha-channel'
+$agentRoot = Join-Path $Root 'agent-channel'
 
 # Beside the channels rather than in one, and nothing ever requests it: this is
 # where the open server writes the path and User-Agent of every request it is
@@ -443,6 +586,7 @@ New-ChannelVersion -Root $foreignRoot -Dir 'latest' -ArtifactName 'aarch64-apple
 New-ChannelVersion -Root $armRoot -Dir 'latest' -ArtifactName $Arm64Target -VersionText 'mapbox 9.9.9-arm64'
 New-ChannelVersion -Root $emptyRoot -Dir 'latest' -Empty
 New-ChannelVersion -Root $badShaRoot -Dir 'latest' -BadSha
+New-ChannelVersion -Root $agentRoot -Dir 'latest' -Agent
 
 $open = $null
 $gated = $null
@@ -855,6 +999,46 @@ try {
     Expect-Status 0 'exits 0'
     Expect-Out 'Tilesets CLI: C:\tools\tilesets.cmd' 'reports what it is pointed at'
     Expect-NoOut 'does not work natively here' 'and does not explain it again'
+
+    # --- the coding agent skill ---------------------------------------------
+    #
+    # Invoke-Installer runs with -NonInteractive, which is what lets it merge
+    # a child's stderr without Stop turning that into a terminating error -
+    # but it also makes Read-Host refuse outright ("PowerShell is in
+    # NonInteractive mode"), regardless of what is actually attached to
+    # stdin. So only the no-console branch of install.ps1's prompt is
+    # reachable through this harness; that happens to be exactly what
+    # Invoke-Installer already simulates for every other case here. The
+    # answered-yes/answered-no branches were verified by hand instead,
+    # against a real pseudoterminal (`[Console]::IsInputRedirected` reads
+    # False there), across all of: declined, fresh install, reinstall with
+    # nothing changed, and reinstall with a local edit preserved rather than
+    # overwritten - there is no cross-platform way to allocate a pty from
+    # pure PowerShell to automate that part here.
+
+    Start-Case 'no coding agent detected: silent, nothing offered'
+    New-CaseEnv 'no-agent'
+    Invoke-Installer
+    Expect-Status 0 'exits 0'
+    Expect-NoOut 'coding agent' 'says nothing about a step that has nothing to do'
+
+    Start-Case 'no console: the question is skipped, not answered yes'
+    New-CaseEnv 'agent-no-console'
+    $env:MAPBOX_CLI_BASE_URL = "$($open.BaseUrl)/agent-channel"
+    Invoke-Installer
+    Expect-Status 0 'exits 0'
+    Expect-Out 'A coding agent was detected on this machine: claude.' 'names the agent'
+    Expect-Out 'Not set up. Run these any time:' 'gives the manual commands instead of asking'
+    Expect-Out 'mapbox generate-skills --global' 'the first manual command'
+    Expect-Out 'mapbox agent-skills install --global' 'the second manual command'
+
+    Start-Case 'MAPBOX_CLI_NO_AGENT_SETUP opts out even though an agent was detected'
+    New-CaseEnv 'agent-opt-out'
+    $env:MAPBOX_CLI_BASE_URL = "$($open.BaseUrl)/agent-channel"
+    $env:MAPBOX_CLI_NO_AGENT_SETUP = '1'
+    Invoke-Installer
+    Expect-Status 0 'exits 0'
+    Expect-NoOut 'coding agent' 'skips the question entirely'
 } finally {
     if ($open) { Stop-ChannelServer $open }
     if ($gated) { Stop-ChannelServer $gated }

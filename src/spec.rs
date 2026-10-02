@@ -497,6 +497,13 @@ const UNSUPPORTED_OPERATIONS: &[(&str, &str, &str)] = &[
     ("accounts", "createToken", "tokens:write"),
     ("accounts", "updateToken", "tokens:write"),
     ("accounts", "deleteToken", "tokens:write"),
+    // Confirmed 2026-09-24 with a direct POST /oauth/register against
+    // production requesting `user-feedback:write` alongside two scopes
+    // already known registrable — the response's granted `scope` carried
+    // the other two and silently dropped this one, the same shape
+    // `tokens:write` above already documents. `user-feedback:read`
+    // (list/get) is unaffected and already in `DEFAULT_SCOPES_LIST`.
+    ("feedback", "createFeedbackItem", "user-feedback:write"),
 ];
 
 fn unsupported_scope_for(service_name: &str, operation_id: &str) -> Option<&'static str> {
@@ -601,10 +608,16 @@ pub const MAPBOX_SPEC_ENTRIES: &[SpecEntry] = &[
 /// name here wins over the same name in [`MAPBOX_SPEC_ENTRIES`]. Delete the
 /// override once upstream ships the service — a drift check flags a name
 /// wired on both sides, for exactly this reason.
-pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[SpecEntry {
-    name: "search",
-    yaml: include_str!("../custom-openapi/search/openapi/search.yaml"),
-}];
+pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
+    SpecEntry {
+        name: "search",
+        yaml: include_str!("../custom-openapi/search/openapi/search.yaml"),
+    },
+    SpecEntry {
+        name: "feedback",
+        yaml: include_str!("../custom-openapi/feedback/openapi/feedback.yaml"),
+    },
+];
 
 /// The list the CLI actually generates commands from: [`MAPBOX_SPEC_ENTRIES`],
 /// with each [`CUSTOM_SPEC_ENTRIES`] override swapped in and the
@@ -1945,5 +1958,39 @@ paths:
         assert_eq!(name, generated());
         assert!(aliases.is_empty());
         assert!(hidden.is_empty());
+    }
+
+    /// `createFeedbackItem` needs `user-feedback:write`, confirmed
+    /// unregistrable via a direct `POST /oauth/register` against
+    /// production — see `UNSUPPORTED_OPERATIONS`'s own comment for that.
+    /// `list` and `get` need only `user-feedback:read`, already in
+    /// `DEFAULT_SCOPES_LIST`, so they must stay reachable.
+    #[test]
+    fn feedback_create_is_unreachable_but_list_and_get_are_not() {
+        let spec = parse_spec(
+            "feedback",
+            include_str!("../custom-openapi/feedback/openapi/feedback.yaml"),
+        )
+        .expect("feedback.yaml parses");
+
+        let create = spec
+            .operations
+            .iter()
+            .find(|op| op.command_path == ["create-feedback-item"])
+            .expect("the create-feedback-item operation exists in the spec");
+        assert!(
+            create.disabled_scope.is_some(),
+            "createFeedbackItem must be disabled — user-feedback:write isn't registrable"
+        );
+        assert!(!create.is_exposed());
+
+        for path in [["list"], ["get"]] {
+            let op = spec
+                .operations
+                .iter()
+                .find(|op| op.command_path == path)
+                .unwrap_or_else(|| panic!("the {path:?} operation exists in the spec"));
+            assert!(op.is_exposed(), "{path:?} needs only user-feedback:read");
+        }
     }
 }

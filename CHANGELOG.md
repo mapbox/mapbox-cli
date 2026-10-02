@@ -19,6 +19,9 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox feedback create` submits a feedback item, filed under the
+  account that owns the token. `mapbox auth login` now also asks for the
+  `user-feedback:write` scope it needs, so log in again to use it.
 - `install.sh`/`install.ps1`: when the install finds a coding agent on the
   machine, it now asks, once, whether to write this CLI's own skill and
   install the Mapbox Agent Skills library for it, naming the agent and what
@@ -33,11 +36,6 @@ that may never merge. They are not releases and are not listed here.
   apps built with Mapbox — filterable, sortable, paginated. Each filter
   takes one value for now. Hand-authored into
   `custom-openapi/`, like `search`, because no upstream spec exists yet.
-  `feedback create`, the write side, is not a command — confirmed directly
-  against production that `user-feedback:write` is silently dropped from a
-  `POST /oauth/register` grant, the same unregistrable shape
-  `accounts create-token` already documents, so no `mapbox auth login`
-  token can ever carry it.
 - `mapbox generate-skills`/`agent-skills install`/`agent-skills update`,
   when no coding agent is detected and none was named with `--agent`,
   `--global` or `--dir`: the failure now carries a stable

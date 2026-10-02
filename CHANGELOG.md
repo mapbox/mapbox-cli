@@ -19,6 +19,18 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox mcp list`/`mapbox mcp install`: registers a Mapbox MCP server
+  (direct tool-calling access to Mapbox's APIs, not just guidance about
+  them) with a coding agent's own CLI or config. Claude Code, Codex, VS Code
+  and Cursor are supported today, against the hosted Mapbox MCP endpoints.
+  An existing server with the same name is left alone rather than replaced.
+  VS Code and Cursor currently register for every project regardless of
+  `--global`, since neither has a working way to scope it to one project;
+  Codex may report a server `installed, login incomplete` when its own
+  OAuth step fails against Mapbox's hosted MCP server, a known
+  incompatibility between the two rather than something this command
+  controls.
+
 - `install.sh`/`install.ps1`: when the install finds a coding agent on the
   machine, it now asks, once, whether to write this CLI's own skill and
   install the Mapbox Agent Skills library for it, naming the agent and what

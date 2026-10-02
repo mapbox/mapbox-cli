@@ -27,6 +27,7 @@ mapbox styles list
 - [For AI agents](#for-ai-agents)
   - [Agent skills](#agent-skills)
   - [Generate skills](#generate-skills)
+  - [MCP servers](#mcp-servers)
 - [Global options](#global-options)
   - [Dry runs](#dry-runs)
   - [Timeouts](#timeouts)
@@ -339,6 +340,26 @@ Codex. `--agent`, `--global`, `--dir` and `--service` narrow it, and
 ```sh
 mapbox agent-skills uninstall mapbox-cli
 ```
+
+### MCP servers
+
+```sh
+mapbox mcp list
+mapbox mcp install
+```
+
+Different kind of "install" from `agent-skills`/`generate-skills` above:
+those write a directory this CLI owns, this registers an MCP server —
+direct tool-calling access to Mapbox's APIs, not just guidance about them —
+with a coding agent's *own* config, since that config belongs to the agent
+and may already list other servers. Claude Code, Codex, VS Code and Cursor
+are supported today, against the hosted Mapbox MCP endpoints: no token, no
+npm package, no Node version to manage. An existing server with the same
+name is left alone rather than replaced. VS Code and Cursor currently
+register for every project regardless of `--global`, since neither has a
+working way to scope it to one; Codex may report a server as installed with
+its own login incomplete, an OAuth incompatibility between Codex and
+Mapbox's hosted MCP server rather than something this command controls.
 
 ## Global options
 

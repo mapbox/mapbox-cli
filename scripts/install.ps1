@@ -166,8 +166,12 @@
         if ($UseColor -and $Color) { Write-Host $Text -ForegroundColor $Color -NoNewline }
         else { Write-Host $Text -NoNewline }
     }
+    # Where a step line starts. A question's answers are its children, so a
+    # step that asked one sets this two deeper while it reports, then puts it
+    # back. A hashtable so the functions below see the change.
+    $Layout = @{ Indent = '  ' }
     function Write-Step([string]$Mark, [string]$Color, [string]$Text, [string]$Detail = '') {
-        Write-Part '  '
+        Write-Part $Layout.Indent
         Write-Part $Mark $Color
         Write-Part " $Text"
         if ($Detail) { Write-Part " $Detail" 'DarkGray' }
@@ -176,6 +180,32 @@
     function Write-Ok([string]$Text, [string]$Detail = '') { Write-Step $MarkOk 'Green' $Text $Detail }
     function Write-Skip([string]$Text) { Write-Step '-' 'DarkGray' $Text }
     function Write-Warn([string]$Text) { Write-Step '!' 'Yellow' $Text }
+    # A line of detail under the step line before it, aligned with its text.
+    function Write-Detail([string]$Text) { Write-Host "$($Layout.Indent)  $Text" }
+
+    # A question reads in three layers, as in install.sh: the question in the
+    # console's own text color, what answering does in gray under it, and the
+    # command it runs in cyan, so the eye lands on the question and the
+    # command. Not White: on a light console theme it all but disappears.
+    function Write-AskTitle([string]$Text) {
+        Write-Part '  '
+        Write-Part '?' 'Cyan'
+        Write-Part " $Text"
+        Write-Host ''
+    }
+    # -Parts alternates plain note text and a command: note, command, note...
+    function Write-AskNote([string[]]$Parts) {
+        Write-Part '    '
+        for ($i = 0; $i -lt $Parts.Count; $i++) {
+            if ($i % 2) { Write-Part $Parts[$i] 'Cyan' } else { Write-Part $Parts[$i] 'DarkGray' }
+        }
+        Write-Host ''
+    }
+    function Read-AskAnswer([string]$Question) {
+        Write-Part "    $Question "
+        Write-Part '[y/N] ' 'DarkGray'
+        return Read-Host
+    }
 
     # Every failure path ends here. The message is written out in full and then
     # thrown, so the summary line appears twice: once as we wrote it, and once
@@ -445,7 +475,7 @@ This channel is private. Set the credential and run it again:
         $shownVersion = $resolvedVersion
         if (-not $shownVersion) { $shownVersion = $Version }
         Write-Host ''
-        Write-Part "Installing Mapbox CLI $shownVersion" 'White'
+        Write-Part "Installing Mapbox CLI $shownVersion"
         Write-Part " for $platformName" 'DarkGray'
         Write-Host ''
         Write-Host ''
@@ -736,10 +766,14 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
                 $checkOut = (& $destination generate-skills --global --dry-run -o json 2>$null) -join ''
                 if ($LASTEXITCODE -eq 0) {
                     $agentNames = Get-AgentName $checkOut
-                    Write-Ok "A coding agent was detected on this machine: $agentNames."
+                    Write-Ok "Coding agents found: $agentNames."
                     $doAgentSetup = $false
                     if (-not [Console]::IsInputRedirected) {
-                        $answer = Read-Host '  ? Set up the mapbox CLI skill and the Mapbox Agent Skills library for it? [y/N]'
+                        Write-AskTitle 'Set up the mapbox CLI skill and the Mapbox Agent Skills library for them?'
+                        Write-AskNote @('This runs ', 'mapbox generate-skills --global', ' and ', 'mapbox agent-skills install --global', ',')
+                        Write-AskNote @('now or any time later.')
+                        $answer = Read-AskAnswer 'Set them up now?'
+                        $Layout.Indent = '    '
                         if ($answer -match '^(?i:y|yes)$') { $doAgentSetup = $true }
                     }
                     if ($doAgentSetup) {
@@ -777,7 +811,7 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
                                                 Write-Ok "Updated the Mapbox Agent Skills library for: $agentNames."
                                             } else {
                                                 Write-Warn 'Some Mapbox Agent Skills have local changes and were left alone.'
-                                                Write-Host "    Run 'mapbox agent-skills update --global' to review and replace them."
+                                                Write-Detail "Run 'mapbox agent-skills update --global' to review and replace them."
                                             }
                                         }
                                     } finally {
@@ -790,8 +824,97 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
                         }
                     } else {
                         Write-Skip 'Not set up. Run these any time:'
-                        Write-Host '    mapbox generate-skills --global'
-                        Write-Host '    mapbox agent-skills install --global'
+                        Write-Detail 'mapbox generate-skills --global'
+                        Write-Detail 'mapbox agent-skills install --global'
+                    }
+                    $Layout.Indent = '  '
+                }
+            } finally {
+                $ErrorActionPreference = $previousErrorAction
+            }
+        }
+
+        # --- Mapbox MCP servers ----------------------------------------------
+        #
+        # A separate question from the skill above: this registers a hosted
+        # server in the coding agent's own config, next to servers the user
+        # added, rather than writing a directory this CLI owns. `mapbox mcp
+        # install` never replaces an entry that is already there (src/mcp.rs),
+        # so on a reinstall it is only offered when something is left to
+        # register. Same opt-out and same no-console rule as the skill.
+        if ($AgentSetupAllowed) {
+            $previousErrorAction = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                # Fails with mcp_client_not_found when no supported client is
+                # installed, which is most machines: nothing to offer, so
+                # nothing is said.
+                $mcpCheck = (& $destination mcp install --global --dry-run -o json 2>$null) -join ''
+                if ($LASTEXITCODE -eq 0) {
+                    $clientLabels = @{
+                        'claude-code' = 'Claude Code'; 'codex' = 'Codex'
+                        'vscode' = 'VS Code'; 'cursor' = 'Cursor'
+                    }
+                    $mcpClients = @(($mcpCheck | ConvertFrom-Json).results |
+                            Where-Object { $_.status -eq 'would_install' } |
+                            ForEach-Object { $_.client } | Select-Object -Unique |
+                            ForEach-Object { if ($clientLabels.ContainsKey($_)) { $clientLabels[$_] } else { $_ } }) -join ', '
+                    if ($mcpClients) {
+                        $doMcpSetup = $false
+                        if (-not [Console]::IsInputRedirected) {
+                            Write-AskTitle "Add the Mapbox MCP servers to ${mcpClients}?"
+                            Write-AskNote @('This runs ', 'mapbox mcp install --global', ', now or any time later.')
+                            $answer = Read-AskAnswer 'Add them now?'
+                            $Layout.Indent = '    '
+                            if ($answer -match '^(?i:y|yes)$') { $doMcpSetup = $true }
+                        }
+                        if ($doMcpSetup) {
+                            # Each client's own CLI does the registering, and
+                            # Codex's can stop to print a sign-in URL, so
+                            # stderr - where mapbox forwards what they print -
+                            # is left on the console, live. No spinner: a
+                            # second writer to the console is not worth it
+                            # here without a terminal to test it on.
+                            Write-Part $Layout.Indent
+                            Write-Part '...' 'Cyan'
+                            Write-Host ' Adding the Mapbox MCP servers'
+                            $mcpOut = (& $destination mcp install --global -o json) -join ''
+                            $mcpOk = $LASTEXITCODE -eq 0
+                            # One line per server and outcome, clients joined,
+                            # so a server added just now reads differently from
+                            # one that was already there.
+                            $serverLabels = @{ 'mapbox' = 'Mapbox MCP'; 'mapbox-devkit' = 'Mapbox DevKit MCP' }
+                            $rows = @()
+                            try { $rows = @(($mcpOut | ConvertFrom-Json).results) } catch { $rows = @() }
+                            $groups = [ordered]@{}
+                            foreach ($row in $rows) {
+                                $what = if ($serverLabels.ContainsKey($row.server)) { $serverLabels[$row.server] } else { $row.server }
+                                $who = if ($clientLabels.ContainsKey($row.client)) { $clientLabels[$row.client] } else { $row.client }
+                                $key = "$($row.status)|$what"
+                                if (-not $groups.Contains($key)) { $groups[$key] = @() }
+                                $groups[$key] += $who
+                            }
+                            foreach ($key in $groups.Keys) {
+                                $status, $what = $key -split '\|', 2
+                                $who = $groups[$key] -join ', '
+                                switch ($status) {
+                                    'installed' { Write-Ok "Added $what to $who" }
+                                    'already_installed' { Write-Skip "$what was already in $who" }
+                                    'installed_login_incomplete' { Write-Warn "Added $what to $who, but sign-in did not finish" }
+                                    'client_not_found' { Write-Warn "Skipped $what for ${who}: CLI not on PATH" }
+                                    'config_unreadable' { Write-Warn "Skipped $what for ${who}: config could not be read" }
+                                    default { Write-Warn "Could not add $what to $who" }
+                                }
+                            }
+                            if (-not $mcpOk) {
+                                if ($rows.Count -eq 0) { Write-Warn 'Could not add the Mapbox MCP servers.' }
+                                Write-Detail "Run 'mapbox mcp install --global' to see why and try again."
+                            }
+                        } else {
+                            Write-Skip "Mapbox MCP servers not added to $mcpClients. Run this any time:"
+                            Write-Detail 'mapbox mcp install --global'
+                        }
+                        $Layout.Indent = '  '
                     }
                 }
             } finally {
@@ -809,7 +932,7 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
         Write-Part "$installedVersion is ready." 'Green'
         Write-Host ''
         Write-Host ''
-        Write-Part 'Get started' 'White'
+        Write-Part 'Get started'
         Write-Host ''
         foreach ($pair in @(
                 @('mapbox auth login', 'Sign in to your Mapbox account'),

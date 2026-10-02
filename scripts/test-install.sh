@@ -225,6 +225,10 @@ case "\${1:-}" in
         echo '{"code":"no_agent_detected"}' >&2
         exit 1
         ;;
+    mcp)
+        echo '{"code":"mcp_client_not_found"}' >&2
+        exit 1
+        ;;
     *) echo "fake mapbox: \$*" ;;
 esac
 EOF
@@ -279,6 +283,9 @@ make_channel "${CHANNEL}/v0.1.0-dev.abc1234" v0.1.0-dev.abc1234
 # environment variables: MAPBOX_TEST_INSTALL_MODE (ok | already_installed)
 # and MAPBOX_TEST_UPDATE_MODE (clean | dirty, read only once install
 # reports already_installed). Defaults match the plain first-install case.
+# MAPBOX_TEST_MCP_MODE (none | fresh | registered | fail) drives `mcp`;
+# none, no MCP client found, is the default so cases about the skill see
+# only the skill's question.
 AGENT_CHANNEL="${ROOT}/agent-channel"
 mkdir -p "${AGENT_CHANNEL}/latest/build"
 cat >"${AGENT_CHANNEL}/latest/build/mapbox" <<'EOF'
@@ -318,6 +325,38 @@ case "${1:-}" in
                 fi
                 ;;
         esac
+        ;;
+    mcp)
+        mcp_mode="${MAPBOX_TEST_MCP_MODE:-none}"
+        if [ "$mcp_mode" = none ]; then
+            echo '{"code":"mcp_client_not_found"}' >&2
+            exit 1
+        fi
+        is_dry=no
+        for a in "$@"; do [ "$a" = "--dry-run" ] && is_dry=yes; done
+        if [ "$is_dry" = yes ]; then
+            if [ "$mcp_mode" = registered ]; then
+                status=already_installed
+            else
+                status=would_install
+            fi
+            echo '{"results":[{"client":"claude-code","server":"mapbox","status":"'"$status"'"},{"client":"claude-code","server":"mapbox-devkit","status":"'"$status"'"},{"client":"vscode","server":"mapbox","status":"'"$status"'"}]}'
+        elif [ "$mcp_mode" = fail ]; then
+            echo '{"results":[{"client":"claude-code","server":"mapbox","status":"installed"},{"client":"vscode","error":"--add-mcp rejected {\\"name\\":\\"mapbox\\"}","server":"mapbox","status":"failed"}]}'
+            exit 1
+        else
+            # Like a real client's own output: colored, and longer than any
+            # terminal is wide.
+            printf '\033[2mFile modified: /%s/zz-end-of-long-line\033[0m\n' \
+                "$(printf 'a%.0s' $(seq 1 200))" >&2
+            printf 'Open https://auth.example.com/authorize?state=%s&end=zz-url-end\n' \
+                "$(printf 'b%.0s' $(seq 1 120))" >&2
+            echo 'waiting for sign-in' >&2
+            # Mixed on purpose: added now, already there, and a row with an
+            # "error" key, which sorts between "client" and "server" as the
+            # real CLI's serde_json maps do.
+            echo '{"results":[{"client":"codex","error":"OAuth failed","server":"mapbox","status":"installed_login_incomplete"},{"client":"claude-code","server":"mapbox","status":"installed"},{"client":"claude-code","server":"mapbox-devkit","status":"installed"},{"client":"vscode","server":"mapbox","status":"already_installed"},{"client":"vscode","server":"mapbox-devkit","status":"installed"}]}'
+        fi
         ;;
     *) echo "fake mapbox: $*" ;;
 esac
@@ -617,7 +656,7 @@ new_case_env() { # case-name
     MAPBOX_INSTALL_DIR="$BIN_DIR"
     PATH="${CASE_SHIMS}:${SAFE_PATH}"
     unset MAPBOX_CLI_VERSION MAPBOX_CLI_AUTH MAPBOX_INSTALL_TILESETS MAPBOX_TILESETS_CLI
-    unset MAPBOX_CLI_INSTALL_SOURCE MAPBOX_NO_MODIFY_PATH ZDOTDIR
+    unset MAPBOX_CLI_INSTALL_SOURCE MAPBOX_NO_MODIFY_PATH ZDOTDIR XDG_STATE_HOME
     # A HOME of its own, because the installer now writes a PATH line into the
     # shell's profile: no case may touch the real ~/.zshrc. /bin/sh picks
     # ~/.profile, so a developer's own SHELL does not decide which file a case
@@ -632,7 +671,7 @@ new_case_env() { # case-name
     # A developer with either of these set in their own shell would otherwise
     # turn every marker case into a failure that looks like the marker broke.
     unset DISABLE_TELEMETRY MAPBOX_CLI_NO_TELEMETRY
-    unset MAPBOX_CLI_NO_AGENT_SETUP MAPBOX_TEST_INSTALL_MODE MAPBOX_TEST_UPDATE_MODE
+    unset MAPBOX_CLI_NO_AGENT_SETUP MAPBOX_TEST_INSTALL_MODE MAPBOX_TEST_UPDATE_MODE MAPBOX_TEST_MCP_MODE
     export MAPBOX_CLI_BASE_URL MAPBOX_INSTALL_DIR PATH
 }
 
@@ -965,7 +1004,7 @@ export MAPBOX_INSTALL_TILESETS=no
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
 expect_out "Added ${BIN_DIR} to PATH" 'puts the install dir on PATH'
-expect_out 'Open a new terminal' 'and says the new copy wins in a new terminal'
+expect_out 'This terminal started before that change' 'and says the new copy wins in a new terminal'
 # The profile line prepends the install dir, so a new shell runs the copy just
 # installed; telling the reader the other one still wins would be wrong there.
 expect_no_out 'still resolves to' 'without claiming the other one still wins'
@@ -1011,7 +1050,7 @@ expect_in_file "${HOME}/.zshrc" "export PATH=\"${BIN_DIR}:\$PATH\"" 'writes the 
 # The literal ~ is the point: it is a path shown, not one opened.
 # shellcheck disable=SC2088
 expect_out "Added ${BIN_DIR} to PATH in ~/.zshrc" 'says which file it changed'
-expect_out 'Open a new terminal' 'says this shell does not have it yet'
+expect_out 'This terminal started before that change' 'says this shell does not have it yet'
 expect_out "export PATH=\"${BIN_DIR}:\$PATH\"" 'and gives the line for this one'
 expect_no_out 'is not on your PATH' 'does not ask the reader to do it by hand'
 run_piped && status=0 || status=$?
@@ -1060,10 +1099,35 @@ expect_out "${BIN_DIR} is not on your PATH" 'names the directory'
 expect_out "export PATH=\"${BIN_DIR}:\$PATH\"" 'prints the exact line'
 # shellcheck disable=SC2088
 expect_out '~/.zshrc' 'names the file for the shell in use'
-expect_no_out 'Open a new terminal' 'does not claim a new terminal would have it'
+expect_no_out 'This terminal started before that change' 'does not claim a new terminal would have it'
 export MAPBOX_NO_MODIFY_PATH=0
 run_piped && status=0 || status=$?
 expect_file "${HOME}/.zshrc" 'MAPBOX_NO_MODIFY_PATH=0 is not an opt-out'
+
+start 'a mention of the dir that does not put it on PATH is not mistaken for one'
+new_case_env off-path-near-miss
+export SHELL=/bin/zsh
+export MAPBOX_INSTALL_TILESETS=no
+# The $PATH is meant literally: it is profile text.
+# shellcheck disable=SC2016
+printf '# %s is where mapbox goes\nexport PATH="%s2:$PATH"\nalias m=%s/mapbox\n' \
+    "$BIN_DIR" "$BIN_DIR" "$BIN_DIR" >"${HOME}/.zshrc"
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_no_out 'already set up' 'a comment, a longer dir and a file under it are not the dir'
+expect_in_file "${HOME}/.zshrc" "export PATH=\"${BIN_DIR}:\$PATH\"" 'so it adds the line'
+
+if [ "$(uname -s)" = Darwin ]; then
+    start 'bash on macOS writes to an existing .profile rather than shadowing it'
+    new_case_env off-path-bash-profile
+    export SHELL=/bin/bash
+    export MAPBOX_INSTALL_TILESETS=no
+    echo 'export EDITOR=vi' >"${HOME}/.profile"
+    run_piped && status=0 || status=$?
+    expect_status 0 "$status" 'exits 0'
+    expect_in_file "${HOME}/.profile" "export PATH=\"${BIN_DIR}:\$PATH\"" 'writes the line into ~/.profile'
+    expect_no_file "${HOME}/.bash_profile" 'and creates no .bash_profile, which login bash would read instead'
+fi
 
 start 'a terminal gets color and NO_COLOR takes it away'
 new_case_env color
@@ -1264,9 +1328,11 @@ new_case_env agent-opt-out
 export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
 export MAPBOX_INSTALL_TILESETS=no
 export MAPBOX_CLI_NO_AGENT_SETUP=1
+export MAPBOX_TEST_MCP_MODE=fresh
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
 expect_no_out 'coding agent' 'skips the question entirely'
+expect_no_out 'MCP' 'skips the MCP question too'
 
 start 'no terminal: the question is skipped, not answered yes'
 new_case_env agent-no-tty
@@ -1274,7 +1340,7 @@ export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
 export MAPBOX_INSTALL_TILESETS=no
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0 rather than blocking (124 would be a hang)'
-expect_out 'A coding agent was detected on this machine: claude.' 'names the agent'
+expect_out 'Coding agents found: claude.' 'names the agent'
 expect_out 'Not set up. Run these any time:' 'gives the manual commands instead of asking'
 expect_out 'mapbox generate-skills --global' 'the first manual command'
 expect_out 'mapbox agent-skills install --global' 'the second manual command'
@@ -1285,9 +1351,14 @@ export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
 export MAPBOX_INSTALL_TILESETS=no
 run_interactive n && status=0 || status=$?
 expect_status 0 "$status" 'a declined setup is not an install failure'
-expect_out 'A coding agent was detected on this machine: claude.' 'names the agent'
+expect_out 'Coding agents found: claude.' 'names the agent'
 expect_out 'Set up the mapbox CLI skill' 'asks'
+expect_out 'This runs mapbox generate-skills --global and mapbox agent-skills install --global,' 'names the commands it runs'
+expect_out 'now or any time later.' 'says they can be run later instead'
+expect_out 'Set them up now? [y/N]' 'asks about now'
 expect_out 'Not set up. Run these any time:' 'falls back to the manual commands'
+expect_out '    - Not set up.' 'indented under the question it answers'
+expect_out '      mapbox generate-skills --global' 'and its commands under that'
 
 start 'a terminal, answered yes: fresh install'
 new_case_env agent-tty-yes-fresh
@@ -1323,6 +1394,107 @@ expect_out 'Some Mapbox Agent Skills have local changes and were left alone.' \
 expect_out "Run 'mapbox agent-skills update --global' to review and replace them." \
     'points at the command to review it by hand'
 expect_no_out 'Updated the Mapbox Agent Skills library' 'does not claim to have updated it'
+
+# --- Mapbox MCP servers -----------------------------------------------------
+#
+# The agent channel asks about the skill first, so a terminal case types two
+# answers: the skill's, then this one's.
+
+start 'MCP, no terminal: not asked, not added'
+new_case_env mcp-no-tty
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_TEST_MCP_MODE=fresh
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0 rather than blocking (124 would be a hang)'
+expect_no_out 'Add the Mapbox MCP servers' 'does not ask'
+expect_out 'Mapbox MCP servers not added to Claude Code, VS Code.' 'names each client once'
+expect_says "$(grep -c '^  - Mapbox MCP servers not added' "$OUT")" 1 'top level when no question was asked'
+expect_out 'mapbox mcp install --global' 'gives the manual command'
+
+start 'MCP, a terminal, answered yes'
+new_case_env mcp-tty-yes
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_TEST_MCP_MODE=fresh
+run_interactive "$(printf 'n\ny')" && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_out 'Add the Mapbox MCP servers to Claude Code, VS Code?' 'asks, separately from the skill'
+expect_out 'This runs mapbox mcp install --global' 'names the command it runs'
+expect_out 'This runs mapbox mcp install --global, now or any time later.' 'says it can be run later instead'
+expect_out 'Add them now? [y/N]' 'asks about now'
+expect_out 'Added Mapbox MCP to Claude Code' 'reports each server added now'
+expect_out 'waiting for sign-in' 'shows the command output live'
+expect_out 'zz-url-end' 'prints a URL in full, wider than the screen, so it can be opened'
+expect_no_out 'zz-end-of-long-line' 'cut to the screen, so the spinner can redraw in place'
+expect_out "$(printf '\033[?7l')" 'turns line wrap off while the spinner runs'
+expect_out "$(printf '\033[?7h')" 'and back on after'
+expect_out '    * Added Mapbox MCP to Claude Code' 'indented under the question it answers'
+expect_out 'Added Mapbox DevKit MCP to Claude Code, VS Code' 'one line per server and outcome, clients joined'
+expect_out 'Mapbox MCP was already in VS Code' 'tells an existing entry apart from a new one'
+expect_no_out 'Added Mapbox MCP to VS Code' 'does not claim to have added an existing entry'
+expect_out 'Added Mapbox MCP to Codex, but sign-in did not finish' 'reads a row that carries an error'
+install_log="${HOME}/.local/state/mapbox-cli/install.log"
+expect_file "$install_log" 'writes an install log'
+expect_out "Install log: ~/.local/state/mapbox-cli/install.log" 'and says where it is'
+expect_order 'Added Mapbox MCP to Claude Code' 'Install log:' 'after the steps it records'
+expect_order 'Install log:' 'is ready.' 'and before the summary'
+has() { if grep -qF -- "$1" "$install_log"; then echo yes; else echo no; fi; }
+expect_says "$(has 'mcp install --global -o json')" yes 'the log names each command it ran'
+expect_says "$(has 'OAuth failed')" yes 'and keeps its full output, error included'
+expect_says "$(has 'zz-end-of-long-line')" yes 'and a line too long for the screen, in full'
+expect_says "$(has 'ok: Added Mapbox MCP to Claude Code')" yes 'and every step line'
+run_interactive "$(printf 'n\nn')" && status=0 || status=$?
+expect_file "${install_log}.1" 'a second run keeps the previous log'
+# In color this time, so the screen has escape codes for the log to drop.
+unset NO_COLOR
+run_interactive "$(printf 'n\nn')" && status=0 || status=$?
+NO_COLOR=1
+export NO_COLOR
+expect_out "$(printf '\033[')" 'the screen is in color'
+expect_says "$(grep -c "$(printf '\033')" "$install_log")" 0 'the log has no color codes'
+expect_order 'Set up the mapbox CLI skill' 'Add the Mapbox MCP servers' 'after the skill question'
+
+start 'MCP, a terminal, answered no'
+new_case_env mcp-tty-no
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_TEST_MCP_MODE=fresh
+run_interactive "$(printf 'n\nn')" && status=0 || status=$?
+expect_status 0 "$status" 'a declined setup is not an install failure'
+expect_out 'Mapbox MCP servers not added to Claude Code, VS Code.' 'says so'
+expect_no_out 'Added the Mapbox MCP servers' 'adds nothing'
+
+start 'MCP, everything already registered: not asked again'
+new_case_env mcp-registered
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_TEST_MCP_MODE=registered
+run_interactive n && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_no_out 'MCP' 'says nothing when there is nothing to add'
+
+start 'MCP, a failed registration is reported, not fatal'
+new_case_env mcp-fail
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_TEST_MCP_MODE=fail
+run_interactive "$(printf 'n\ny')" && status=0 || status=$?
+expect_status 0 "$status" 'mapbox itself is still installed'
+expect_out 'Could not add Mapbox MCP to VS Code' 'reports which one failed'
+expect_out 'Added Mapbox MCP to Claude Code' 'and still reports the one that worked'
+expect_out "Run 'mapbox mcp install --global' to see why and try again." 'points at the command'
+expect_out 'Could not add Mapbox MCP to VS Code' 'a failure whose error text has braces is still named'
+
+start 'MCP, TERM=dumb: no spinner escape codes'
+new_case_env mcp-dumb
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_TEST_MCP_MODE=fresh
+TERM=dumb run_interactive "$(printf 'n\ny')" && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_out 'Added Mapbox MCP to Claude Code' 'still adds them'
+expect_no_out "$(printf '\033[?25l')" 'without hiding the cursor or redrawing in place'
 
 # --- result ----------------------------------------------------------------
 

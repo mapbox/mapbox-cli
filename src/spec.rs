@@ -497,13 +497,6 @@ const UNSUPPORTED_OPERATIONS: &[(&str, &str, &str)] = &[
     ("accounts", "createToken", "tokens:write"),
     ("accounts", "updateToken", "tokens:write"),
     ("accounts", "deleteToken", "tokens:write"),
-    // Confirmed 2026-09-24 with a direct POST /oauth/register against
-    // production requesting `user-feedback:write` alongside two scopes
-    // already known registrable — the response's granted `scope` carried
-    // the other two and silently dropped this one, the same shape
-    // `tokens:write` above already documents. `user-feedback:read`
-    // (list/get) is unaffected and already in `DEFAULT_SCOPES_LIST`.
-    ("feedback", "createFeedbackItem", "user-feedback:write"),
 ];
 
 fn unsupported_scope_for(service_name: &str, operation_id: &str) -> Option<&'static str> {
@@ -1960,37 +1953,24 @@ paths:
         assert!(hidden.is_empty());
     }
 
-    /// `createFeedbackItem` needs `user-feedback:write`, confirmed
-    /// unregistrable via a direct `POST /oauth/register` against
-    /// production — see `UNSUPPORTED_OPERATIONS`'s own comment for that.
-    /// `list` and `get` need only `user-feedback:read`, already in
-    /// `DEFAULT_SCOPES_LIST`, so they must stay reachable.
+    /// All three are commands: `list` and `get` need `user-feedback:read`
+    /// and `create` needs `user-feedback:write`, both of which a login asks
+    /// for.
     #[test]
-    fn feedback_create_is_unreachable_but_list_and_get_are_not() {
+    fn every_feedback_operation_is_exposed() {
         let spec = parse_spec(
             "feedback",
             include_str!("../custom-openapi/feedback/openapi/feedback.yaml"),
         )
         .expect("feedback.yaml parses");
 
-        let create = spec
-            .operations
-            .iter()
-            .find(|op| op.command_path == ["create-feedback-item"])
-            .expect("the create-feedback-item operation exists in the spec");
-        assert!(
-            create.disabled_scope.is_some(),
-            "createFeedbackItem must be disabled — user-feedback:write isn't registrable"
-        );
-        assert!(!create.is_exposed());
-
-        for path in [["list"], ["get"]] {
+        for path in [["list"], ["get"], ["create"]] {
             let op = spec
                 .operations
                 .iter()
                 .find(|op| op.command_path == path)
                 .unwrap_or_else(|| panic!("the {path:?} operation exists in the spec"));
-            assert!(op.is_exposed(), "{path:?} needs only user-feedback:read");
+            assert!(op.is_exposed(), "{path:?} must be a command");
         }
     }
 }

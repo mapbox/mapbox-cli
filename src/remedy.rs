@@ -226,11 +226,14 @@ fn for_forbidden(remedy: Remedy, body: &str) -> Remedy {
         .with_doc(Some(TOKENS_DOC))
 }
 
-/// The scope a 403 names: "This API requires a token with styles:download
-/// scope." Checked against the shape of a scope, since it is echoed into
-/// advice the user may paste.
+/// The scope a 403 names. The shared auth middleware says "This API
+/// requires a token with styles:download scope."; the Feedback API says
+/// "Access token does not have user-feedback:write scope". Checked against
+/// the shape of a scope, since it is echoed into advice the user may paste.
 pub fn missing_scope(body: &str) -> Option<&str> {
-    let (_, rest) = body.split_once("requires a token with ")?;
+    let (_, rest) = body
+        .split_once("requires a token with ")
+        .or_else(|| body.split_once("does not have "))?;
     let (scope, _) = rest.split_once(" scope")?;
     let well_formed = scope.contains(':')
         && scope
@@ -653,6 +656,10 @@ paths:
         assert_eq!(missing_scope("requires a token with `rm -rf` scope"), None);
         assert_eq!(missing_scope("requires a token with admin scope"), None);
         assert_eq!(missing_scope("Forbidden"), None);
+        assert_eq!(
+            missing_scope("Access token does not have user-feedback:write scope"),
+            Some("user-feedback:write")
+        );
     }
 
     /// A status nobody has written advice for still gets the page. Inventing

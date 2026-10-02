@@ -162,6 +162,10 @@ class Program {
             System.Console.Error.WriteLine("{\"code\":\"no_agent_detected\"}");
             return 1;
         }
+        if (a0 == "mcp") {
+            System.Console.Error.WriteLine("{\"code\":\"mcp_client_not_found\"}");
+            return 1;
+        }
         System.Console.WriteLine("$VersionText");
         return 0;
     }
@@ -178,6 +182,10 @@ case "`${1:-}" in
         echo '{"code":"no_agent_detected"}' >&2
         exit 1
         ;;
+    mcp)
+        echo '{"code":"mcp_client_not_found"}' >&2
+        exit 1
+        ;;
     *) echo '$VersionText' ;;
 esac
 "@
@@ -192,7 +200,8 @@ esac
 # variables so the same binary covers every branch: MAPBOX_TEST_INSTALL_MODE
 # (ok | already_installed) and MAPBOX_TEST_UPDATE_MODE (clean | dirty, read
 # only once install reports already_installed) - the same two knobs
-# test-install.sh's agent-channel fixture uses.
+# test-install.sh's agent-channel fixture uses. MAPBOX_TEST_MCP_MODE (none |
+# fresh) drives `mcp`; only its dry run is reachable from here, see below.
 function New-AgentFakeBinary([string]$Path, [string]$VersionText) {
     $ErrorActionPreference = 'Continue'
     if ($OnWindows) {
@@ -242,6 +251,14 @@ class Program {
                 return 0;
             }
         }
+        if (a0 == "mcp") {
+            if ((Environment.GetEnvironmentVariable("MAPBOX_TEST_MCP_MODE") ?? "none") == "none") {
+                Console.Error.WriteLine("{\"code\":\"mcp_client_not_found\"}");
+                return 1;
+            }
+            Console.WriteLine("{\"results\":[{\"client\":\"claude-code\",\"server\":\"mapbox\",\"status\":\"would_install\"},{\"client\":\"claude-code\",\"server\":\"mapbox-devkit\",\"status\":\"would_install\"},{\"client\":\"vscode\",\"server\":\"mapbox\",\"status\":\"would_install\"}]}");
+            return 0;
+        }
         Console.WriteLine("$VersionText");
         return 0;
     }
@@ -263,6 +280,13 @@ case "`${1:-}" in
             fi
         done
         echo '{"written":true}'
+        ;;
+    mcp)
+        if [ "`${MAPBOX_TEST_MCP_MODE:-none}" = none ]; then
+            echo '{"code":"mcp_client_not_found"}' >&2
+            exit 1
+        fi
+        echo '{"results":[{"client":"claude-code","server":"mapbox","status":"would_install"},{"client":"claude-code","server":"mapbox-devkit","status":"would_install"},{"client":"vscode","server":"mapbox","status":"would_install"}]}'
         ;;
     agent-skills)
         sub="`$2"
@@ -532,6 +556,7 @@ function New-CaseEnv([string]$Name) {
     Clear-Env 'MAPBOX_CLI_NO_AGENT_SETUP'
     Clear-Env 'MAPBOX_TEST_INSTALL_MODE'
     Clear-Env 'MAPBOX_TEST_UPDATE_MODE'
+    Clear-Env 'MAPBOX_TEST_MCP_MODE'
     # What install.ps1 reads to decide where it is running. Set explicitly so
     # the same case means the same thing on Windows and on the machine this is
     # written on.
@@ -608,7 +633,9 @@ try {
     Expect-File (Join-Path $script:BinDir 'mapbox.exe') 'mapbox.exe is in the install dir'
     Expect-Out 'Installed mapbox 9.9.9' 'reports the version it ran, not the one it was promised'
     Expect-Out (Join-Path $script:BinDir 'mapbox.exe') 'reports the path'
-    Expect-Out 'channel  latest (9.9.9)' 'names the channel and the version it resolved'
+    Expect-Out 'Installing Mapbox CLI 9.9.9' 'names the version it resolved'
+    Expect-Out 'mapbox 9.9.9 is ready.' 'ends by saying it is ready'
+    Expect-Out 'mapbox auth login' 'names the first command to run'
     Expect-NoOut '.mapbox.install.' 'leaves no staging file behind'
     $staging = Get-ChildItem -LiteralPath $script:BinDir -Force | Where-Object { $_.Name -ne 'mapbox.exe' }
     Expect-Equal '' ([string]($staging | ForEach-Object { $_.Name })) 'nothing else is left in the install dir'
@@ -740,7 +767,7 @@ try {
     Invoke-Installer
     Expect-Status 0 'exits 0'
     Expect-Out 'Installed mapbox 0.1.0-dev.abc1234' 'installs that exact version'
-    Expect-Out "channel  $PinnedVersion" 'names the channel it resolved'
+    Expect-Out 'Installing Mapbox CLI 0.1.0-dev.abc1234' 'names the version it resolved'
 
     # The channel's directories carry a leading `v`. Every place a person
     # reads a version from (`mapbox --version`, CHANGELOG.md, Cargo.toml)
@@ -756,7 +783,7 @@ try {
     Invoke-Installer
     Expect-Status 0 'exits 0'
     Expect-Out 'Installed mapbox 0.1.0-dev.abc1234' 'installs that exact version'
-    Expect-Out "channel  $PinnedVersion" 'and resolved the v-prefixed directory'
+    Expect-Out 'Installing Mapbox CLI 0.1.0-dev.abc1234' 'and resolved the v-prefixed directory'
 
     # `latest` starts with a letter, so nothing is prepended. Getting this
     # wrong would break the default install rather than an edge case.
@@ -765,7 +792,7 @@ try {
     $env:MAPBOX_CLI_VERSION = 'latest'
     Invoke-Installer
     Expect-Status 0 'exits 0'
-    Expect-Out 'channel  latest' 'asked for latest, not vlatest'
+    Expect-Out 'Installing Mapbox CLI 9.9.9' 'asked for latest, not vlatest'
 
     Start-Case 'reinstalling reports the version it replaced'
     New-CaseEnv 'upgrade'
@@ -1027,7 +1054,7 @@ try {
     $env:MAPBOX_CLI_BASE_URL = "$($open.BaseUrl)/agent-channel"
     Invoke-Installer
     Expect-Status 0 'exits 0'
-    Expect-Out 'A coding agent was detected on this machine: claude.' 'names the agent'
+    Expect-Out 'Coding agents found: claude.' 'names the agent'
     Expect-Out 'Not set up. Run these any time:' 'gives the manual commands instead of asking'
     Expect-Out 'mapbox generate-skills --global' 'the first manual command'
     Expect-Out 'mapbox agent-skills install --global' 'the second manual command'
@@ -1039,6 +1066,27 @@ try {
     Invoke-Installer
     Expect-Status 0 'exits 0'
     Expect-NoOut 'coding agent' 'skips the question entirely'
+
+    Start-Case 'MCP, no console: not asked, not added'
+    New-CaseEnv 'mcp-no-console'
+    $env:MAPBOX_CLI_BASE_URL = "$($open.BaseUrl)/agent-channel"
+    $env:MAPBOX_TEST_MCP_MODE = 'fresh'
+    Invoke-Installer
+    Expect-Status 0 'exits 0'
+    Expect-NoOut 'Add the Mapbox MCP servers' 'does not ask'
+    Expect-Out 'Mapbox MCP servers not added to Claude Code, VS Code.' 'names each client once'
+    Expect-Out 'mapbox mcp install --global' 'gives the manual command'
+
+    Start-Case 'MAPBOX_CLI_NO_AGENT_SETUP skips the MCP question too'
+    New-CaseEnv 'mcp-opt-out'
+    $env:MAPBOX_CLI_BASE_URL = "$($open.BaseUrl)/agent-channel"
+    $env:MAPBOX_TEST_MCP_MODE = 'fresh'
+    $env:MAPBOX_CLI_NO_AGENT_SETUP = '1'
+    Invoke-Installer
+    Expect-Status 0 'exits 0'
+    # Not just 'MCP': -like ignores case, and this case's own directory,
+    # printed in the PATH note above, is named mcp-opt-out.
+    Expect-NoOut 'Mapbox MCP servers' 'says nothing about it'
 } finally {
     if ($open) { Stop-ChannelServer $open }
     if ($gated) { Stop-ChannelServer $gated }

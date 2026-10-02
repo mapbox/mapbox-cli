@@ -41,11 +41,21 @@ INSTALL_DIR="${MAPBOX_INSTALL_DIR:-$HOME/.local/bin}"
 # variable rather than three literals, the way install.ps1 keeps its $Repo:
 # this script is served on its own, so a repository rename has to be a single
 # edit here and a single edit there.
-REPO='https://github.com/mapbox/cli'
+REPO='https://github.com/mapbox/mapbox-cli'
 
 # yes or no to answer the Tilesets CLI prompt ahead of time. Unset means ask
 # when there is a terminal, and no when there isn't.
 INSTALL_TILESETS="${MAPBOX_INSTALL_TILESETS:-}"
+
+# The install dir goes on PATH through the shell's profile unless this is set,
+# the same switch, read the same way, as install.ps1's registry edit: a fresh
+# Mac has no ~/.local/bin on PATH, so without it nearly every first install
+# ends with a `command not found`.
+MODIFY_PATH=yes
+case "${MAPBOX_NO_MODIFY_PATH:-}" in
+    '' | 0 | no | false) ;;
+    *) MODIFY_PATH=no ;;
+esac
 
 # Only set if you need a non-production channel. Export
 # MAPBOX_CLI_AUTH=user:password to authenticate to it — the same credential
@@ -139,10 +149,245 @@ fetch() {
     fi
 }
 
+# --- Presentation ----------------------------------------------------------
+#
+# Color under the rules src/output/style.rs applies to the CLI itself: a
+# terminal, no NO_COLOR (empty counts as unset), and not TERM=dumb. The palette
+# is the terminal's own, so it reads on light and dark backgrounds alike.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
+    BOLD="$(printf '\033[1m')"
+    DIM="$(printf '\033[2m')"
+    GREEN="$(printf '\033[32m')"
+    YELLOW="$(printf '\033[33m')"
+    RED="$(printf '\033[31m')"
+    ACCENT="$(printf '\033[94m')"
+    RESET="$(printf '\033[0m')"
+else
+    BOLD='' DIM='' GREEN='' YELLOW='' RED='' ACCENT='' RESET=''
+fi
+
+# A check mark in a C locale prints as mojibake, so fall back to ASCII unless
+# the locale says UTF-8.
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *UTF-8* | *utf-8* | *UTF8* | *utf8*)
+        MARK_OK='✓' MARK_SKIP='–' MARK_WARN='!' MARK_ASK='?' MARK_WAIT='…'
+        SPIN_FRAMES='⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏'
+        ;;
+    *)
+        MARK_OK='*' MARK_SKIP='-' MARK_WARN='!' MARK_ASK='?' MARK_WAIT='.'
+        SPIN_FRAMES='- \\ | /'
+        ;;
+esac
+
+# The install log (see "Install log" below), set once it can be written.
+INSTALL_LOG=''
+ESC="$(printf '\033')"
+# Appends to the install log, without color codes. Never fails the install.
+log() {
+    [ -n "$INSTALL_LOG" ] || return 0
+    printf '%s\n' "$*" | sed "s/${ESC}\\[[0-9;]*m//g" >>"$INSTALL_LOG" 2>/dev/null || true
+}
+
+# Where a step line starts. A question's answers are its children, so a step
+# that asked one sets this two deeper while it reports, then puts it back.
+STEP_INDENT='  '
+
+step_ok() { printf '%s%s%s%s %s\n' "$STEP_INDENT" "$GREEN" "$MARK_OK" "$RESET" "$*"; log "ok: $*"; }
+step_skip() { printf '%s%s%s%s %s\n' "$STEP_INDENT" "$DIM" "$MARK_SKIP" "$RESET" "$*"; log "skip: $*"; }
+step_warn() { printf '%s%s%s%s %s\n' "$STEP_INDENT" "$YELLOW" "$MARK_WARN" "$RESET" "$*"; log "warn: $*"; }
+# A line of detail under the step line before it, aligned with its text.
+step_detail() { printf '%s  %s\n' "$STEP_INDENT" "$*"; log "  $*"; }
+
+# Runs a command for its exit status only; what it prints goes to the log.
+log_run() { # command...
+    log "\$ $*"
+    if [ -n "$INSTALL_LOG" ]; then
+        if "$@" </dev/null >>"$INSTALL_LOG" 2>&1; then lr_status=0; else lr_status=$?; fi
+    else
+        if "$@" </dev/null >/dev/null 2>&1; then lr_status=0; else lr_status=$?; fi
+    fi
+    log "(exit ${lr_status})"
+    return "$lr_status"
+}
+
+# Runs a command for its stdout, which it prints for the caller to capture;
+# stdout and stderr both go to the log as well.
+log_capture() { # command...
+    log "\$ $*"
+    lc_err="${WORK_DIR}/log-capture.err"
+    if lc_out="$("$@" </dev/null 2>"$lc_err")"; then lc_status=0; else lc_status=$?; fi
+    [ -z "$lc_out" ] || log "$lc_out"
+    if [ -s "$lc_err" ]; then log "$(cat "$lc_err")"; fi
+    log "(exit ${lc_status})"
+    printf '%s' "$lc_out"
+    return "$lc_status"
+}
+
+# A question reads in three layers: the question itself in bold, what
+# answering it does dimmed under it, and the command it runs in the accent
+# color, so the eye lands on the question and the command and can skip the
+# rest.
+ask_title() { printf '  %s%s%s%s %s%s%s\n' "$ACCENT" "$BOLD" "$MARK_ASK" "$RESET" "$BOLD" "$*" "$RESET"; }
+ask_note() { printf '    %s%s%s\n' "$DIM" "$*" "$RESET"; }
+# Inside an ask_note: the command in the accent color, then back to dim.
+ask_cmd() { printf '%s%s%s%s' "$RESET" "$ACCENT" "$1" "$RESET$DIM"; }
+
+# Runs a command that can take a while and talks while it does (pipx, pip, a
+# coding agent's own `mcp add`). At a terminal, a spinner and the label sit on
+# one line with the command's latest output dimmed under it, both erased when
+# it ends; elsewhere the label is printed once. Everything goes to <log>
+# either way, for a caller to show in full when it is the diagnosis.
+# <stdout-file>, when not empty, takes the command's stdout instead, for a
+# caller that parses it.
+# The child's own colors and control characters would throw off both the
+# width and the redraw, so only its text is shown.
+run_live_text() {
+    sed "s/${ESC}\\[[0-9;?]*[A-Za-z]//g" | tr '\t' ' ' | tr -d '\000-\010\013-\037\177'
+}
+
+# A line with a URL in it is usually one to open — a sign-in page — and the
+# spinner would cut it to the screen and erase it at the end. So each new one
+# is printed in full above the spinner, with line wrap back on for it, and
+# stays there.
+run_live_urls() {
+    run_total="$(wc -l <"$run_log" 2>/dev/null | tr -d ' ')"
+    [ -n "$run_total" ] && [ "$run_total" -gt "$run_seen" ] || return 0
+    sed -n "$((run_seen + 1)),${run_total}p" "$run_log" | grep -E 'https?://' | run_live_text |
+        while IFS= read -r run_url; do
+            printf '\r\033[2K\n\033[2K\033[1A\r\033[?7h%s  %s\n\033[?7l' "$STEP_INDENT" "$run_url"
+        done
+    run_seen="$run_total"
+}
+
+# One frame of run_live: the spinner and label, then the log's latest line.
+run_live_draw() {
+    run_live_urls
+    run_line="$(tail -n 1 "$run_log" 2>/dev/null | run_live_text | cut -c "1-${run_width}")"
+    printf '\r\033[2K%s%s%s%s %s\n\033[2K%s  %s%s%s\033[1A\r' \
+        "$STEP_INDENT" "$ACCENT" "$run_frame" "$RESET" "$run_label" "$STEP_INDENT" "$DIM" "$run_line" "$RESET"
+}
+
+run_live() { # label log stdout-file command...
+    run_label="$1" run_log="$2" run_stdout="$3"
+    shift 3
+    : >"$run_log"
+    [ -n "$run_stdout" ] || run_stdout="$run_log"
+    # A dumb terminal would print the cursor movement as text, every tick.
+    if [ ! -t 1 ] || [ "${TERM:-}" = dumb ]; then
+        printf '%s%s %s\n' "$STEP_INDENT" "$MARK_WAIT" "$run_label"
+        if [ "$run_stdout" = "$run_log" ]; then
+            if "$@" </dev/null >>"$run_log" 2>&1; then run_status=0; else run_status=$?; fi
+        else
+            if "$@" </dev/null >"$run_stdout" 2>>"$run_log"; then run_status=0; else run_status=$?; fi
+        fi
+        run_live_log "$@"
+        return "$run_status"
+    fi
+
+    # A line that wraps can no longer be redrawn in place — the spinner moves
+    # up one line to start each frame, so a wrapped one pushes every frame
+    # after it a line further down. So the log line is cut to what fits after
+    # its indent, and line wrap is off while the spinner runs, which also
+    # covers a character drawn two columns wide (pipx's emoji) that a cut by
+    # character count lets through.
+    run_width="$(stty size </dev/tty 2>/dev/null | cut -d' ' -f2)"
+    # A pty with no size set, such as script(1)'s, reports 0: unknown, not narrow.
+    case "$run_width" in
+        '' | 0 | *[!0-9]*) run_width=80 ;;
+    esac
+    run_width=$((run_width - ${#STEP_INDENT} - 3))
+    [ "$run_width" -ge 20 ] || run_width=20
+    # A sleep without fractions would make 0.1 an error and the loop a busy
+    # one, so fall back to whole seconds.
+    run_delay=0.1
+    sleep "$run_delay" 2>/dev/null || run_delay=1
+
+    # One writer for both lines: the spinner redraws them from the log until
+    # the flag file goes, which cleanup also removes on an interrupt.
+    run_flag="${WORK_DIR}/run-live.running"
+    : >"$run_flag"
+    # The spinner parks the cursor at the start of its line, where a visible
+    # one sits on top of the indent, so it is hidden too.
+    printf '\033[?25l\033[?7l'
+    TERM_MODES_CHANGED=yes
+    (
+        run_frame="${SPIN_FRAMES%% *}"
+        run_seen=0
+        while [ -f "$run_flag" ]; do
+            # Word splitting is the point: one frame per word.
+            # shellcheck disable=SC2086
+            for run_frame in $SPIN_FRAMES; do
+                [ -f "$run_flag" ] || break
+                run_live_draw
+                sleep "$run_delay"
+            done
+        done
+        # Once more after the command ends, so output from one that finished
+        # between two ticks is still drawn rather than skipped.
+        run_live_draw
+    ) &
+    run_spinner=$!
+
+    if [ "$run_stdout" = "$run_log" ]; then
+        if "$@" </dev/null >>"$run_log" 2>&1; then run_status=0; else run_status=$?; fi
+    else
+        if "$@" </dev/null >"$run_stdout" 2>>"$run_log"; then run_status=0; else run_status=$?; fi
+    fi
+
+    rm -f "$run_flag"
+    wait "$run_spinner" 2>/dev/null || true
+    # Erase the label line and the log line under it.
+    printf '\r\033[2K\n\033[2K\033[1A\r\033[?7h\033[?25h'
+    TERM_MODES_CHANGED=no
+    run_live_log "$@"
+    return "$run_status"
+}
+
+# What run_live's command printed, and how it ended, into the install log.
+run_live_log() { # command...
+    log "\$ $*"
+    if [ -s "$run_log" ]; then log "$(cat "$run_log")"; fi
+    if [ "$run_stdout" != "$run_log" ] && [ -s "$run_stdout" ]; then log "$(cat "$run_stdout")"; fi
+    log "(exit ${run_status})"
+}
+
+# For display only: a path under $HOME reads shorter as ~/…, and nothing
+# shown this way is ever opened.
+tildify() {
+    # shellcheck disable=SC2088
+    case "$1" in
+        "$HOME") printf '~' ;;
+        "$HOME"/*) printf '~/%s' "${1#"$HOME"/}" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
 die() {
-    echo "mapbox-cli: $*" >&2
+    echo "${RED}mapbox-cli:${RESET} $*" >&2
+    log "error: $*"
     exit 1
 }
+
+# --- Install log -------------------------------------------------------------
+#
+# Each run is recorded, so an error seen only in passing — run_live erases a
+# command's output once it ends — can be read again afterwards: every step
+# line, and every command run after the binary is in place with its full
+# output and exit status. The previous run's log is kept beside it as
+# install.log.1. Local only: nothing reads or sends it. A directory that cannot
+# be written leaves the install unlogged rather than failed.
+INSTALL_LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/mapbox-cli"
+if mkdir -p "$INSTALL_LOG_DIR" 2>/dev/null; then
+    if [ -f "${INSTALL_LOG_DIR}/install.log" ]; then
+        mv -f "${INSTALL_LOG_DIR}/install.log" "${INSTALL_LOG_DIR}/install.log.1" 2>/dev/null || true
+    fi
+    if { printf 'mapbox-cli install.sh, %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >"${INSTALL_LOG_DIR}/install.log"; } 2>/dev/null; then
+        INSTALL_LOG="${INSTALL_LOG_DIR}/install.log"
+    fi
+fi
+log "system: $(uname -srm 2>/dev/null)"
+log "install dir: ${INSTALL_DIR}"
+log "SHELL: ${SHELL:-}"
 
 detect_target() {
     os="$(uname -s)"
@@ -349,6 +594,13 @@ STAGED=''
 # reads the body as both uncalled (SC2329) and unreachable (SC2317).
 # shellcheck disable=SC2317,SC2329
 cleanup() {
+    # run_live hides the cursor and turns off line wrap while its spinner
+    # runs; an interrupt must not leave the user's terminal that way.
+    if [ "${TERM_MODES_CHANGED:-no}" = yes ]; then
+        # Stopped first, or it can draw again after the lines are erased.
+        kill "${run_spinner:-}" 2>/dev/null || true
+        printf '\r\033[2K\n\033[2K\033[1A\r\033[?7h\033[?25h'
+    fi
     if [ -n "$STAGED" ] && [ -e "$STAGED" ]; then
         rm -f "$STAGED"
     fi
@@ -369,9 +621,30 @@ WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mapbox-cli.XXXXXX")" ||
 artifact_url="${BASE_URL}/${VERSION}/${file}"
 tarball="${WORK_DIR}/${file##*/}"
 
-echo "Downloading ${artifact_url}"
-fetch -o "$tarball" "$artifact_url" ||
-    die "could not download ${artifact_url}"
+case "$TARGET" in
+    aarch64-apple-darwin) platform_name='macOS (Apple Silicon)' ;;
+    x86_64-apple-darwin) platform_name='macOS (Intel)' ;;
+    aarch64-*-linux-*) platform_name='Linux (arm64)' ;;
+    *) platform_name='Linux (x86_64)' ;;
+esac
+echo ""
+echo "${BOLD}Installing Mapbox CLI ${resolved_version:-$VERSION}${RESET} ${DIM}for ${platform_name}${RESET}"
+echo ""
+
+# A progress bar when someone is watching, and only then: in a log, curl's
+# carriage-return redraws are noise. Once the download is done the bar has
+# nothing left to say, so it is erased and the step line takes its place.
+if [ -t 2 ]; then
+    if [ -n "$AUTH" ]; then
+        curl -fSL --progress-bar -A "$USER_AGENT" -u "$AUTH" -o "$tarball" "$artifact_url"
+    else
+        curl -fSL --progress-bar -A "$USER_AGENT" -o "$tarball" "$artifact_url"
+    fi || die "could not download ${artifact_url}"
+    printf '\033[1A\033[2K' >&2
+else
+    fetch -o "$tarball" "$artifact_url" ||
+        die "could not download ${artifact_url}"
+fi
 
 # Before unpacking, not after: an artifact that fails here never gets the
 # chance to write anything, anywhere.
@@ -389,6 +662,12 @@ ${REPO}/issues
 EOF
     exit 1
 fi
+
+size_bytes="$(wc -c <"$tarball" | tr -d ' ')"
+size="$(awk -v b="$size_bytes" 'BEGIN {
+    if (b >= 1048576) printf "%.1f MB", b / 1048576; else printf "%d KB", (b + 1023) / 1024
+}')"
+step_ok "Downloaded ${file##*/} ${DIM}(${size}, SHA-256 verified)${RESET}"
 
 tar -xzf "$tarball" -C "$WORK_DIR" ||
     die "could not unpack ${file}"
@@ -434,6 +713,7 @@ mv -f "$STAGED" "${INSTALL_DIR}/mapbox" ||
     die "could not install into ${INSTALL_DIR}"
 STAGED=''
 
+
 # Report what the binary says about itself rather than what the manifest
 # claimed: an artifact built for another platform fails here and nowhere
 # earlier.
@@ -441,27 +721,14 @@ installed_version="$("${INSTALL_DIR}/mapbox" --version 2>/dev/null </dev/null ||
 [ -n "$installed_version" ] ||
     die "installed ${INSTALL_DIR}/mapbox, but it does not run here. The artifact may be built for a platform other than ${TARGET}."
 
-echo ""
-echo "Installed ${installed_version}"
-echo "  path     ${INSTALL_DIR}/mapbox"
-echo "  channel  ${VERSION} (${resolved_version})"
 if [ -n "$previous_version" ] && [ "$previous_version" != "$installed_version" ]; then
-    echo "  replaced ${previous_version}"
+    step_ok "Installed ${installed_version} to $(tildify "${INSTALL_DIR}/mapbox") ${DIM}(replaced ${previous_version})${RESET}"
+else
+    step_ok "Installed ${installed_version} to $(tildify "${INSTALL_DIR}/mapbox")"
 fi
 
-# Said once, here, rather than on every future command: someone piping this
-# into `sh` is not going to read the man page before their first run.
-# Skipped when telemetry is already off, since there's nothing to opt out of.
-if telemetry_allowed; then
-    cat <<EOF
-
-Mapbox CLI collects telemetry by default. To disable it, set
-MAPBOX_CLI_NO_TELEMETRY=1 before running CLI commands.
-
-Learn more: https://github.com/mapbox/mapbox-cli#privacy
-EOF
-fi
-
+# --- PATH ------------------------------------------------------------------
+#
 # Two separate things can be wrong, and both are worth saying: the install dir
 # may not be on PATH at all, and even when it is, a `mapbox` from somewhere
 # else may still come first.
@@ -470,36 +737,87 @@ case ":${PATH}:" in
     *) install_dir_on_path=no ;;
 esac
 
+# $HOME stays literal in the line a profile gets, so a dotfile synced to a
+# machine with another username still points at the right place.
+case "$INSTALL_DIR" in
+    "$HOME"/*) path_dir="\$HOME/${INSTALL_DIR#"$HOME"/}" ;;
+    *) path_dir="$INSTALL_DIR" ;;
+esac
+path_line="export PATH=\"${path_dir}:\$PATH\""
+case "${SHELL:-}" in
+    */fish)
+        profile="$HOME/.config/fish/config.fish"
+        path_line="fish_add_path \"${path_dir}\""
+        ;;
+    */zsh) profile="${ZDOTDIR:-$HOME}/.zshrc" ;;
+    */bash)
+        # macOS Terminal opens login shells, which read .bash_profile and
+        # never .bashrc — or rather the first of .bash_profile, .bash_login
+        # and .profile that exists, and only that one. Creating a
+        # .bash_profile next to someone's .profile would stop bash reading
+        # their .profile at all, so an existing one wins.
+        if [ "$(uname -s)" = Darwin ]; then
+            profile="$HOME/.bash_profile"
+            for candidate in .bash_profile .bash_login .profile; do
+                if [ -f "$HOME/$candidate" ]; then
+                    profile="$HOME/$candidate"
+                    break
+                fi
+            done
+        else
+            profile="$HOME/.bashrc"
+        fi
+        ;;
+    *) profile="$HOME/.profile" ;;
+esac
+
+# Whether a profile line other than a comment names <dir> as a whole path,
+# not as a prefix of another (/x/bin in /x/bin2) or a word inside one. Catches
+# a line the user wrote by hand, in either spelling of the directory.
+profile_names_dir() { # profile_names_dir <profile> <dir>
+    awk -v d="$2" -v before=":=\"' (	" -v after=":\"' )	" '
+        /^[ \t]*#/ { next }
+        {
+            off = 0
+            rest = $0
+            while ((i = index(rest, d)) > 0) {
+                at = off + i
+                b = at > 1 ? substr($0, at - 1, 1) : ""
+                a = substr($0, at + length(d), 1)
+                if ((b == "" || index(before, b)) && (a == "" || index(after, a))) { found = 1; exit }
+                off = at
+                rest = substr($0, at + 1)
+            }
+        }
+        END { exit !found }' "$1" 2>/dev/null
+}
+
+# yes when a profile now puts the install dir on PATH but this shell, which
+# a child process cannot change, does not have it yet.
+needs_new_shell=no
 if [ "$install_dir_on_path" = no ]; then
-    path_line="export PATH=\"${INSTALL_DIR}:\$PATH\""
-    # The ~ stays literal on purpose: this is a line for the user to read and
-    # type, and no path here is ever opened.
-    # shellcheck disable=SC2088
-    case "${SHELL:-}" in
-        */fish)
-            path_file="~/.config/fish/config.fish"
-            path_line="fish_add_path ${INSTALL_DIR}"
-            ;;
-        */zsh) path_file="~/.zshrc" ;;
-        */bash)
-            # macOS Terminal opens login shells, which read .bash_profile and
-            # never .bashrc.
-            if [ "$(uname -s)" = Darwin ]; then
-                path_file="~/.bash_profile"
-            else
-                path_file="~/.bashrc"
-            fi
-            ;;
-        *) path_file="~/.profile" ;;
-    esac
-    cat <<EOF
-
-${INSTALL_DIR} is not on your PATH. Add it:
-
-    echo '${path_line}' >> ${path_file}
-
-Then restart your shell, or run that line now to use mapbox in this one.
-EOF
+    if [ "$MODIFY_PATH" = no ]; then
+        step_warn "$(tildify "$INSTALL_DIR") is not on your PATH, and MAPBOX_NO_MODIFY_PATH is set. Add it:"
+        echo ""
+        echo "      echo '${path_line}' >> $(tildify "$profile")"
+        echo ""
+    # A second run must not append a second copy.
+    elif [ -f "$profile" ] &&
+        { grep -qF -- "$path_line" "$profile" 2>/dev/null ||
+            profile_names_dir "$profile" "$INSTALL_DIR" ||
+            profile_names_dir "$profile" "$path_dir"; }; then
+        step_ok "PATH is already set up in $(tildify "$profile")"
+        needs_new_shell=yes
+    elif mkdir -p "$(dirname "$profile")" 2>/dev/null &&
+        printf '\n# Added by the Mapbox CLI installer\n%s\n' "$path_line" >>"$profile" 2>/dev/null; then
+        step_ok "Added $(tildify "$INSTALL_DIR") to PATH in $(tildify "$profile")"
+        needs_new_shell=yes
+    else
+        step_warn "Could not write to $(tildify "$profile"). Add $(tildify "$INSTALL_DIR") to your PATH yourself:"
+        echo ""
+        echo "      ${path_line}"
+        echo ""
+    fi
 fi
 
 # `command -v` names the winner and stops, so a second mapbox further down
@@ -531,28 +849,25 @@ for dir in $PATH; do
 done
 IFS="$saved_ifs"
 
+# A profile line written just now prepends the install dir, so a new shell
+# runs the copy just installed whatever this one resolves; the new-terminal
+# hint below already covers this shell.
 resolved="$(command -v mapbox 2>/dev/null || true)"
-if [ -n "$resolved" ] && [ "$resolved" != "${INSTALL_DIR}/mapbox" ]; then
+if [ -n "$resolved" ] && [ "$resolved" != "${INSTALL_DIR}/mapbox" ] && [ "$needs_new_shell" = no ]; then
+    step_warn "mapbox on your PATH still resolves to ${resolved}"
     cat <<EOF
-
-Note: mapbox on your PATH still resolves to ${resolved}, which came from
-somewhere else — Homebrew, cargo install, an install directory earlier on
-PATH. This script did not touch it. To use the copy just installed, remove
-that one or put ${INSTALL_DIR} ahead of it on PATH, then run hash -r (rehash,
-in zsh) in any shell that has already run mapbox — it has the old path cached.
+    That one came from somewhere else (Homebrew, cargo install, an earlier
+    PATH entry) and this script did not touch it. To use the copy just
+    installed, remove it or put $(tildify "$INSTALL_DIR") ahead of it on PATH, then
+    run hash -r (rehash, in zsh).
 EOF
-elif [ -n "$other_mapbox" ]; then
+elif [ -n "$other_mapbox" ] && [ "$install_dir_on_path" = yes ]; then
+    step_warn "There is another mapbox at ${other_mapbox}"
     cat <<EOF
-
-Note: there is another mapbox at ${other_mapbox}. ${INSTALL_DIR} comes first
-on your PATH, so a new shell runs the copy just installed — but a shell that
-has already run mapbox has the old path cached, and goes on reporting the old
-version. Drop that cache, or open a new terminal:
-
-    hash -r        # rehash, in zsh
-
-Then mapbox --version prints ${installed_version}. Removing ${other_mapbox}
-stops this happening again; this script did not touch it.
+    $(tildify "$INSTALL_DIR") comes first on your PATH, so a new terminal runs the copy
+    just installed. A shell that already ran mapbox has the old path cached:
+    run hash -r (rehash, in zsh), and then mapbox --version
+    prints ${installed_version}. This script did not touch the other copy.
 EOF
 fi
 
@@ -599,10 +914,6 @@ is_no() {
 # whatever directory the shell happened to be in, which has no relation to
 # a project.
 #
-# Ahead of the Tilesets CLI below, on purpose: several of its branches exit
-# 0 partway through (already on PATH, MAPBOX_TILESETS_CLI set, declined), and
-# this must run regardless of any of that.
-#
 # Past that point this asks, the same way the Tilesets CLI below does:
 # writing into a directory this CLI does not own and downloading a whole
 # separate library is a bigger ask than a one-line telemetry notice, and an
@@ -633,27 +944,34 @@ agent_names_from() { # agent_names_from <json> : comma-joined agent labels
 }
 
 if agent_setup_allowed; then
-    if agent_check=$("${INSTALL_DIR}/mapbox" generate-skills --global --dry-run -o json 2>/dev/null </dev/null); then
+    if agent_check=$(log_capture "${INSTALL_DIR}/mapbox" generate-skills --global --dry-run -o json); then
         agent_names="$(agent_names_from "$agent_check")"
-        echo ""
-        echo "A coding agent was detected on this machine: ${agent_names}."
+        step_ok "Coding agents found: ${agent_names}."
         do_agent_setup=no
         if have_tty; then
-            echo ""
-            answer="$(ask 'Set up the mapbox CLI skill and the Mapbox Agent Skills library for it? [y/N] ')" || answer=''
+            ask_title "Set up the mapbox CLI skill and the Mapbox Agent Skills library for them?"
+            ask_note "This runs $(ask_cmd 'mapbox generate-skills --global') and $(ask_cmd 'mapbox agent-skills install --global'),"
+            ask_note "now or any time later."
+            answer="$(ask "    Set them up now? ${DIM}[y/N]${RESET} ")" || answer=''
             is_yes "$answer" && do_agent_setup=yes
+            STEP_INDENT='    '
         fi
         if [ "$do_agent_setup" = yes ]; then
             # Offline and safe to re-run: it replaces its own generated
             # directory wholesale and refuses only if something else
             # already lives there, which --global keeps out of this
             # script's way.
-            if "${INSTALL_DIR}/mapbox" generate-skills --global >/dev/null 2>&1 </dev/null; then
-                echo "Wrote the mapbox CLI skill for: ${agent_names}."
+            if log_run "${INSTALL_DIR}/mapbox" generate-skills --global; then
+                step_ok "Wrote the mapbox CLI skill for: ${agent_names}."
             fi
 
-            if agent_out=$("${INSTALL_DIR}/mapbox" agent-skills install --global -o json 2>&1 </dev/null); then
-                echo "Installed the Mapbox Agent Skills library for: ${agent_names}."
+            # stderr is kept with stdout here: already_installed arrives there.
+            log "\$ ${INSTALL_DIR}/mapbox agent-skills install --global -o json"
+            if agent_out=$("${INSTALL_DIR}/mapbox" agent-skills install --global -o json 2>&1 </dev/null); then agent_status=0; else agent_status=$?; fi
+            [ -z "$agent_out" ] || log "$agent_out"
+            log "(exit ${agent_status})"
+            if [ "$agent_status" = 0 ]; then
+                step_ok "Installed the Mapbox Agent Skills library for: ${agent_names}."
             else
                 case "$agent_out" in
                     # A reinstall/upgrade: the skill directory is already
@@ -664,15 +982,15 @@ if agent_setup_allowed; then
                     # refresh, and that is never overwritten without being
                     # named.
                     *'"code":"already_installed"'*)
-                        if update_check=$("${INSTALL_DIR}/mapbox" agent-skills update --global --dry-run -o json 2>/dev/null </dev/null); then
+                        if update_check=$(log_capture "${INSTALL_DIR}/mapbox" agent-skills update --global --dry-run -o json); then
                             case "$update_check" in
                                 *'"updated":[]'*)
-                                    "${INSTALL_DIR}/mapbox" agent-skills update --global >/dev/null 2>&1 </dev/null || true
-                                    echo "Updated the Mapbox Agent Skills library for: ${agent_names}."
+                                    log_run "${INSTALL_DIR}/mapbox" agent-skills update --global || true
+                                    step_ok "Updated the Mapbox Agent Skills library for: ${agent_names}."
                                     ;;
                                 *)
-                                    echo "Some Mapbox Agent Skills have local changes and were left alone."
-                                    echo "Run 'mapbox agent-skills update --global' to review and replace them."
+                                    step_warn "Some Mapbox Agent Skills have local changes and were left alone."
+                                    step_detail "Run 'mapbox agent-skills update --global' to review and replace them."
                                     ;;
                             esac
                         fi
@@ -680,33 +998,138 @@ if agent_setup_allowed; then
                 esac
             fi
         else
-            echo "Not set up. Run these any time:"
-            echo "  mapbox generate-skills --global"
-            echo "  mapbox agent-skills install --global"
+            step_skip "Not set up. Run these any time:"
+            step_detail "${DIM}mapbox generate-skills --global${RESET}"
+            step_detail "${DIM}mapbox agent-skills install --global${RESET}"
+        fi
+        STEP_INDENT='  '
+    fi
+fi
+
+# --- Mapbox MCP servers ------------------------------------------------------
+#
+# A separate question from the skill above: this registers a hosted server in
+# the coding agent's own config, next to servers the user added, rather than
+# writing a directory this CLI owns. `mapbox mcp install` never replaces an
+# entry that is already there (src/mcp.rs), so on a reinstall it is only
+# offered when something is left to register. Same opt-out and same
+# no-terminal rule as the skill.
+
+# "status|server|client" per row of `mapbox mcp install -o json`, with the
+# labels src/mcp.rs prints in place of its ids.
+# Each row is a flat object, read field by field: the keys come sorted, so a
+# row that carries "error" has it between "client" and "server".
+mcp_field() { # mcp_field <key> <object>
+    printf '%s' "$2" | sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"
+}
+mcp_rows() { # mcp_rows <json>
+    # "client" sorts first, so every row starts with it; splitting there
+    # keeps a row whole even when its "error" text has braces of its own.
+    printf '%s' "$1" | awk '{ gsub(/[{]"client":"/, "\n{\"client\":\""); print }' | while IFS= read -r mcp_row; do
+        mcp_s="$(mcp_field status "$mcp_row")"
+        mcp_v="$(mcp_field server "$mcp_row")"
+        mcp_c="$(mcp_field client "$mcp_row")"
+        if [ -n "$mcp_s" ] && [ -n "$mcp_v" ] && [ -n "$mcp_c" ]; then
+            printf '%s|%s|%s\n' "$mcp_s" "$mcp_v" "$mcp_c"
+        fi
+    done |
+        sed 's/|mapbox|/|Mapbox MCP|/;s/|mapbox-devkit|/|Mapbox DevKit MCP|/' |
+        sed 's/|claude-code$/|Claude Code/;s/|codex$/|Codex/;s/|vscode$/|VS Code/;s/|cursor$/|Cursor/'
+}
+
+# "status|server|client, client, ..." — one line per server and outcome, in
+# the order they first appear, so four results read as two lines.
+mcp_grouped() { # mcp_grouped <json>
+    mcp_rows "$1" | awk -F'|' '{
+        k = $1 "|" $2
+        if (!(k in who)) { order[++n] = k; who[k] = $3 } else { who[k] = who[k] ", " $3 }
+    } END { for (i = 1; i <= n; i++) print order[i] "|" who[order[i]] }'
+}
+
+# The clients a dry run would register anything with, comma-joined.
+mcp_clients_from() { # mcp_clients_from <json>
+    mcp_rows "$1" | awk -F'|' '$1 == "would_install" && !seen[$3]++ { print $3 }' |
+        paste -sd, - | sed 's/,/, /g'
+}
+
+if agent_setup_allowed; then
+    # Fails with mcp_client_not_found when no supported client is installed,
+    # which is most machines: nothing to offer, so nothing is said.
+    if mcp_check=$(log_capture "${INSTALL_DIR}/mapbox" mcp install --global --dry-run -o json); then
+        mcp_clients="$(mcp_clients_from "$mcp_check")"
+        if [ -n "$mcp_clients" ]; then
+            do_mcp_setup=no
+            if have_tty; then
+                ask_title "Add the Mapbox MCP servers to ${mcp_clients}?"
+                ask_note "This runs $(ask_cmd 'mapbox mcp install --global'), now or any time later."
+                answer="$(ask "    Add them now? ${DIM}[y/N]${RESET} ")" || answer=''
+                is_yes "$answer" && do_mcp_setup=yes
+                STEP_INDENT='    '
+            fi
+            if [ "$do_mcp_setup" = yes ]; then
+                # Each client's own CLI does the registering, and Codex's can
+                # stop to print a sign-in URL, so its output is shown live.
+                if run_live "Adding the Mapbox MCP servers" "${WORK_DIR}/mcp-install.log" "${WORK_DIR}/mcp-install.json" \
+                    "${INSTALL_DIR}/mapbox" mcp install --global -o json; then
+                    mcp_ok=yes
+                else
+                    mcp_ok=no
+                fi
+                mcp_grouped "$(cat "${WORK_DIR}/mcp-install.json" 2>/dev/null)" >"${WORK_DIR}/mcp-rows"
+                # One line per server and outcome, so a server added just now
+                # reads differently from one that was already there.
+                mcp_trouble=no
+                while IFS='|' read -r status what who; do
+                    case "$status" in
+                        installed | already_installed) ;;
+                        *) mcp_trouble=yes ;;
+                    esac
+                    case "$status" in
+                        installed) step_ok "Added ${what} to ${who}" ;;
+                        already_installed) step_skip "${what} was already in ${who}" ;;
+                        installed_login_incomplete) step_warn "Added ${what} to ${who}, but sign-in did not finish" ;;
+                        client_not_found) step_warn "Skipped ${what} for ${who}: CLI not on PATH" ;;
+                        config_unreadable) step_warn "Skipped ${what} for ${who}: config could not be read" ;;
+                        *) step_warn "Could not add ${what} to ${who}" ;;
+                    esac
+                done <"${WORK_DIR}/mcp-rows"
+                if [ "$mcp_ok" = no ]; then
+                    # A failure no row above accounts for still gets a line of
+                    # its own, rather than a list of successes.
+                    [ "$mcp_trouble" = yes ] || step_warn "Not every Mapbox MCP server could be added."
+                    step_detail "Run 'mapbox mcp install --global' to see why and try again."
+                fi
+            else
+                step_skip "Mapbox MCP servers not added to ${mcp_clients}. Run this any time:"
+                step_detail "${DIM}mapbox mcp install --global${RESET}"
+            fi
+            STEP_INDENT='  '
         fi
     fi
 fi
 
 # --- The Tilesets CLI ------------------------------------------------------
 #
-# `mapbox tilesets-cli` execs a separately installed `tilesets`. Everything
-# below says the same thing as `launch_failed` in src/tilesets_cli.rs, in
-# another language; keep the two in step.
+# `mapbox tilesets-cli` execs a separately installed `tilesets`. When an
+# install was tried and failed, what is printed says the same thing as
+# `launch_failed` in src/tilesets_cli.rs, in another language; keep the two in
+# step. A plain "no" gets one line instead, since `mapbox tilesets-cli` prints
+# the full version itself the first time it is run without one.
 
 tilesets_instructions() {
     cat <<EOF
 
-To set it up later — the same instructions mapbox tilesets-cli prints when it
-cannot find it:
+    To set it up later — the same instructions mapbox tilesets-cli prints when
+    it cannot find it:
 
-    pipx install mapbox-tilesets            # recommended, keeps it isolated
-    python3 -m pip install --user mapbox-tilesets
+        pipx install mapbox-tilesets            # recommended, keeps it isolated
+        python3 -m pip install --user mapbox-tilesets
 
-If it lands somewhere not on your PATH, point the CLI straight at it:
+    If it lands somewhere not on your PATH, point the CLI straight at it:
 
-    export MAPBOX_TILESETS_CLI=/path/to/tilesets
+        export MAPBOX_TILESETS_CLI=/path/to/tilesets
 
-Docs: https://github.com/mapbox/tilesets-cli
+    Docs: https://github.com/mapbox/tilesets-cli
 EOF
 }
 
@@ -727,123 +1150,158 @@ python3_externally_managed() {
         </dev/null >/dev/null 2>&1
 }
 
+# pipx and pip talk at length (emoji included), and once they are done say
+# nothing the step line after them does not, so run_live shows them only
+# while they run.
+TILESETS_LOG="${WORK_DIR}/tilesets-install.log"
+
 # 0 installed, 1 an installer ran and failed, 2 no interpreter to install with,
 # 3 an interpreter that will not be installed into.
 # Children get </dev/null because stdin is still the rest of this script.
 install_tilesets() {
     if command -v pipx >/dev/null 2>&1; then
-        echo "Running: pipx install mapbox-tilesets"
-        pipx install mapbox-tilesets </dev/null || return 1
+        run_live "Installing the Tilesets CLI with pipx ${DIM}(this can take a minute)${RESET}" "$TILESETS_LOG" '' \
+            pipx install mapbox-tilesets || return 1
         return 0
     fi
     if python3_at_least_310; then
         if python3_externally_managed; then
             return 3
         fi
-        echo "pipx is not installed; using pip instead."
-        echo "Running: python3 -m pip install --user mapbox-tilesets"
-        python3 -m pip install --user mapbox-tilesets </dev/null || return 1
+        run_live "Installing the Tilesets CLI with pip --user ${DIM}(pipx is not installed)${RESET}" "$TILESETS_LOG" '' \
+            python3 -m pip install --user mapbox-tilesets || return 1
         return 0
     fi
     return 2
 }
 
-# Honor MAPBOX_TILESETS_CLI, the override the CLI itself respects: someone
-# who has pointed it at a particular executable has already made this
-# decision, whether or not that executable is currently there.
-if [ -n "${MAPBOX_TILESETS_CLI:-}" ]; then
-    echo ""
-    if [ -x "${MAPBOX_TILESETS_CLI}" ]; then
-        echo "Tilesets CLI: ${MAPBOX_TILESETS_CLI} (MAPBOX_TILESETS_CLI)"
-    else
-        echo "Note: MAPBOX_TILESETS_CLI points at ${MAPBOX_TILESETS_CLI}, where there is no"
-        echo "executable. mapbox tilesets-cli will fail until that is corrected or unset."
+tilesets_step() {
+    # Honor MAPBOX_TILESETS_CLI, the override the CLI itself respects: someone
+    # who has pointed it at a particular executable has already made this
+    # decision, whether or not that executable is currently there.
+    if [ -n "${MAPBOX_TILESETS_CLI:-}" ]; then
+        if [ -x "${MAPBOX_TILESETS_CLI}" ]; then
+            step_ok "Found Tilesets CLI: ${MAPBOX_TILESETS_CLI} (MAPBOX_TILESETS_CLI)"
+        else
+            step_warn "MAPBOX_TILESETS_CLI points at ${MAPBOX_TILESETS_CLI}, where there is no"
+            step_detail "executable. mapbox tilesets-cli will fail until that is corrected or unset."
+        fi
+        return
     fi
-    exit 0
-fi
 
-if command -v tilesets >/dev/null 2>&1; then
-    echo ""
-    echo "Tilesets CLI: $(tilesets --version 2>/dev/null </dev/null || command -v tilesets)"
-    exit 0
-fi
-
-# Leading with "not installed" read as though the install had gone wrong. It
-# had not: by this point mapbox is on disk and has already answered
-# --version. Say that first, then offer the extra as an extra.
-cat <<EOF
-
-mapbox is installed and ready to use — the rest of this is optional.
-
-The Mapbox Tilesets CLI is not installed here. mapbox tilesets-cli ... forwards
-to it, and tileset commands are the only part of this CLI that need it; every
-other command already works. It ships separately as the Python package
-mapbox-tilesets (Python 3.10+).
-EOF
-
-answer=''
-if [ -n "$INSTALL_TILESETS" ]; then
-    if is_yes "$INSTALL_TILESETS"; then
-        answer=yes
-    elif is_no "$INSTALL_TILESETS"; then
-        answer=no
-    else
-        echo ""
-        echo "Note: MAPBOX_INSTALL_TILESETS=${INSTALL_TILESETS} is neither yes nor no; not installing."
-        answer=no
+    if command -v tilesets >/dev/null 2>&1; then
+        step_ok "Found Tilesets CLI: $(tilesets --version 2>/dev/null </dev/null || command -v tilesets)"
+        return
     fi
-elif have_tty; then
-    echo ""
-    answer="$(ask 'Install it as well? [y/N] ')" || answer=''
-    if is_yes "$answer"; then
-        answer=yes
+
+    answer=''
+    if [ -n "$INSTALL_TILESETS" ]; then
+        if is_yes "$INSTALL_TILESETS"; then
+            answer=yes
+        elif is_no "$INSTALL_TILESETS"; then
+            answer=no
+        else
+            step_warn "MAPBOX_INSTALL_TILESETS=${INSTALL_TILESETS} is neither yes nor no; not installing."
+            answer=no
+        fi
+    elif have_tty; then
+        # mapbox is already on disk and has answered --version by now, and the
+        # step lines above say so: this is an extra, offered as one.
+        answer="$(ask "  ${ACCENT}${BOLD}${MARK_ASK}${RESET} ${BOLD}Install the Tilesets CLI too?${RESET} ${DIM}Only the${RESET} ${ACCENT}mapbox tilesets-cli${RESET} ${DIM}command needs it. [y/N]${RESET} ")" ||
+            answer=''
+        if is_yes "$answer"; then
+            answer=yes
+        else
+            answer=no
+        fi
+        STEP_INDENT='    '
     else
+        # No terminal: a provisioner, a Docker build, CI. Do not block, and do
+        # not assume yes — mutating someone's Python environment unasked is
+        # exactly what the prompt exists to avoid.
         answer=no
     fi
-else
-    # No terminal: a provisioner, a Docker build, CI. Do not block, and do not
-    # assume yes — mutating someone's Python environment unasked is exactly
-    # what the prompt exists to avoid.
-    answer=no
+
+    if [ "$answer" != yes ]; then
+        step_skip "Tilesets CLI is not installed. Only the ${ACCENT}mapbox tilesets-cli${RESET} command needs it."
+        step_detail "${DIM}Install it later with: pipx install mapbox-tilesets${RESET}"
+        return
+    fi
+
+    # The `if` keeps a failed install from tripping `set -e`; its status is
+    # read in the else branch.
+    if install_tilesets; then
+        if command -v tilesets >/dev/null 2>&1; then
+            step_ok "Installed Tilesets CLI: $(tilesets --version 2>/dev/null </dev/null || echo tilesets)"
+        else
+            user_bin="$(python3 -m site --user-base 2>/dev/null </dev/null || true)"
+            step_warn "Installed mapbox-tilesets, but tilesets is not on your PATH."
+            if [ -n "$user_bin" ]; then
+                step_detail "Look in ${user_bin}/bin, then add that to PATH or set MAPBOX_TILESETS_CLI."
+            else
+                step_detail "Add its directory to PATH, or set MAPBOX_TILESETS_CLI to the executable."
+            fi
+        fi
+    else
+        rc=$?
+        if [ "$rc" = 2 ]; then
+            step_warn "Cannot install it here: no pipx, and no Python 3.10+ interpreter to use instead."
+        elif [ "$rc" = 3 ]; then
+            step_warn "Cannot install it here: this python3 is managed by your OS (PEP 668)."
+            step_detail "It refuses a pip --user install, and there is no pipx to use instead."
+            step_detail "Install pipx first — apt install pipx, or brew install pipx — and the"
+            step_detail "first command below is the one that works."
+        else
+            step_warn "The Tilesets CLI install did not succeed. The installer said:"
+            echo ""
+            tail -n 20 "$TILESETS_LOG" | sed "s/^/${STEP_INDENT}  /"
+        fi
+        # Its text is indented for a top-level step; shift it to match.
+        tilesets_instructions | sed "s/^\\(.\\)/${STEP_INDENT#  }\\1/"
+    fi
+}
+
+tilesets_step
+STEP_INDENT='  '
+
+# The log closes the step list: it is the record of those steps, and where
+# to look again at anything above that went by too fast or went wrong.
+if [ -n "$INSTALL_LOG" ]; then
+    echo "  ${DIM}Install log: $(tildify "$INSTALL_LOG")${RESET}"
 fi
 
-if [ "$answer" != yes ]; then
-    tilesets_instructions
-    # A declined optional extra is not an install failure: mapbox is installed
-    # and working.
-    exit 0
+# --- Summary ---------------------------------------------------------------
+#
+# The last thing on screen, because it is what the reader acts on: whatever
+# happened with the optional extra above, mapbox itself is installed.
+
+echo ""
+echo "${BOLD}${GREEN}${installed_version} is ready.${RESET}"
+
+if [ "$needs_new_shell" = yes ]; then
+    echo ""
+    # The profile line reaches shells started from now on; this one read
+    # its profile before the line was there.
+    echo "This terminal started before that change. Open a new one, or run:"
+    echo ""
+    echo "  ${ACCENT}${path_line}${RESET}"
 fi
 
 echo ""
-if install_tilesets; then
-    if command -v tilesets >/dev/null 2>&1; then
-        echo ""
-        echo "Tilesets CLI: $(tilesets --version 2>/dev/null </dev/null || echo installed)"
-    else
-        user_bin="$(python3 -m site --user-base 2>/dev/null </dev/null || true)"
-        echo ""
-        echo "Installed mapbox-tilesets, but tilesets is not on your PATH."
-        if [ -n "$user_bin" ]; then
-            echo "Look in ${user_bin}/bin, then add that to PATH or set MAPBOX_TILESETS_CLI."
-        else
-            echo "Add its directory to PATH, or set MAPBOX_TILESETS_CLI to the executable."
-        fi
-    fi
-else
-    rc=$?
-    echo ""
-    if [ "$rc" = 2 ]; then
-        echo "Cannot install it here: no pipx, and no Python 3.10+ interpreter to use instead."
-    elif [ "$rc" = 3 ]; then
-        echo "Cannot install it here: this python3 is managed by your OS (PEP 668), so it"
-        echo "refuses a pip --user install, and there is no pipx to use instead. Install"
-        echo "pipx first — apt install pipx, or brew install pipx — and the first command"
-        echo "below is the one that works."
-    else
-        echo "That install did not succeed."
-    fi
-    tilesets_instructions
-fi
+echo "${BOLD}Get started${RESET}"
+printf '  %s%-20s%s %s\n' "$ACCENT" 'mapbox auth login' "$RESET" 'Sign in to your Mapbox account'
+printf '  %s%-20s%s %s\n' "$ACCENT" 'mapbox --help' "$RESET" 'See every command'
+echo ""
+echo "Docs: https://cli.mapbox.com"
 
-# Whatever happened above, the mapbox install succeeded.
+# Said once, here, rather than on every future command: someone piping this
+# into `sh` is not going to read the man page before their first run.
+# Skipped when telemetry is already off, since there's nothing to opt out of.
+if telemetry_allowed; then
+    echo ""
+    echo "Mapbox CLI collects telemetry by default. To disable it, set"
+    echo "MAPBOX_CLI_NO_TELEMETRY=1. Learn more: https://github.com/mapbox/mapbox-cli#privacy"
+fi
+echo ""
+
 exit 0

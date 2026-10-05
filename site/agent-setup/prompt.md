@@ -19,11 +19,11 @@ If Homebrew is available:
 brew install mapbox/tap/mapbox
 ```
 
-Otherwise, on macOS or Linux, download the install script and run it. Do not pipe it into `sh`: many agent sandboxes deny that outright.
+Otherwise, on macOS or Linux, download the install script and run it. Do not pipe it into `sh`: many agent sandboxes deny that outright. `MAPBOX_CLI_NO_AGENT_SETUP=1` stops the script asking about skills and MCP servers, which would wait for an answer in a terminal; the steps below set those up instead.
 
 ```sh
 curl -fsSL https://cli.mapbox.com/install.sh -o mapbox-install.sh
-sh mapbox-install.sh
+MAPBOX_CLI_NO_AGENT_SETUP=1 sh mapbox-install.sh
 rm mapbox-install.sh
 ```
 
@@ -31,6 +31,7 @@ On Windows, in PowerShell:
 
 ```powershell
 Invoke-WebRequest https://cli.mapbox.com/install.ps1 -OutFile mapbox-install.ps1
+$env:MAPBOX_CLI_NO_AGENT_SETUP = '1'
 powershell -ExecutionPolicy Bypass -File mapbox-install.ps1
 Remove-Item mapbox-install.ps1
 ```
@@ -77,6 +78,8 @@ If `npx` is unavailable or not allowed, use the Mapbox CLI instead:
 ```sh
 mapbox agent-skills install --global
 ```
+
+If it fails with `already_installed`, the skills are already there, so this step is done.
 
 Then register the MCP servers in your agent's configuration:
 

@@ -19,6 +19,13 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- **Breaking**: `--eta-type`, `--navigation-profile` and `--origin` removed
+  from `mapbox search forward` and `mapbox search category`. ETA results
+  are gated by a per-account feature flag, so for most accounts the flags
+  were accepted but never added an ETA to the response. A script that
+  passes them now fails with an unknown-argument error; drop the flags.
+  (#76)
+
 - **Breaking**: `--exclude-fields` removed from `mapbox search forward`
   and `mapbox search category`. The `photos` and `reviews` fields it
   omitted are only returned for accounts with a specific data provider

@@ -1234,7 +1234,7 @@ session behind it.
 | `--poi-category <cats>` / `--poi-category-exclusions <cats>` | Include or exclude POI categories. |
 | `--show-closed-pois` / `--open-now` | Include closed POIs, or only currently-open ones. |
 | `--minimum-rating <0.0-5.0>` / `--price-levels <$..$$$$>` | Filter POIs by rating or price. |
-| `--exclude-fields <fields>` | Omit metadata fields from the response, e.g. `photos,reviews`. |
+| `--exclude-fields <fields>` | Omit metadata fields from the response, e.g. `photos,reviews`. Only applies to accounts with a specific data provider arrangement; otherwise these fields are never returned and the flag has no effect. |
 | `--rank-strategy <distance\|relevance>` | Change how results are ordered. |
 | `--language <tag>` | ISO language code. |
 | `--auto-complete` | Include partial and fuzzy matches, for autocomplete-style input. |
@@ -1350,7 +1350,7 @@ here enforces it before the request goes out.
 | `--types <types>` | `poi`, `address`, `place`, … |
 | `--poi-category-exclusions <cats>` | Exclude POI categories. |
 | `--show-closed-pois` | Include permanently closed POIs. |
-| `--exclude-fields <fields>` | Omit metadata fields from the response, e.g. `photos,reviews`. |
+| `--exclude-fields <fields>` | Omit metadata fields from the response, e.g. `photos,reviews`. Only applies to accounts with a specific data provider arrangement; otherwise these fields are never returned and the flag has no effect. |
 | `--language <tag>` | ISO language code. |
 | `--sar-type isochrone` + `--route <polyline>` + `--route-geometry <polyline\|polyline6>` | Search-along-route: results near a route rather than a point. |
 | `--time-deviation <minutes>` | With SAR, maximum detour allowed from the route. |

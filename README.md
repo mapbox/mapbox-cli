@@ -28,6 +28,7 @@ mapbox styles list
   - [Quick start: Mapbox agent setup](#quick-start-mapbox-agent-setup)
   - [Agent skills](#agent-skills)
   - [Generate skills](#generate-skills)
+  - [MCP servers](#mcp-servers)
 - [Global options](#global-options)
   - [Dry runs](#dry-runs)
   - [Timeouts](#timeouts)
@@ -89,6 +90,14 @@ $env:MAPBOX_CLI_VERSION = '0.3.0'; irm https://cli.mapbox.com/install.ps1 | iex
 `MAPBOX_INSTALL_DIR` chooses where the binary lands. The scripts' sources
 are [`scripts/install.sh`](./scripts/install.sh) and
 [`scripts/install.ps1`](./scripts/install.ps1).
+
+If the script finds a coding agent on the machine ([Claude Code](#agent-skills)
+and the rest of the fifteen `agent-skills` supports), it asks, once, whether
+to set up this CLI's own [skill](#generate-skills) and the Mapbox Agent
+Skills library for it, naming the agent before it writes anything. Answer no,
+or run the script somewhere with no terminal to ask on (CI, a container), and
+it does neither, printing the two commands to run by hand instead. Set
+`MAPBOX_CLI_NO_AGENT_SETUP=1` to skip the question entirely.
 
 ### Download the archive yourself
 
@@ -346,6 +355,26 @@ Codex. `--agent`, `--global`, `--dir` and `--service` narrow it, and
 ```sh
 mapbox agent-skills uninstall mapbox-cli
 ```
+
+### MCP servers
+
+```sh
+mapbox mcp list
+mapbox mcp install
+```
+
+Different kind of "install" from `agent-skills`/`generate-skills` above:
+those write a directory this CLI owns, this registers an MCP server —
+direct tool-calling access to Mapbox's APIs, not just guidance about them —
+with a coding agent's *own* config, since that config belongs to the agent
+and may already list other servers. Claude Code, Codex, VS Code and Cursor
+are supported today, against the hosted Mapbox MCP endpoints: no token, no
+npm package, no Node version to manage. An existing server with the same
+name is left alone rather than replaced. VS Code and Cursor currently
+register for every project regardless of `--global`, since neither has a
+working way to scope it to one; Codex may report a server as installed with
+its own login incomplete, an OAuth incompatibility between Codex and
+Mapbox's hosted MCP server rather than something this command controls.
 
 ## Global options
 

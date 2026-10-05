@@ -556,32 +556,11 @@ stops this happening again; this script did not touch it.
 EOF
 fi
 
-# --- The Tilesets CLI ------------------------------------------------------
-#
-# `mapbox tilesets-cli` execs a separately installed `tilesets`. Everything
-# below says the same thing as `launch_failed` in src/tilesets_cli.rs, in
-# another language; keep the two in step.
-
-tilesets_instructions() {
-    cat <<EOF
-
-To set it up later — the same instructions mapbox tilesets-cli prints when it
-cannot find it:
-
-    pipx install mapbox-tilesets            # recommended, keeps it isolated
-    python3 -m pip install --user mapbox-tilesets
-
-If it lands somewhere not on your PATH, point the CLI straight at it:
-
-    export MAPBOX_TILESETS_CLI=/path/to/tilesets
-
-Docs: https://github.com/mapbox/tilesets-cli
-EOF
-}
-
 # Under `curl ... | sh` stdin is the script, so a prompt has to come from the
 # terminal directly. /dev/tty exists as a device inside a container with no
-# terminal attached and fails only on open, so open it to find out.
+# terminal attached and fails only on open, so open it to find out. Shared by
+# both optional steps below, Tilesets and the coding agent skill — neither
+# owns it.
 have_tty() {
     [ -c /dev/tty ] || return 1
     (exec 3</dev/tty) 2>/dev/null
@@ -608,6 +587,127 @@ is_no() {
         n | N | no | No | NO | false | FALSE | 0) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# --- Coding agent skill ------------------------------------------------------
+#
+# Most machines running this script have no coding agent installed at all,
+# and generate-skills answers "nowhere to write" as `no_agent_detected`
+# rather than writing anything when that is the case (src/skill_dest.rs) —
+# checked first, silently, so nothing is offered when there is nothing to
+# offer. --global, not the project-scoped default: this script runs in
+# whatever directory the shell happened to be in, which has no relation to
+# a project.
+#
+# Ahead of the Tilesets CLI below, on purpose: several of its branches exit
+# 0 partway through (already on PATH, MAPBOX_TILESETS_CLI set, declined), and
+# this must run regardless of any of that.
+#
+# Past that point this asks, the same way the Tilesets CLI below does:
+# writing into a directory this CLI does not own and downloading a whole
+# separate library is a bigger ask than a one-line telemetry notice, and an
+# install nobody consented to is not a feature. An interactive terminal
+# asks and installs only on yes; no terminal says nothing was installed and
+# how to do it by hand instead.
+agent_setup_allowed() {
+    # Same boolean spellings as MAPBOX_CLI_NO_TELEMETRY above: unset, empty
+    # or one of clap's false spellings is allowed; anything else opts out.
+    # ASCII-only on purpose, the same reason telemetry_allowed is above.
+    # shellcheck disable=SC2018,SC2019
+    case "$(printf '%s' "${MAPBOX_CLI_NO_AGENT_SETUP-}" |
+        tr 'A-Z' 'a-z' |
+        sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" in
+        '' | 0 | f | false | n | no | off) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# The "source" field of each destination in a generate-skills/agent-skills
+# --global JSON report is "<Agent label>, all projects" — this is the part
+# worth putting in front of a person before asking them anything, not the
+# full file listing the real report carries.
+agent_names_from() { # agent_names_from <json> : comma-joined agent labels
+    printf '%s' "$1" | grep -o '"source":"[^"]*"' |
+        sed 's/"source":"//;s/, all projects"$//' |
+        paste -sd, - | sed 's/,/, /g'
+}
+
+if agent_setup_allowed; then
+    if agent_check=$("${INSTALL_DIR}/mapbox" generate-skills --global --dry-run -o json 2>/dev/null </dev/null); then
+        agent_names="$(agent_names_from "$agent_check")"
+        echo ""
+        echo "A coding agent was detected on this machine: ${agent_names}."
+        do_agent_setup=no
+        if have_tty; then
+            echo ""
+            answer="$(ask 'Set up the mapbox CLI skill and the Mapbox Agent Skills library for it? [y/N] ')" || answer=''
+            is_yes "$answer" && do_agent_setup=yes
+        fi
+        if [ "$do_agent_setup" = yes ]; then
+            # Offline and safe to re-run: it replaces its own generated
+            # directory wholesale and refuses only if something else
+            # already lives there, which --global keeps out of this
+            # script's way.
+            if "${INSTALL_DIR}/mapbox" generate-skills --global >/dev/null 2>&1 </dev/null; then
+                echo "Wrote the mapbox CLI skill for: ${agent_names}."
+            fi
+
+            if agent_out=$("${INSTALL_DIR}/mapbox" agent-skills install --global -o json 2>&1 </dev/null); then
+                echo "Installed the Mapbox Agent Skills library for: ${agent_names}."
+            else
+                case "$agent_out" in
+                    # A reinstall/upgrade: the skill directory is already
+                    # there from a previous run of this same script.
+                    # `update` is the one safe to repeat, but only once it
+                    # is checked first — some of what changed since the
+                    # last run might be a local edit, not just an upstream
+                    # refresh, and that is never overwritten without being
+                    # named.
+                    *'"code":"already_installed"'*)
+                        if update_check=$("${INSTALL_DIR}/mapbox" agent-skills update --global --dry-run -o json 2>/dev/null </dev/null); then
+                            case "$update_check" in
+                                *'"updated":[]'*)
+                                    "${INSTALL_DIR}/mapbox" agent-skills update --global >/dev/null 2>&1 </dev/null || true
+                                    echo "Updated the Mapbox Agent Skills library for: ${agent_names}."
+                                    ;;
+                                *)
+                                    echo "Some Mapbox Agent Skills have local changes and were left alone."
+                                    echo "Run 'mapbox agent-skills update --global' to review and replace them."
+                                    ;;
+                            esac
+                        fi
+                        ;;
+                esac
+            fi
+        else
+            echo "Not set up. Run these any time:"
+            echo "  mapbox generate-skills --global"
+            echo "  mapbox agent-skills install --global"
+        fi
+    fi
+fi
+
+# --- The Tilesets CLI ------------------------------------------------------
+#
+# `mapbox tilesets-cli` execs a separately installed `tilesets`. Everything
+# below says the same thing as `launch_failed` in src/tilesets_cli.rs, in
+# another language; keep the two in step.
+
+tilesets_instructions() {
+    cat <<EOF
+
+To set it up later — the same instructions mapbox tilesets-cli prints when it
+cannot find it:
+
+    pipx install mapbox-tilesets            # recommended, keeps it isolated
+    python3 -m pip install --user mapbox-tilesets
+
+If it lands somewhere not on your PATH, point the CLI straight at it:
+
+    export MAPBOX_TILESETS_CLI=/path/to/tilesets
+
+Docs: https://github.com/mapbox/tilesets-cli
+EOF
 }
 
 # `src/tilesets_cli.rs`'s `launch_failed` names this same requirement when

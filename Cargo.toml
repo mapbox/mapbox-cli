@@ -91,6 +91,14 @@ base64 = "0.22"
 rand = "0.10"
 open = "5"
 dirs = "5"
+# VS Code's and Cursor's own config files are JSONC (comments, trailing
+# commas), which `serde_json` alone refuses — `mcp.rs` reads them to check
+# whether a server is already registered before ever writing to them, so a
+# normal, commented file must not misread as corrupt. String-aware, so a
+# `//` inside a URL value is never mistaken for a comment — both features
+# are needed for `parse_to_serde_value`, which decodes straight into a
+# `serde_json::Value`.
+jsonc-parser = { version = "0.34.0", features = ["serde", "serde_json"] }
 
 [dev-dependencies]
 # Integration tests build fake Mapbox tokens; same crate the CLI already uses.

@@ -359,6 +359,14 @@ fn nowhere_to_write_is_an_error_naming_the_flags() {
 
     assert!(!out.status.success(), "{}", stdout(&out));
     let message = stderr(&out);
+    // A stable, machine-readable code — not just a message a script would
+    // have to pattern-match — so a caller (an installer, say) can tell
+    // "nothing detected" apart from an unrelated failure. See
+    // docs/commands.md's own section on this.
+    assert!(
+        message.contains("\"code\":\"no_agent_detected\""),
+        "{message} does not carry the no_agent_detected code"
+    );
     for flag in ["--agent", "--global", "--dir"] {
         assert!(message.contains(flag), "{message} does not mention {flag}");
     }

@@ -174,17 +174,6 @@ paths:
           schema:
             type: string
           example: "$,$$"
-        - name: "exclude_fields"
-          in: query
-          required: false
-          description: >-
-            A comma-separated list of metadata fields to omit from the
-            response, to reduce payload size. Accepts `photos`, `reviews`.
-            Only applies to accounts with a specific data provider
-            arrangement; other responses do not include these fields, so
-            the parameter has no effect on them.
-          schema:
-            type: string
         - name: "rank_strategy"
           in: query
           required: false
@@ -467,17 +456,6 @@ paths:
             Excluded by default.
           schema:
             type: boolean
-        - name: "exclude_fields"
-          in: query
-          required: false
-          description: >-
-            A comma-separated list of metadata fields to omit from the
-            response, to reduce payload size. Accepts `photos`, `reviews`.
-            Only applies to accounts with a specific data provider
-            arrangement; other responses do not include these fields, so
-            the parameter has no effect on them.
-          schema:
-            type: string
         - name: "sar_type"
           in: query
           required: false

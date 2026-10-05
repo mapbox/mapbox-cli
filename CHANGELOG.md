@@ -19,6 +19,13 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- **Breaking**: `--exclude-fields` removed from `mapbox search forward`
+  and `mapbox search category`. The `photos` and `reviews` fields it
+  omitted are only returned for accounts with a specific data provider
+  arrangement, so for everyone else it never had an effect. A script that
+  passes it now fails with an unknown-argument error; drop the flag.
+  (#77)
+
 - `mapbox mcp list`/`mapbox mcp install`: registers a Mapbox MCP server
   (direct tool-calling access to Mapbox's APIs, not just guidance about
   them) with a coding agent's own CLI or config. Claude Code, Codex, VS Code

@@ -1,6 +1,6 @@
 # Implemented commands
 
-Every command the CLI ships: five auth commands, 33 API operations across 10
+Every command the CLI ships: five auth commands, 35 API operations across 11
 command groups, the tilesets-cli proxy, `completion` and `generate-skills`. Each is
 shown in both of its renderings. Which one you get is decided by `--output`, whose default
 (`auto`) reads stdout: a terminal gets the left column, a pipe or redirect
@@ -10,13 +10,14 @@ gets the right one. See
 Account names, style ids and tokens in the examples are replaced; everything
 else is as the API sent it.
 
-**29 of the 33 were run against the live API and show what came back:** 26
-on 2026-09-01, and `fonts list`, `fonts upload` and `fonts delete` on
-2026-09-08, once `fonts:list`/`fonts:write` became
-registrable. The write operations were exercised as round trips on
-throwaway objects — a style created, updated, drafted and deleted; icons
-uploaded to a sprite and taken out again; a font uploaded and deleted —
-leaving the account as it was found.
+**31 of the 35 were run against the live API and show what came back:** 26
+on 2026-09-01, `fonts list`, `fonts upload` and `fonts delete` on
+2026-09-08, once `fonts:list`/`fonts:write` became registrable, and
+`feedback list` and `feedback get` on 2026-09-24.
+The write operations were exercised as round trips on throwaway objects —
+a style created, updated, drafted and deleted; icons uploaded to a sprite
+and taken out again; a font uploaded and deleted — leaving the account as
+it was found.
 
 Every API command's **Outputs** block below is that snapshot rather than a
 live reading, and is re-taken by hand — nothing schedules it and nothing
@@ -78,6 +79,9 @@ nests, and is typed `mapbox styles draft get`.
 [accounts.list-tokens](#mapbox-accounts-list-tokens) ·
 [accounts.retrieve-token](#mapbox-accounts-retrieve-token) ·
 [accounts.list-scopes](#mapbox-accounts-list-scopes)
+
+**[Feedback](#feedback)** — [feedback.list](#mapbox-feedback-list) ·
+[feedback.get](#mapbox-feedback-get)
 
 **[Fonts](#fonts)** — [fonts.list](#mapbox-fonts-list) ·
 [fonts.upload](#mapbox-fonts-upload) · [fonts.delete](#mapbox-fonts-delete)
@@ -887,6 +891,148 @@ styles:list    List styles.
 
 What this lists is what the account is *allowed* to hold, which is not the
 same as what the current token holds — `retrieve-token` answers that.
+
+---
+## Feedback
+
+Feedback that end users submit from apps built with Mapbox, through the
+Feedback Agent — filterable, sortable, and paginated. Curated by
+hand down to the parameters documented at docs.mapbox.com/api/feedback —
+see `custom-openapi/README.md` for why this command group doesn't come from
+the vendored specs the way most others do.
+
+**`feedback create`, the write side of this API, is not a command.** It
+needs a `user-feedback:write` scope that `POST /oauth/register` silently
+drops from the granted set — confirmed directly against production, the
+same shape `accounts create-token` already documents. No
+`mapbox auth login` token can ever carry it.
+
+### `mapbox feedback list`
+
+Every feedback item on the account, oldest received first by default.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `--feedback-id <id>` | Limit to one feedback id. |
+| `--after <cursor>` | Page forward from a previous response's `end_cursor`. |
+| `--limit <n>` | Maximum items to return, up to 1000. |
+| `--sort-by <received_at\|created_at\|updated_at>` | Which timestamp to sort by. Defaults to `received_at`. |
+| `--order <asc\|desc>` | Sort direction. Defaults to `asc`. |
+| `--status <status>` | Limit to one status: `received`, `fixed`, `reviewed` or `out_of_scope`. |
+| `--category <category>` | Limit to one feedback category. Account-specific, no fixed list. |
+| `--search <text>` | A phrase to match against feedback text. |
+| `--trace-id <id>` | Limit to one trace id, as provided by the app that submitted the feedback. |
+| `--created-before` / `--created-after <ISO 8601>` | Window on when the end user created the item. |
+| `--received-before` / `--received-after <ISO 8601>` | Window on when Mapbox received it. |
+| `--updated-before` / `--updated-after <ISO 8601>` | Window on when it was last updated. |
+
+#### Examples
+
+```sh
+mapbox feedback list --limit 5
+mapbox feedback list --status received --category positioning_issue
+```
+
+#### Outputs
+
+Captured live, two items:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```json
+{
+  "items": [
+    {
+      "id": "01a06d61-17e4-74aa-b824-13baaf272670",
+      "status": "received",
+      "category": "positioning_issue",
+      "feedback": "This is a test feedback. …",
+      "location": { "lat": 0, "lon": 0 },
+      "received_at": "2026-09-04T17:04:34.818Z"
+    },
+    {
+      "id": "01a06d61-77cc-7649-8db6-5beb2de0278d",
+      "status": "received",
+      "category": "application_issue",
+      "feedback": "This is a test feedback. …",
+      "location": {
+        "lat": 37.779238,
+        "lon": -122.419359,
+        "place_name": "400 Van Ness Avenue, San Francisco, California 94103, United States"
+      },
+      "received_at": "2026-09-04T17:04:59.466Z"
+    }
+  ],
+  "has_after": true,
+  "has_before": false,
+  "start_cursor": "…",
+  "end_cursor": "…"
+}
+```
+
+</td><td>
+
+```json
+{"items":[{"id":"01a06d61-17e4-74aa-b824-13baaf272670","status":"received","category":"positioning_issue","feedback":"This is a test feedback. …","location":{"lat":0,"lon":0},"received_at":"2026-09-04T17:04:34.818Z"},{"id":"01a06d61-77cc-7649-8db6-5beb2de0278d","status":"received","category":"application_issue","feedback":"This is a test feedback. …","location":{"lat":37.779238,"lon":-122.419359,"place_name":"400 Van Ness Avenue, San Francisco, California 94103, United States"},"received_at":"2026-09-04T17:04:59.466Z"}],"has_after":true,"has_before":false,"start_cursor":"…","end_cursor":"…"}
+```
+
+</td></tr>
+</table>
+
+Neither output mode has a bespoke rendering for this response — it isn't
+GeoJSON — so both print the same JSON, `-o text` pretty-printed and `-o
+json` on one line. Feedback text trimmed and `created_at`/`updated_at`/
+`has_screenshot` dropped per item, for length; the real response carries
+them too.
+
+### `mapbox feedback get`
+
+One feedback item by id.
+
+#### Parameters
+
+`<feedback-id>` (positional) is required.
+
+#### Examples
+
+```sh
+mapbox feedback get 01a06d61-17e4-74aa-b824-13baaf272670
+```
+
+#### Outputs
+
+Captured live, the same item `list` returned above — a single object this
+time, not wrapped in `items`:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```json
+{
+  "id": "01a06d61-17e4-74aa-b824-13baaf272670",
+  "status": "received",
+  "category": "positioning_issue",
+  "feedback": "This is a test feedback. …",
+  "location": { "lat": 0, "lon": 0 },
+  "received_at": "2026-09-04T17:04:34.818Z"
+}
+```
+
+</td><td>
+
+```json
+{"id":"01a06d61-17e4-74aa-b824-13baaf272670","status":"received","category":"positioning_issue","feedback":"This is a test feedback. …","location":{"lat":0,"lon":0},"received_at":"2026-09-04T17:04:34.818Z"}
+```
+
+</td></tr>
+</table>
+
+Same trimming as `list` above.
 
 ---
 ## Fonts

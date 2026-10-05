@@ -216,6 +216,7 @@ Each Mapbox API is a command group, with one subcommand per operation:
 
 ```sh
 mapbox accounts <operation>
+mapbox feedback <operation>
 mapbox fonts <operation>
 mapbox geocoder <operation>
 mapbox search <operation>

@@ -66,6 +66,26 @@ that may never merge. They are not releases and are not listed here.
   match on is new. Documented in docs/commands.md's "Where they go"
   section.
 
+- `install.sh` now adds its install directory to `PATH` by appending one
+  line to your shell profile (`~/.zshrc`, `~/.bash_profile` or `~/.bashrc`,
+  fish's `config.fish`, otherwise `~/.profile`), the way `install.ps1`
+  already edits the user `PATH` on Windows. It never writes the line twice.
+  Set `MAPBOX_NO_MODIFY_PATH=1` to keep the old behavior of only printing
+  the line. Both installers' output is also shorter and ends with what to
+  run next.
+
+- `install.sh`/`install.ps1`: after the skill question, the install now
+  asks whether to add the Mapbox MCP servers to the coding agents it finds,
+  the same as `mapbox mcp install --global`. It is asked only at a terminal
+  and only when something is not registered yet; the default is no.
+  `MAPBOX_CLI_NO_AGENT_SETUP=1` skips it along with the skill question.
+
+- `install.sh` now writes a log of each run to
+  `~/.local/state/mapbox-cli/install.log` (`$XDG_STATE_HOME` when set):
+  every step, and the full output of each `mapbox` and Tilesets command it
+  ran after installing the binary. The previous run's is kept as
+  `install.log.1`.
+
 - New command: `mapbox styles download <style-id> > style.zip` saves a
   style as a ZIP with its sprite icons and custom fonts. `mapbox auth login`
   now also asks for the `styles:download` scope it needs, so log in again

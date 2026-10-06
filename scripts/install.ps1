@@ -145,9 +145,67 @@
         $ModifyPath = $false
     }
 
-    $Repo = 'https://github.com/mapbox/cli'
+    $Repo = 'https://github.com/mapbox/mapbox-cli'
 
     function Write-Err([string]$Text) { [Console]::Error.WriteLine($Text) }
+
+    # --- presentation ------------------------------------------------------
+    #
+    # Color through Write-Host's own -ForegroundColor rather than ANSI codes:
+    # the console renders it under 5.1 and conhost alike, and a redirected run
+    # drops it by itself. NO_COLOR is honored the way the CLI honors it.
+    $UseColor = -not $env:NO_COLOR
+
+    # The check mark only where the font is known to carry it: Windows
+    # Terminal's Cascadia does, conhost's default Consolas does not. Built
+    # from its code point because this file has to stay ASCII.
+    $MarkOk = '*'
+    if ($env:WT_SESSION) { $MarkOk = [string][char]0x2713 }
+
+    function Write-Part([string]$Text, [string]$Color = '') {
+        if ($UseColor -and $Color) { Write-Host $Text -ForegroundColor $Color -NoNewline }
+        else { Write-Host $Text -NoNewline }
+    }
+    # Where a step line starts. A question's answers are its children, so a
+    # step that asked one sets this two deeper while it reports, then puts it
+    # back. A hashtable so the functions below see the change.
+    $Layout = @{ Indent = '  ' }
+    function Write-Step([string]$Mark, [string]$Color, [string]$Text, [string]$Detail = '') {
+        Write-Part $Layout.Indent
+        Write-Part $Mark $Color
+        Write-Part " $Text"
+        if ($Detail) { Write-Part " $Detail" 'DarkGray' }
+        Write-Host ''
+    }
+    function Write-Ok([string]$Text, [string]$Detail = '') { Write-Step $MarkOk 'Green' $Text $Detail }
+    function Write-Skip([string]$Text) { Write-Step '-' 'DarkGray' $Text }
+    function Write-Warn([string]$Text) { Write-Step '!' 'Yellow' $Text }
+    # A line of detail under the step line before it, aligned with its text.
+    function Write-Detail([string]$Text) { Write-Host "$($Layout.Indent)  $Text" }
+
+    # A question reads in three layers, as in install.sh: the question in the
+    # console's own text color, what answering does in gray under it, and the
+    # command it runs in cyan, so the eye lands on the question and the
+    # command. Not White: on a light console theme it all but disappears.
+    function Write-AskTitle([string]$Text) {
+        Write-Part '  '
+        Write-Part '?' 'Cyan'
+        Write-Part " $Text"
+        Write-Host ''
+    }
+    # -Parts alternates plain note text and a command: note, command, note...
+    function Write-AskNote([string[]]$Parts) {
+        Write-Part '    '
+        for ($i = 0; $i -lt $Parts.Count; $i++) {
+            if ($i % 2) { Write-Part $Parts[$i] 'Cyan' } else { Write-Part $Parts[$i] 'DarkGray' }
+        }
+        Write-Host ''
+    }
+    function Read-AskAnswer([string]$Question) {
+        Write-Part "    $Question "
+        Write-Part '[y/N] ' 'DarkGray'
+        return Read-Host
+    }
 
     # Every failure path ends here. The message is written out in full and then
     # thrown, so the summary line appears twice: once as we wrote it, and once
@@ -377,9 +435,7 @@ This channel is private. Set the credential and run it again:
     if (-not $target) {
         Fail "$manifestUrl lists no artifact for $($candidates -join ' or ')."
     }
-    if ($arch -eq 'ARM64' -and $target -eq 'x86_64-pc-windows-msvc') {
-        Write-Host 'This channel has no arm64 build; installing the x64 one, which Windows 11 on Arm runs under emulation.'
-    }
+    $emulated = $arch -eq 'ARM64' -and $target -eq 'x86_64-pc-windows-msvc'
 
     $entry = $artifacts.$target
     $file = ''
@@ -414,7 +470,19 @@ This channel is private. Set the credential and run it again:
         $archive = Join-Path $workDir $localName
         $artifactUrl = "$BaseUrl/$Version/$file"
 
-        Write-Host "Downloading $artifactUrl"
+        $platformName = 'Windows (x64)'
+        if ($target -like 'aarch64-*') { $platformName = 'Windows (arm64)' }
+        $shownVersion = $resolvedVersion
+        if (-not $shownVersion) { $shownVersion = $Version }
+        Write-Host ''
+        Write-Part "Installing Mapbox CLI $shownVersion"
+        Write-Part " for $platformName" 'DarkGray'
+        Write-Host ''
+        Write-Host ''
+        if ($emulated) {
+            Write-Warn 'This channel has no arm64 build; installing the x64 one, which Windows 11 on Arm runs under emulation.'
+        }
+
         try {
             Invoke-WebRequest -Uri $artifactUrl -OutFile $archive -Headers $headers -UserAgent $UserAgent -UseBasicParsing -TimeoutSec 600
         } catch {
@@ -434,6 +502,12 @@ describes. Try again; if it repeats, do not install it - report it at
 $Repo/issues
 "@
         }
+
+        $sizeBytes = (Get-Item -LiteralPath $archive).Length
+        $invariant = [Globalization.CultureInfo]::InvariantCulture
+        if ($sizeBytes -ge 1MB) { $size = [string]::Format($invariant, '{0:0.0} MB', $sizeBytes / 1MB) }
+        else { $size = [string]::Format($invariant, '{0} KB', [math]::Ceiling($sizeBytes / 1KB)) }
+        Write-Ok "Downloaded $($file.Split('/')[-1])" "($size, SHA-256 verified)"
 
         $unpacked = Join-Path $workDir 'unpacked'
         try {
@@ -541,7 +615,7 @@ watching the folder - and run this again.
         $installedVersion = Get-BinaryVersion $destination
         if (-not $installedVersion) {
             $detail = "Build from source: $Repo"
-            if ($arch -eq 'ARM64' -and $target -eq 'x86_64-pc-windows-msvc') {
+            if ($emulated) {
                 $detail = @"
 This is the x64 build running on arm64, which needs the x64 emulation that
 Windows 11 on Arm has and Windows 10 on Arm does not.
@@ -550,27 +624,13 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
             Fail "installed $destination, but it does not run here. The artifact may be built for a platform other than $target." $detail
         }
 
-        Write-Host ''
-        Write-Host "Installed $installedVersion"
-        Write-Host "  path     $destination"
-        Write-Host "  channel  $Version ($resolvedVersion)"
         if ($previousVersion -and $previousVersion -ne $installedVersion) {
-            Write-Host "  replaced $previousVersion"
+            Write-Ok "Installed $installedVersion to $destination" "(replaced $previousVersion)"
+        } else {
+            Write-Ok "Installed $installedVersion to $destination"
         }
         if ($asideNote) {
-            Write-Host "  note     the copy it replaced is still running; $asideNote is deleted next time"
-        }
-
-        # Said once, here, rather than on every future command: someone piping
-        # this into `iex` is not going to read the man page before their first
-        # run. Skipped when telemetry is already off, since there's nothing to
-        # opt out of.
-        if ($TelemetryAllowed) {
-            Write-Host ''
-            Write-Host 'Mapbox CLI collects telemetry by default. To disable it, set'
-            Write-Host 'MAPBOX_CLI_NO_TELEMETRY=1 before running CLI commands.'
-            Write-Host ''
-            Write-Host 'Learn more: https://github.com/mapbox/mapbox-cli#privacy'
+            Write-Warn "The copy it replaced is still running; $asideNote is deleted next time."
         }
 
         # --- PATH ----------------------------------------------------------
@@ -601,15 +661,12 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
             try {
                 $added = Add-ToUserPath $InstallDir
             } catch {
-                Write-Host ''
-                Write-Host "Could not add $InstallDir to your PATH: $($_.Exception.Message)"
-                Write-Host 'Add it in Settings > "Edit environment variables for your account".'
+                Write-Warn "Could not add $InstallDir to your PATH: $($_.Exception.Message)"
+                Write-Host '    Add it in Settings > "Edit environment variables for your account".'
             }
             if ($added) {
                 Send-EnvironmentChange
-                Write-Host ''
-                Write-Host "Added $InstallDir to your PATH."
-                Write-Host 'Terminals that are already open still have the old one - restart them.'
+                Write-Ok "Added $InstallDir to your PATH" '(other open terminals need a restart)'
             }
             if (-not $alreadyOnPath) {
                 # Whether it was just added or was already in the registry, the
@@ -619,28 +676,25 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
                 $env:Path = $env:Path.TrimEnd(';') + ";$InstallDir"
             }
         } elseif (-not $alreadyOnPath) {
+            Write-Warn "$InstallDir is not on your PATH, and MAPBOX_NO_MODIFY_PATH is set."
+            Write-Host '    Add it in Settings > "Edit environment variables for your account",'
+            Write-Host '    or for this session only:'
             Write-Host ''
-            Write-Host "$InstallDir is not on your PATH, and MAPBOX_NO_MODIFY_PATH is set, so this did"
-            Write-Host 'not add it. Add it in Settings > "Edit environment variables for your account",'
-            Write-Host 'or for this session only:'
+            Write-Host "        `$env:Path += `";$InstallDir`""
             Write-Host ''
-            Write-Host "    `$env:Path += `";$InstallDir`""
         }
 
         if ($shadowing) {
-            Write-Host ''
-            Write-Host "Note: mapbox on your PATH still resolves to $shadowing, which came from"
-            Write-Host 'somewhere else. This script did not touch it. To use the copy just installed,'
-            Write-Host "remove that one, or put $InstallDir ahead of it on PATH - entries from your"
-            Write-Host 'user PATH come after the machine-wide ones.'
+            Write-Warn "mapbox on your PATH still resolves to $shadowing"
+            Write-Host '    That one came from somewhere else, and this script did not touch it. To use'
+            Write-Host "    the copy just installed, remove it, or put $InstallDir ahead of it on PATH -"
+            Write-Host '    entries from your user PATH come after the machine-wide ones.'
         } elseif ($behind) {
-            Write-Host ''
-            Write-Host "Note: there is another mapbox at $behind. $InstallDir comes first on your"
-            Write-Host 'PATH, so a new terminal runs the copy just installed - but a terminal that was'
-            Write-Host 'already open resolves against the PATH it started with, and can go on'
-            Write-Host 'reporting the old version. Restart it, and Get-Command mapbox says which file'
-            Write-Host "it would run. Removing $behind stops this happening again; this script did"
-            Write-Host 'not touch it.'
+            Write-Warn "There is another mapbox at $behind"
+            Write-Host "    $InstallDir comes first on your PATH, so a new terminal runs the copy just"
+            Write-Host '    installed. A terminal that was already open can still resolve the old one:'
+            Write-Host '    Restart it, and Get-Command mapbox says which file it would run. This script'
+            Write-Host '    did not touch the other copy.'
         }
 
         # --- the Tilesets CLI ----------------------------------------------
@@ -651,19 +705,14 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
         # `launch_failed` in src/tilesets_cli.rs says when it is reached on
         # Windows; keep the two in step.
 
-        Write-Host ''
         if ($env:MAPBOX_TILESETS_CLI) {
-            Write-Host "Tilesets CLI: $env:MAPBOX_TILESETS_CLI (MAPBOX_TILESETS_CLI)"
+            Write-Ok "Found Tilesets CLI: $env:MAPBOX_TILESETS_CLI (MAPBOX_TILESETS_CLI)"
         } else {
-            Write-Host 'mapbox is installed and ready to use - the rest of this is optional.'
+            Write-Skip 'Tilesets CLI skipped: only the mapbox tilesets-cli command needs it, and it does not work natively here.'
+            Write-Host '    Run that command from WSL, or point the CLI at a tilesets of your own,'
+            Write-Host '    such as a wrapper that shells into WSL:'
             Write-Host ''
-            Write-Host 'mapbox tilesets-cli is the one command that does not work natively here: it'
-            Write-Host 'forwards to the Python package mapbox-tilesets, which is macOS and Linux only.'
-            Write-Host 'Run those commands from WSL. Every other command works as it does anywhere'
-            Write-Host 'else. If you have a tilesets of your own - a wrapper that shells into WSL,'
-            Write-Host 'say - point the CLI at it:'
-            Write-Host ''
-            Write-Host "    `$env:MAPBOX_TILESETS_CLI = 'C:\path\to\tilesets.cmd'"
+            Write-Host "        `$env:MAPBOX_TILESETS_CLI = 'C:\path\to\tilesets.cmd'"
         }
 
         # --- Coding agent skill ----------------------------------------------
@@ -717,12 +766,14 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
                 $checkOut = (& $destination generate-skills --global --dry-run -o json 2>$null) -join ''
                 if ($LASTEXITCODE -eq 0) {
                     $agentNames = Get-AgentName $checkOut
-                    Write-Host ''
-                    Write-Host "A coding agent was detected on this machine: $agentNames."
+                    Write-Ok "Coding agents found: $agentNames."
                     $doAgentSetup = $false
                     if (-not [Console]::IsInputRedirected) {
-                        Write-Host ''
-                        $answer = Read-Host 'Set up the mapbox CLI skill and the Mapbox Agent Skills library for it? [y/N]'
+                        Write-AskTitle 'Set up the mapbox CLI skill and the Mapbox Agent Skills library for them?'
+                        Write-AskNote @('This runs ', 'mapbox generate-skills --global', ' and ', 'mapbox agent-skills install --global', ',')
+                        Write-AskNote @('now or any time later.')
+                        $answer = Read-AskAnswer 'Set them up now?'
+                        $Layout.Indent = '    '
                         if ($answer -match '^(?i:y|yes)$') { $doAgentSetup = $true }
                     }
                     if ($doAgentSetup) {
@@ -732,7 +783,7 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
                         # keeps out of this script's way.
                         & $destination generate-skills --global *> $null
                         if ($LASTEXITCODE -eq 0) {
-                            Write-Host "Wrote the mapbox CLI skill for: $agentNames."
+                            Write-Ok "Wrote the mapbox CLI skill for: $agentNames."
                         }
 
                         # `install` errors with already_installed on a
@@ -747,7 +798,7 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
                         try {
                             & $destination agent-skills install --global -o json 1>$null 2>$agentStderr
                             if ($LASTEXITCODE -eq 0) {
-                                Write-Host "Installed the Mapbox Agent Skills library for: $agentNames."
+                                Write-Ok "Installed the Mapbox Agent Skills library for: $agentNames."
                             } else {
                                 $agentOut = Get-Content -LiteralPath $agentStderr -Raw -ErrorAction SilentlyContinue
                                 if ($agentOut -and $agentOut.Contains('"code":"already_installed"')) {
@@ -757,10 +808,10 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
                                         if ($LASTEXITCODE -eq 0) {
                                             if ($updateOut.Contains('"updated":[]')) {
                                                 & $destination agent-skills update --global *> $null
-                                                Write-Host "Updated the Mapbox Agent Skills library for: $agentNames."
+                                                Write-Ok "Updated the Mapbox Agent Skills library for: $agentNames."
                                             } else {
-                                                Write-Host 'Some Mapbox Agent Skills have local changes and were left alone.'
-                                                Write-Host "Run 'mapbox agent-skills update --global' to review and replace them."
+                                                Write-Warn 'Some Mapbox Agent Skills have local changes and were left alone.'
+                                                Write-Detail "Run 'mapbox agent-skills update --global' to review and replace them."
                                             }
                                         }
                                     } finally {
@@ -772,15 +823,136 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
                             Remove-Item -LiteralPath $agentStderr -Force -ErrorAction SilentlyContinue
                         }
                     } else {
-                        Write-Host 'Not set up. Run these any time:'
-                        Write-Host '  mapbox generate-skills --global'
-                        Write-Host '  mapbox agent-skills install --global'
+                        Write-Skip 'Not set up. Run these any time:'
+                        Write-Detail 'mapbox generate-skills --global'
+                        Write-Detail 'mapbox agent-skills install --global'
+                    }
+                    $Layout.Indent = '  '
+                }
+            } finally {
+                $ErrorActionPreference = $previousErrorAction
+            }
+        }
+
+        # --- Mapbox MCP servers ----------------------------------------------
+        #
+        # A separate question from the skill above: this registers a hosted
+        # server in the coding agent's own config, next to servers the user
+        # added, rather than writing a directory this CLI owns. `mapbox mcp
+        # install` never replaces an entry that is already there (src/mcp.rs),
+        # so on a reinstall it is only offered when something is left to
+        # register. Same opt-out and same no-console rule as the skill.
+        if ($AgentSetupAllowed) {
+            $previousErrorAction = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                # Fails with mcp_client_not_found when no supported client is
+                # installed, which is most machines: nothing to offer, so
+                # nothing is said.
+                $mcpCheck = (& $destination mcp install --global --dry-run -o json 2>$null) -join ''
+                if ($LASTEXITCODE -eq 0) {
+                    $clientLabels = @{
+                        'claude-code' = 'Claude Code'; 'codex' = 'Codex'
+                        'vscode' = 'VS Code'; 'cursor' = 'Cursor'
+                    }
+                    $mcpClients = @(($mcpCheck | ConvertFrom-Json).results |
+                            Where-Object { $_.status -eq 'would_install' } |
+                            ForEach-Object { $_.client } | Select-Object -Unique |
+                            ForEach-Object { if ($clientLabels.ContainsKey($_)) { $clientLabels[$_] } else { $_ } }) -join ', '
+                    if ($mcpClients) {
+                        $doMcpSetup = $false
+                        if (-not [Console]::IsInputRedirected) {
+                            Write-AskTitle "Add the Mapbox MCP servers to ${mcpClients}?"
+                            Write-AskNote @('This runs ', 'mapbox mcp install --global', ', now or any time later.')
+                            $answer = Read-AskAnswer 'Add them now?'
+                            $Layout.Indent = '    '
+                            if ($answer -match '^(?i:y|yes)$') { $doMcpSetup = $true }
+                        }
+                        if ($doMcpSetup) {
+                            # Each client's own CLI does the registering, and
+                            # Codex's can stop to print a sign-in URL, so
+                            # stderr - where mapbox forwards what they print -
+                            # is left on the console, live. No spinner: a
+                            # second writer to the console is not worth it
+                            # here without a terminal to test it on.
+                            Write-Part $Layout.Indent
+                            Write-Part '...' 'Cyan'
+                            Write-Host ' Adding the Mapbox MCP servers'
+                            $mcpOut = (& $destination mcp install --global -o json) -join ''
+                            $mcpOk = $LASTEXITCODE -eq 0
+                            # One line per server and outcome, clients joined,
+                            # so a server added just now reads differently from
+                            # one that was already there.
+                            $serverLabels = @{ 'mapbox' = 'Mapbox MCP'; 'mapbox-devkit' = 'Mapbox DevKit MCP' }
+                            $rows = @()
+                            try { $rows = @(($mcpOut | ConvertFrom-Json).results) } catch { $rows = @() }
+                            $groups = [ordered]@{}
+                            foreach ($row in $rows) {
+                                $what = if ($serverLabels.ContainsKey($row.server)) { $serverLabels[$row.server] } else { $row.server }
+                                $who = if ($clientLabels.ContainsKey($row.client)) { $clientLabels[$row.client] } else { $row.client }
+                                $key = "$($row.status)|$what"
+                                if (-not $groups.Contains($key)) { $groups[$key] = @() }
+                                $groups[$key] += $who
+                            }
+                            foreach ($key in $groups.Keys) {
+                                $status, $what = $key -split '\|', 2
+                                $who = $groups[$key] -join ', '
+                                switch ($status) {
+                                    'installed' { Write-Ok "Added $what to $who" }
+                                    'already_installed' { Write-Skip "$what was already in $who" }
+                                    'installed_login_incomplete' { Write-Warn "Added $what to $who, but sign-in did not finish" }
+                                    'client_not_found' { Write-Warn "Skipped $what for ${who}: CLI not on PATH" }
+                                    'config_unreadable' { Write-Warn "Skipped $what for ${who}: config could not be read" }
+                                    default { Write-Warn "Could not add $what to $who" }
+                                }
+                            }
+                            if (-not $mcpOk) {
+                                if ($rows.Count -eq 0) { Write-Warn 'Could not add the Mapbox MCP servers.' }
+                                Write-Detail "Run 'mapbox mcp install --global' to see why and try again."
+                            }
+                        } else {
+                            Write-Skip "Mapbox MCP servers not added to $mcpClients. Run this any time:"
+                            Write-Detail 'mapbox mcp install --global'
+                        }
+                        $Layout.Indent = '  '
                     }
                 }
             } finally {
                 $ErrorActionPreference = $previousErrorAction
             }
         }
+
+        # --- summary -------------------------------------------------------
+        #
+        # The last thing on screen, because it is what the reader acts on. The
+        # PATH of the session that ran this was updated above, so under
+        # `irm | iex` mapbox already works in it.
+
+        Write-Host ''
+        Write-Part "$installedVersion is ready." 'Green'
+        Write-Host ''
+        Write-Host ''
+        Write-Part 'Get started'
+        Write-Host ''
+        foreach ($pair in @(
+                @('mapbox auth login', 'Sign in to your Mapbox account'),
+                @('mapbox --help', 'See every command'))) {
+            Write-Part ('  {0,-20}' -f $pair[0]) 'Cyan'
+            Write-Host " $($pair[1])"
+        }
+        Write-Host ''
+        Write-Host 'Docs: https://cli.mapbox.com'
+
+        # Said once, here, rather than on every future command: someone piping
+        # this into `iex` is not going to read the man page before their first
+        # run. Skipped when telemetry is already off, since there's nothing to
+        # opt out of.
+        if ($TelemetryAllowed) {
+            Write-Host ''
+            Write-Host 'Mapbox CLI collects telemetry by default. To disable it, set'
+            Write-Host 'MAPBOX_CLI_NO_TELEMETRY=1. Learn more: https://github.com/mapbox/mapbox-cli#privacy'
+        }
+        Write-Host ''
     } finally {
         if ($staged -and (Test-Path -LiteralPath $staged)) {
             Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue

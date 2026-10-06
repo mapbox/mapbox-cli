@@ -86,6 +86,10 @@ curl -fsSL https://cli.mapbox.com/install.sh | MAPBOX_CLI_VERSION=0.3.0 sh
 $env:MAPBOX_CLI_VERSION = '0.3.0'; irm https://cli.mapbox.com/install.ps1 | iex
 ```
 
+Both scripts put the install directory on your `PATH`: `install.sh` adds a
+line to your shell profile, `install.ps1` edits the user `PATH`. Set
+`MAPBOX_NO_MODIFY_PATH=1` to skip that and only print what to add.
+
 `MAPBOX_INSTALL_DIR` chooses where the binary lands. The scripts' sources
 are [`scripts/install.sh`](./scripts/install.sh) and
 [`scripts/install.ps1`](./scripts/install.ps1).
@@ -95,8 +99,28 @@ and the rest of the fifteen `agent-skills` supports), it asks, once, whether
 to set up this CLI's own [skill](#generate-skills) and the Mapbox Agent
 Skills library for it, naming the agent before it writes anything. Answer no,
 or run the script somewhere with no terminal to ask on (CI, a container), and
-it does neither, printing the two commands to run by hand instead. Set
-`MAPBOX_CLI_NO_AGENT_SETUP=1` to skip the question entirely.
+it does neither, printing the two commands to run by hand instead.
+
+It then asks, separately, whether to add the [Mapbox MCP servers](#mcp-servers)
+to each coding agent it finds that can take one (Claude Code, Codex, VS Code,
+Cursor), the same thing `mapbox mcp install --global` does. It asks only when
+there is something left to add, with the same rules: no terminal means no.
+Set `MAPBOX_CLI_NO_AGENT_SETUP=1` to skip both questions.
+
+On macOS and Linux, `install.sh` also offers to install the
+[Tilesets CLI](https://github.com/mapbox/tilesets-cli), which only
+`mapbox tilesets-cli` needs. `MAPBOX_INSTALL_TILESETS=yes` or `no` answers
+that question in advance; with no terminal, the answer is no. To install
+without being asked anything:
+
+```sh
+curl -fsSL https://cli.mapbox.com/install.sh | MAPBOX_CLI_NO_AGENT_SETUP=1 MAPBOX_INSTALL_TILESETS=no sh
+```
+
+`install.sh` records each run in `~/.local/state/mapbox-cli/install.log`
+(under `$XDG_STATE_HOME` when that is set): every step, and the full output of
+each `mapbox` and Tilesets command it ran after installing the binary. The
+previous run's log is kept as `install.log.1`.
 
 ### Download the archive yourself
 

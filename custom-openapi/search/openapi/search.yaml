@@ -488,31 +488,6 @@ paths:
           description: "When SAR is enabled, maximum detour allowed in estimated minutes from the route."
           schema:
             type: number
-        - name: "eta_type"
-          in: query
-          required: false
-          description: >-
-            Enable ETA calculation in the response. The only allowed value
-            is `navigation`; also requires `navigation_profile` and either
-            `origin` or `proximity`.
-          schema:
-            type: string
-            enum: ["navigation"]
-        - name: "navigation_profile"
-          in: query
-          required: false
-          description: "When ETA calculation is enabled, the routing profile to use."
-          schema:
-            type: string
-            enum: ["driving", "walking", "cycling"]
-        - name: "origin"
-          in: query
-          required: false
-          description: >-
-            When ETA calculation is enabled, the location to calculate
-            distance from, as `longitude,latitude`.
-          schema:
-            type: string
       responses:
         "200":
           description: A GeoJSON FeatureCollection of matching features.

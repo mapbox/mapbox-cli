@@ -1385,6 +1385,7 @@ session behind it.
 | `--auto-complete` | Include partial and fuzzy matches, for autocomplete-style input. |
 | `--sar-type isochrone` + `--route <polyline>` + `--route-geometry <polyline\|polyline6>` | Search-along-route: results near a route rather than a point. |
 | `--time-deviation <minutes>` | With SAR, maximum detour allowed from the route. |
+| `--eta-type navigation` + `--navigation-profile <driving\|walking\|cycling>` + `--origin <lon,lat>` | Include an ETA in each result, from `--origin` (or `--proximity`) to it. |
 
 #### Examples
 

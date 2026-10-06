@@ -286,6 +286,24 @@ fn build_operation_command(op: &spec::Operation) -> Command {
         }
     }
 
+    for field in &op.body_fields {
+        // The default is shown, not set: a clap default would always be
+        // present and override the same property in `--data`.
+        let help = match &field.default {
+            Some(default) => format!("{} [default: {default}]", help_text(field)),
+            None => help_text(field),
+        };
+        let mut arg = Arg::new(field.arg_name.clone())
+            .long(field.arg_name.clone())
+            .help(help);
+        if let Some(kind) = field.numeric {
+            arg = arg.value_parser(numeric_parser(kind));
+        } else if !field.enum_values.is_empty() {
+            arg = arg.value_parser(PossibleValuesParser::new(&field.enum_values));
+        }
+        cmd = cmd.arg(arg);
+    }
+
     // Only where it can mean something. A `GET` has no plan worth previewing,
     // and the same reasoning that keeps unusable operations off the command
     // surface entirely keeps this flag off the commands it would do nothing
@@ -1742,15 +1760,8 @@ mod tests {
             .filter(|op| op.disabled_scope.is_some())
             .map(|op| op.command())
             .collect();
-        // Every current UNSUPPORTED_OPERATIONS entry sourced from
-        // `MAPBOX_SPEC_ENTRIES` is also `disabled` (or `tbd`, which strips
-        // the same way) in the maintainer-only decision record, so those
-        // are absent from the bundled specs rather than merely filtered
-        // here. A custom spec has no such record to strip it at the
-        // source — `feedback.yaml`'s `createFeedback` is UNSUPPORTED_OPERATIONS'
-        // first entry that actually reaches this list non-empty — so the
-        // loop below is doing real work for it, not just standing guard
-        // over an empty case.
+        // Empty today: every UNSUPPORTED_OPERATIONS entry is also stripped
+        // from the bundled specs by the maintainer-only decision record.
 
         let app = build_app(&specs);
         for (path, _) in leaf_commands(&app, &[]) {

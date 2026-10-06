@@ -28,6 +28,8 @@ pub struct Operation {
     /// What the spec says this operation's request body may carry, if it
     /// takes one at all.
     pub body: Option<RequestBody>,
+    /// JSON body properties that are also flags. See [`BODY_FIELD_FLAGS`].
+    pub body_fields: Vec<Parameter>,
     pub base_url: String,
     /// Set when the operation needs a scope that isn't registrable as OAuth
     /// (see `UNSUPPORTED_OPERATIONS` below). A `mapbox auth login` token can
@@ -67,6 +69,27 @@ pub struct Operation {
     /// parse time rather than written in the table.
     pub hidden_aliases: Vec<String>,
 }
+
+/// A body property and its default.
+type BodyField = (&'static str, Option<&'static str>);
+
+/// JSON body properties also taken as flags (`--lat 60.17`), merged into
+/// `--data`. Opt-in per property: `id` would clash with the global `--id`,
+/// and `feature`/`screenshot` are no command-line values.
+///
+/// The API requires `lat`/`lon`, but some feedback has no place. The
+/// Feedback API team's advice (2026-10-06) is to send 0,0 until the pair
+/// becomes optional; drop the defaults then.
+const BODY_FIELD_FLAGS: &[(&str, &str, &[BodyField])] = &[(
+    "feedback",
+    "create",
+    &[
+        ("feedback", None),
+        ("lat", Some("0")),
+        ("lon", Some("0")),
+        ("category", None),
+    ],
+)];
 
 /// (service, operationId, the media type the API actually wants) for
 /// operations whose spec gets the content type wrong.
@@ -497,13 +520,6 @@ const UNSUPPORTED_OPERATIONS: &[(&str, &str, &str)] = &[
     ("accounts", "createToken", "tokens:write"),
     ("accounts", "updateToken", "tokens:write"),
     ("accounts", "deleteToken", "tokens:write"),
-    // Confirmed 2026-09-24 with a direct POST /oauth/register against
-    // production requesting `user-feedback:write` alongside two scopes
-    // already known registrable — the response's granted `scope` carried
-    // the other two and silently dropped this one, the same shape
-    // `tokens:write` above already documents. `user-feedback:read`
-    // (list/get) is unaffected and already in `DEFAULT_SCOPES_LIST`.
-    ("feedback", "createFeedbackItem", "user-feedback:write"),
 ];
 
 fn unsupported_scope_for(service_name: &str, operation_id: &str) -> Option<&'static str> {
@@ -525,6 +541,8 @@ pub struct Parameter {
     /// finding out the value is wrong. No `boolean` here — that's handled
     /// as a flag instead of a value.
     pub numeric: Option<Numeric>,
+    /// Only body fields have one; see [`BODY_FIELD_FLAGS`].
+    pub default: Option<String>,
 }
 
 /// A numeric parameter's width. Kept separate from the plain string case,
@@ -940,6 +958,12 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
                 }
             });
 
+            let body_fields = match operation_id.and_then(|id| body_field_names(service_name, id)) {
+                Some(names) => body_field_parameters(op, &doc, names)
+                    .with_context(|| format!("{service_name} {}", operation_id.unwrap_or("")))?,
+                None => vec![],
+            };
+
             let disabled_scope =
                 operation_id.and_then(|id| unsupported_scope_for(service_name, id));
 
@@ -957,6 +981,7 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
                 path_params,
                 query_params,
                 body,
+                body_fields,
                 base_url: base_url.clone(),
                 disabled_scope,
                 detail: None,
@@ -1030,6 +1055,65 @@ fn parse_request_body(op: &Value, full_spec: &Value) -> Option<RequestBody> {
         content_types,
         multipart_field,
     })
+}
+
+fn body_field_names(service: &str, operation_id: &str) -> Option<&'static [BodyField]> {
+    BODY_FIELD_FLAGS
+        .iter()
+        .find(|(s, id, _)| *s == service && *id == operation_id)
+        .map(|(_, _, names)| *names)
+}
+
+/// Nothing enforces `required`, since `--data` may carry the property; the
+/// description says it instead.
+fn body_field_parameters(
+    op: &Value,
+    full_spec: &Value,
+    fields: &[BodyField],
+) -> Result<Vec<Parameter>> {
+    let schema = &op["requestBody"]["content"]["application/json"]["schema"];
+    let schema = match schema["$ref"].as_str() {
+        Some(reference) => resolve_ref(full_spec, reference).unwrap_or(schema),
+        None => schema,
+    };
+    let required: Vec<&str> = schema["required"]
+        .as_sequence()
+        .map(|names| names.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+
+    fields
+        .iter()
+        .map(|(name, default)| {
+            let property = &schema["properties"][*name];
+            let numeric = match property["type"].as_str() {
+                Some("string") => None,
+                Some("number") => Some(Numeric::Float),
+                Some("integer") => Some(Numeric::Integer),
+                _ => anyhow::bail!(
+                    "body property `{name}` is listed in BODY_FIELD_FLAGS but is not a string \
+                     or number in the spec"
+                ),
+            };
+            let required = required.contains(name) && default.is_none();
+            let description = property["description"].as_str().map(first_paragraph);
+            Ok(Parameter {
+                name: name.to_string(),
+                arg_name: name.replace('_', "-"),
+                required,
+                description: match (description, required) {
+                    (Some(text), true) => Some(format!("{text} Required, here or in `--data`.")),
+                    (description, _) => description,
+                },
+                default: default.map(str::to_string),
+                enum_values: property["enum"]
+                    .as_sequence()
+                    .map(|values| values.iter().filter_map(scalar_to_string).collect())
+                    .unwrap_or_default(),
+                is_boolean: false,
+                numeric,
+            })
+        })
+        .collect()
 }
 
 /// The multipart property that carries the uploaded files.
@@ -1237,6 +1321,7 @@ fn parse_parameter(val: &Value) -> Option<Parameter> {
         enum_values,
         is_boolean,
         numeric,
+        default: None,
     })
 }
 
@@ -1628,6 +1713,38 @@ paths:
     }
 
     #[test]
+    fn a_body_field_flag_needs_a_scalar_the_spec_declares() {
+        let op: Value = serde_yaml::from_str(
+            r#"
+requestBody:
+  content:
+    application/json:
+      schema:
+        type: object
+        required: [lat]
+        properties:
+          lat: { type: number, description: "Latitude." }
+          feature: { type: object }
+"#,
+        )
+        .unwrap();
+
+        let fields = body_field_parameters(&op, &op, &[("lat", None)]).unwrap();
+        assert_eq!(fields[0].numeric, Some(Numeric::Float));
+        assert_eq!(
+            fields[0].description.as_deref(),
+            Some("Latitude. Required, here or in `--data`.")
+        );
+        assert!(body_field_parameters(&op, &op, &[("feature", None)]).is_err());
+        assert!(body_field_parameters(&op, &op, &[("renamed", None)]).is_err());
+
+        let fields = body_field_parameters(&op, &op, &[("lat", Some("0"))]).unwrap();
+        assert!(!fields[0].required);
+        assert_eq!(fields[0].default.as_deref(), Some("0"));
+        assert_eq!(fields[0].description.as_deref(), Some("Latitude."));
+    }
+
+    #[test]
     fn an_operation_with_no_request_body_has_none() {
         let svc = service(BODIES);
         assert!(operation(&svc, "list-styles").body.is_none());
@@ -1960,37 +2077,24 @@ paths:
         assert!(hidden.is_empty());
     }
 
-    /// `createFeedbackItem` needs `user-feedback:write`, confirmed
-    /// unregistrable via a direct `POST /oauth/register` against
-    /// production — see `UNSUPPORTED_OPERATIONS`'s own comment for that.
-    /// `list` and `get` need only `user-feedback:read`, already in
-    /// `DEFAULT_SCOPES_LIST`, so they must stay reachable.
+    /// All three are commands: `list` and `get` need `user-feedback:read`
+    /// and `create` needs `user-feedback:write`, both of which a login asks
+    /// for.
     #[test]
-    fn feedback_create_is_unreachable_but_list_and_get_are_not() {
+    fn every_feedback_operation_is_exposed() {
         let spec = parse_spec(
             "feedback",
             include_str!("../custom-openapi/feedback/openapi/feedback.yaml"),
         )
         .expect("feedback.yaml parses");
 
-        let create = spec
-            .operations
-            .iter()
-            .find(|op| op.command_path == ["create-feedback-item"])
-            .expect("the create-feedback-item operation exists in the spec");
-        assert!(
-            create.disabled_scope.is_some(),
-            "createFeedbackItem must be disabled — user-feedback:write isn't registrable"
-        );
-        assert!(!create.is_exposed());
-
-        for path in [["list"], ["get"]] {
+        for path in [["list"], ["get"], ["create"]] {
             let op = spec
                 .operations
                 .iter()
                 .find(|op| op.command_path == path)
                 .unwrap_or_else(|| panic!("the {path:?} operation exists in the spec"));
-            assert!(op.is_exposed(), "{path:?} needs only user-feedback:read");
+            assert!(op.is_exposed(), "{path:?} must be a command");
         }
     }
 }

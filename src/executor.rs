@@ -209,6 +209,8 @@ fn dispatch(
     let data = data_argument
         .as_ref()
         .map(|argument| argument.body.as_ref());
+    let merged_body = merge_body_fields(&op.body_fields, matches, data)?;
+    let data = merged_body.as_deref().or(data);
     let files: Vec<&str> = matches
         .try_get_many::<String>("file")
         .ok()
@@ -972,6 +974,66 @@ fn read_stdin() -> Result<String> {
     Ok(body)
 }
 
+/// `--data` with the body-field flags set on it, or `None` if nothing was
+/// set. A flag wins over `--data`; a default fills only what neither set.
+fn merge_body_fields(
+    fields: &[Parameter],
+    matches: &ArgMatches,
+    data: Option<&str>,
+) -> Result<Option<String>> {
+    if fields.is_empty() {
+        return Ok(None);
+    }
+
+    let mut body = match data {
+        None => serde_json::Map::new(),
+        Some(data) => match serde_json::from_str(data) {
+            Ok(serde_json::Value::Object(object)) => object,
+            Ok(_) => {
+                return Err(CliError::new(
+                    "invalid_data",
+                    "`--data` must be a JSON object for this command.",
+                )
+                .into())
+            }
+            Err(e) => {
+                return Err(
+                    CliError::new("invalid_data", format!("Invalid JSON for --data: {e}")).into(),
+                )
+            }
+        },
+    };
+
+    let mut changed = false;
+    for field in fields {
+        let given = matches
+            .try_get_one::<String>(&field.arg_name)
+            .ok()
+            .flatten();
+        let raw = match (given, &field.default) {
+            (Some(raw), _) => raw,
+            (None, Some(default)) if !body.contains_key(&field.name) => default,
+            (None, _) => continue,
+        };
+        let value = match field.numeric {
+            None => serde_json::Value::String(raw.clone()),
+            Some(_) => serde_json::from_str::<serde_json::Number>(raw)
+                .map(serde_json::Value::Number)
+                // clap's check takes `NaN` and `inf`, which JSON has no way to write.
+                .map_err(|_| {
+                    CliError::new(
+                        "invalid_data",
+                        format!("`--{}` needs a finite number, not `{raw}`.", field.arg_name),
+                    )
+                })?,
+        };
+        body.insert(field.name.clone(), value);
+        changed = true;
+    }
+
+    Ok(changed.then(|| serde_json::Value::Object(body).to_string()))
+}
+
 /// Picks between `--data` and `--file` for an operation that takes a body.
 ///
 /// Kept pure: every rejection here is a mistake the caller can fix from
@@ -1442,10 +1504,10 @@ fn write_binary(body: &[u8], content_type: &str) -> Result<()> {
 mod tests {
     use super::{
         binary_notice, binary_notice_enabled, describe_body, empty_success_line,
-        extra_query_from_env, file_name_of, is_binary_content_type, part_media_type, path_segment,
-        payload_of, query_pairs, redacted_url, request_id, resolve_body_source, resolve_data,
-        shell_value, substitute_path_param, with_page_context, BodySource, NextPage,
-        ResponseHeaders, ACCESS_TOKEN, EXTRA_QUERY_ENV, REQUEST_ID_HEADERS,
+        extra_query_from_env, file_name_of, is_binary_content_type, merge_body_fields,
+        part_media_type, path_segment, payload_of, query_pairs, redacted_url, request_id,
+        resolve_body_source, resolve_data, shell_value, substitute_path_param, with_page_context,
+        BodySource, NextPage, ResponseHeaders, ACCESS_TOKEN, EXTRA_QUERY_ENV, REQUEST_ID_HEADERS,
     };
     use std::borrow::Cow;
 
@@ -2138,6 +2200,60 @@ mod tests {
             enum_values: vec![],
             is_boolean: false,
             numeric: None,
+            default: None,
+        }
+    }
+
+    fn merge(args: &[&str], data: Option<&str>) -> anyhow::Result<Option<String>> {
+        let lat = Parameter {
+            numeric: Some(crate::spec::Numeric::Float),
+            default: Some("0".to_string()),
+            ..param("lat")
+        };
+        let fields = [lat, param("category")];
+        let matches = clap::Command::new("create")
+            .allow_negative_numbers(true)
+            .arg(clap::Arg::new("lat").long("lat"))
+            .arg(clap::Arg::new("category").long("category"))
+            .get_matches_from(std::iter::once("create").chain(args.iter().copied()));
+        merge_body_fields(&fields, &matches, data)
+    }
+
+    #[test]
+    fn nothing_to_set_leaves_data_as_typed() {
+        assert_eq!(merge(&[], Some(r#"{"lat": 1.50}"#)).unwrap(), None);
+    }
+
+    #[test]
+    fn a_default_fills_only_what_nothing_else_set() {
+        let body = |args: &[&str], data| -> serde_json::Value {
+            serde_json::from_str(&merge(args, data).unwrap().unwrap()).unwrap()
+        };
+        assert_eq!(body(&[], None), serde_json::json!({ "lat": 0 }));
+        assert_eq!(
+            body(&["--lat", "-1.5"], None),
+            serde_json::json!({ "lat": -1.5 })
+        );
+        assert_eq!(
+            body(&["--category", "poi"], Some(r#"{"lat": 2}"#)),
+            serde_json::json!({ "lat": 2, "category": "poi" })
+        );
+    }
+
+    #[test]
+    fn a_field_flag_needs_data_to_be_an_object() {
+        let err = merge(&["--category", "poi"], Some("[1]")).unwrap_err();
+        let err = err.downcast_ref::<CliError>().unwrap();
+        assert_eq!(err.code, "invalid_data");
+    }
+
+    /// clap's numeric check accepts these, and JSON has no way to send them.
+    #[test]
+    fn a_number_field_refuses_what_json_cannot_write() {
+        for raw in ["NaN", "inf"] {
+            let err = merge(&["--lat", raw], None).unwrap_err();
+            let err = err.downcast_ref::<CliError>().unwrap();
+            assert_eq!(err.code, "invalid_data", "{raw}");
         }
     }
 

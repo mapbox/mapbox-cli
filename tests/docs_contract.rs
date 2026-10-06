@@ -21,7 +21,8 @@
 //! invocation it spells must name a real command, and every top-level
 //! command must appear in it. That one exists because the README's list of
 //! API groups went on naming four groups the binary no longer had, and
-//! nothing here read the README.
+//! nothing here read the README. The agent-setup prompt under `site/` gets
+//! the same check plus its flags, because agents run it verbatim.
 //!
 //! Three things it deliberately doesn't do, written down so the next
 //! reader doesn't have to re-derive the scope:
@@ -391,17 +392,17 @@ fn readme() -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
-/// Every `mapbox …` invocation in README.md, with its line number.
+/// Every `mapbox …` invocation in a Markdown file, with its line number.
 ///
 /// Read from shell-language fenced blocks and from inline code spans. An
 /// unlabeled fence is skipped: it holds printed output, like the update
 /// notice's "A newer mapbox is available", which is prose, not a command.
-fn readme_invocations(readme: &str) -> Vec<(usize, String)> {
+fn invocations(text: &str) -> Vec<(usize, String)> {
     const SHELLS: [&str; 3] = ["sh", "console", "powershell"];
     let mut found = Vec::new();
     let mut fence: Option<bool> = None;
 
-    for (index, line) in readme.lines().enumerate() {
+    for (index, line) in text.lines().enumerate() {
         let number = index + 1;
         if let Some(lang) = line.trim_start().strip_prefix("```") {
             fence = match fence {
@@ -443,23 +444,34 @@ fn is_path_word(word: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-#[test]
-fn every_command_the_readme_spells_exists() {
-    let schema = schema();
-    let full: BTreeSet<&str> = commands(&schema).iter().map(name).collect();
+/// Every invocation in `text` that names a command the CLI doesn't have,
+/// as `file:line: mapbox …`.
+///
+/// Also checks the flags of an invocation that resolves to a full command
+/// when `check_flags` is set. The README leaves them out because a flag
+/// there is illustration; in the agent-setup prompt it is an instruction an
+/// agent runs verbatim, so a renamed flag is a broken setup.
+fn unknown_invocations(file: &str, text: &str, schema: &Value, check_flags: bool) -> Vec<String> {
+    let full: BTreeMap<&str, &Value> = commands(schema).iter().map(|c| (name(c), c)).collect();
     // Every group a command sits under, like `mapbox styles draft`, so an
     // invocation may stop at a group without naming an operation.
     let mut prefixes = BTreeSet::new();
-    for command in &full {
+    for command in full.keys() {
         let mut path = String::from("mapbox");
         for word in command.split_whitespace().skip(1) {
             path = format!("{path} {word}");
             prefixes.insert(path.clone());
         }
     }
+    let globals: BTreeSet<&str> = schema["global_options"]
+        .as_array()
+        .expect("global_options")
+        .iter()
+        .filter_map(|option| option["flag"].as_str())
+        .collect();
 
     let mut unknown = Vec::new();
-    for (line, invocation) in readme_invocations(&readme()) {
+    for (line, invocation) in invocations(text) {
         let mut words = invocation.split_whitespace().skip(1).peekable();
         // `mapbox --profile NAME styles list`: a leading global flag takes a
         // value this check can't tell apart from a command, so the rest of
@@ -468,26 +480,76 @@ fn every_command_the_readme_spells_exists() {
             continue;
         }
         let mut path = String::from("mapbox");
+        let mut known = true;
         for word in words.take_while(|word| is_path_word(word)) {
             let longer = format!("{path} {word}");
             if prefixes.contains(&longer) {
                 path = longer;
-            } else if full.contains(path.as_str()) {
+            } else if full.contains_key(path.as_str()) {
                 // A positional argument, like `completion bash`.
                 break;
             } else {
-                unknown.push(format!("README.md:{line}: {longer}"));
+                unknown.push(format!("{file}:{line}: {longer}"));
+                known = false;
                 break;
             }
         }
+        let Some(command) = full.get(path.as_str()).filter(|_| known && check_flags) else {
+            continue;
+        };
+        let takes: BTreeSet<&str> = command["arguments"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|argument| argument["flag"].as_str())
+            .collect();
+        let mut flags = BTreeSet::new();
+        flags_in(&invocation, &mut flags);
+        for flag in flags {
+            if !takes.contains(flag.as_str()) && !globals.contains(flag.as_str()) {
+                unknown.push(format!("{file}:{line}: {path} {flag}"));
+            }
+        }
     }
+    unknown
+}
 
+#[test]
+fn every_command_the_readme_spells_exists() {
+    let unknown = unknown_invocations("README.md", &readme(), &schema(), false);
     assert!(
         unknown.is_empty(),
         "README.md names commands the CLI doesn't have:\n{}\n\
          `mapbox --schema` lists what it does have.{}",
         unknown.join("\n"),
         spec_revision_note()
+    );
+}
+
+/// The agent-setup prompt published at cli.mapbox.com/agent-setup/prompt.md.
+/// Agents run its commands without a person reading them first, so a
+/// command or flag it names that this binary doesn't have is a setup that
+/// fails for everyone who follows it. The rest of the page — the skills,
+/// the MCP servers, other agents' config formats — belongs to other
+/// projects, and nothing here can check it.
+#[test]
+fn every_command_the_agent_setup_prompt_spells_exists() {
+    const PROMPT: &str = "site/agent-setup/prompt.md";
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(PROMPT);
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    assert!(
+        !invocations(&text).is_empty(),
+        "{PROMPT} spells no `mapbox …` invocation, so this test checks nothing"
+    );
+
+    let unknown = unknown_invocations(PROMPT, &text, &schema(), true);
+    assert!(
+        unknown.is_empty(),
+        "{PROMPT} names commands or flags the CLI doesn't have:\n{}\n\
+         `mapbox --schema` lists what it does have.",
+        unknown.join("\n")
     );
 }
 
@@ -502,7 +564,7 @@ fn every_top_level_command_appears_in_the_readme() {
         })
         .collect();
 
-    let mentioned: BTreeSet<String> = readme_invocations(&readme())
+    let mentioned: BTreeSet<String> = invocations(&readme())
         .into_iter()
         .filter_map(|(_, invocation)| {
             let group = invocation.split_whitespace().nth(1)?;

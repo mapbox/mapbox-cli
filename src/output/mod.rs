@@ -239,7 +239,7 @@ fn encode(value: &Value, pretty: bool) -> Result<String> {
 /// suits one, and pretty-printed otherwise.
 ///
 /// `service` gates the exception — see [`list_rendering`]: `search`'s,
-/// `geocoder`'s and `tilequery`'s GeoJSON render as a list instead. Every
+/// `geocoder`'s and `tilesets query`'s GeoJSON render as a list instead. Every
 /// other value takes the path it always has.
 ///
 /// `page` is the note that this response is one page of several. It goes to

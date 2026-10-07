@@ -633,7 +633,7 @@ rather than from the spec:
 | One key holding an array of like objects | The same table — `{"icons":[…]}` is still a listing |
 | A single object | A field list, one level of nesting flattened onto dotted keys |
 | No body at all | A confirmation naming what happened — `Deleted <id>.`, or `{"ok":true,…}` |
-| A `search`, `geocoder` or `tilequery` `FeatureCollection` | A numbered list, one entry per feature — see the paragraph below |
+| A `search`, `geocoder` or `tilesets query` `FeatureCollection` | A numbered list, one entry per feature — see the paragraph below |
 | Anything else | Pretty-printed JSON — every other command group's GeoJSON, style documents and bare values lose their meaning in a table |
 
 A table shows the columns most rows have, that vary, and that do not repeat
@@ -662,7 +662,7 @@ usually wants a result for), never clipped:
    24.7454,59.437
 ```
 
-`geocoder`'s and `tilequery`'s `FeatureCollection`s render as a numbered list
+`geocoder`'s and `tilesets query`'s `FeatureCollection`s render as a numbered list
 for the same reason — see their own sections for the shape. The match is on
 those three command-group names exactly, so another command group that answers with
 GeoJSON keeps falling to pretty-printed JSON; its nesting is the information
@@ -671,7 +671,7 @@ to show falls the whole collection back to JSON rather than print a blank
 numbered entry — a feature that also carries a geometry still keeps its
 coordinate line, since the guard checks what the row ended up with, not the
 properties directly. A conforming response never reaches that case:
-`geocoder` requires `name`/`feature_type` on every feature, `tilequery`
+`geocoder` requires `name`/`feature_type` on every feature, `tilesets query`
 requires `tilequery.layer`.
 
 Two of the nine command groups can answer with bytes — `static` and

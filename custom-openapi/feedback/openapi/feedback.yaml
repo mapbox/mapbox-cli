@@ -6,15 +6,8 @@ openapi: "3.0.0"
 #
 # Hand-authored down to the parameters documented at
 # docs.mapbox.com/api/feedback. See `custom-openapi/README.md` for how a
-# file like this is wired in. `createFeedbackItem` is declared here but
-# never reaches the command surface: it needs `user-feedback:write`, which
-# `POST /oauth/register` silently drops from the granted scope — confirmed
-# directly against production (`curl -X POST
-# https://api.mapbox.com/oauth/register?scope=user-feedback:write ...`
-# returns a registration with that scope missing from the response, the
-# same shape `tokens:write` already documents in `src/spec.rs`'s
-# `UNSUPPORTED_OPERATIONS`). No `mapbox auth login` token
-# can ever carry it, so `feedback create` is not a command today.
+# file like this is wired in. `create` needs `user-feedback:write`, which
+# `mapbox auth login` asks for (registrable since mapbox/api-accounts#2152).
 info:
   title: "Mapbox Feedback API"
   description: >-
@@ -171,26 +164,66 @@ paths:
           description: Forbidden
 
     post:
-      # Not `create`: this operation is never reachable (see below), so the
-      # user-facing name doesn't matter — but the withheld-operation guard
-      # in `generate_skills.rs` checks the bare command word against every
-      # generated file's text, and a bare `create` collides with the
-      # exposed, unrelated `styles create`. A multi-word operationId, the
-      # same shape every other disabled operation already has
-      # (`createToken`, `getFontCoverage`, …), sidesteps that.
-      operationId: createFeedbackItem
-      summary: Submit a new feedback item.
+      operationId: create
+      summary: Submit a feedback item.
       description: >-
-        Not a command — see this file's own header comment for why.
+        Submits one feedback item to Mapbox, filed under the account that owns
+        the token. It goes to Mapbox's review queue, and there is no way to
+        delete it afterwards. Needs a token with `user-feedback:write`.
+      parameters:
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: ["feedback", "lat", "lon", "category"]
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                  description: >-
+                    A UUID for the item. Generated when omitted. Sending one
+                    makes a retry safe: a second request with the same id is
+                    rejected rather than filed twice.
+                feedback:
+                  type: string
+                  description: "The text of the feedback."
+                lat:
+                  type: number
+                  description: "Latitude of the place the feedback is about."
+                lon:
+                  type: number
+                  description: "Longitude of the place the feedback is about."
+                category:
+                  type: string
+                  description: >-
+                    The feedback category. Not checked against a list;
+                    `feedback list` shows the ones already in use.
+                feature:
+                  type: object
+                  description: >-
+                    A GeoJSON Feature the feedback is about, with coordinates
+                    in GeoJSON's [longitude, latitude] order.
+                screenshot:
+                  type: string
+                  description: >-
+                    A PNG or JPEG as a data URI (`data:image/png;base64,…`),
+                    not bare base64.
       responses:
-        "201":
+        "200":
           description: The created feedback item.
+        "400":
+          description: >-
+            Bad Request — a missing or invalid field, or an id that already
+            exists.
         "401":
           description: Unauthorized
         "403":

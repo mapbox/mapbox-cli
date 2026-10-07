@@ -459,9 +459,15 @@ fn api_command(app: &Command, svc: &ServiceSpec, op: &Operation) -> CommandEntry
     arguments.extend(
         op.body
             .as_ref()
-            .map(|body| body_arguments(body, declared))
+            .map(|body| body_arguments(body, !op.body_fields.is_empty(), declared))
             .unwrap_or_default(),
     );
+
+    arguments.extend(op.body_fields.iter().map(|field| Argument {
+        flag: Some(format!("--{}", field.arg_name)),
+        location: Some("body"),
+        ..parameter(field, ArgKind::Option)
+    }));
 
     // Described because it is declared — `the_schema_lists_the_flags_clap_declares`
     // holds the two to each other, and a flag missing here is a flag an agent
@@ -509,6 +515,7 @@ fn parameter(param: &Parameter, kind: ArgKind) -> Argument {
         value_type: value_type(param),
         values: param.enum_values.clone(),
         description: param.description.clone(),
+        default: param.default.clone(),
         ..Argument::new(param.arg_name.clone(), kind)
     }
 }
@@ -612,7 +619,11 @@ fn username_argument(op: &Operation) -> Option<Argument> {
 ///
 /// The descriptions are read back off the command clap built rather than
 /// written again here, so the two can only ever say the same thing.
-fn body_arguments(body: &RequestBody, declared: Option<&Command>) -> Vec<Argument> {
+fn body_arguments(
+    body: &RequestBody,
+    has_field_flags: bool,
+    declared: Option<&Command>,
+) -> Vec<Argument> {
     let text = body.text_content_type();
     let takes_data = body.accepts_json() || text.is_some();
     let file_type = body.file_content_type();
@@ -628,7 +639,7 @@ fn body_arguments(body: &RequestBody, declared: Option<&Command>) -> Vec<Argumen
             vec![]
         }
     };
-    let required = body.required && !alternatives;
+    let required = body.required && !alternatives && !has_field_flags;
 
     let mut out = vec![];
 
@@ -1037,6 +1048,10 @@ mod tests {
                     .find(|entry| entry.command == format!("mapbox {}", op.command()))
                     .expect("a command for every exposed operation");
 
+                // Covered by `body_fields_are_flags_and_free_data`.
+                if !op.body_fields.is_empty() {
+                    continue;
+                }
                 let body_args: Vec<&Argument> = entry
                     .arguments
                     .iter()
@@ -1084,6 +1099,35 @@ mod tests {
             checked >= 8,
             "only {checked} bodies checked — did the specs move?"
         );
+    }
+
+    #[test]
+    fn body_fields_are_flags_and_free_data() {
+        let specs = specs();
+        let app = crate::build_app(&specs);
+        let schema = build(&app, &specs, &[]);
+        let entry = schema
+            .commands
+            .iter()
+            .find(|entry| entry.command == "mapbox feedback create")
+            .expect("feedback create");
+        let argument = |name: &str| {
+            entry
+                .arguments
+                .iter()
+                .find(|arg| arg.name == name)
+                .unwrap_or_else(|| panic!("no `{name}` argument"))
+        };
+
+        assert!(!argument("data").required);
+        for name in ["feedback", "lat", "lon", "category"] {
+            let arg = argument(name);
+            assert_eq!(arg.flag.as_deref(), Some(format!("--{name}").as_str()));
+            assert_eq!(arg.location, Some("body"));
+        }
+        assert_eq!(argument("lat").value_type, "number");
+        assert_eq!(argument("lat").default.as_deref(), Some("0"));
+        assert_eq!(argument("feedback").default, None);
     }
 
     /// `detail_command` is a command the caller is told to run, so it has to
@@ -1186,6 +1230,7 @@ mod tests {
             enum_values: vec![],
             is_boolean: false,
             numeric: None,
+            default: None,
         }
     }
 

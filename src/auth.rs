@@ -70,6 +70,8 @@ const VALIDATION_ENDPOINT: &str = "https://api.mapbox.com/tokens/v2";
 // Holding it is not enough on its own: the account also needs access Mapbox
 // grants on request, and `remedy::for_http` tells that 403 apart from a
 // missing scope.
+// `user-feedback:write` (`feedback create`) became registrable on 2026-10-06
+// (mapbox/api-accounts#2152); before that, registration silently dropped it.
 const DEFAULT_SCOPES_LIST: &[&str] = &[
     "styles:tiles",
     "styles:read",
@@ -88,6 +90,7 @@ const DEFAULT_SCOPES_LIST: &[&str] = &[
     "user-feedback:read",
     "statistics:read",
     "styles:download",
+    "user-feedback:write",
 ];
 
 /// [`DEFAULT_SCOPES_LIST`], space-joined the way the OAuth `scope` parameter
@@ -2318,6 +2321,7 @@ mod tests {
             "tilesets:list",
             "statistics:read",
             "styles:download",
+            "user-feedback:write",
         ] {
             assert!(requested.contains(&needed), "{needed} is not requested");
         }

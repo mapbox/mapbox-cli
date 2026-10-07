@@ -185,6 +185,79 @@ fn the_plan_shows_the_body_that_would_be_sent() {
     assert_eq!(body["json"]["version"], 8);
 }
 
+/// A negative `--lon` is the case a flag parser gets wrong.
+#[test]
+fn field_flags_build_the_body_over_data() {
+    let config = config_dir("body-fields");
+    let out = run(
+        &config,
+        &[
+            "-o",
+            "json",
+            "--token",
+            "sk.a-test-token",
+            "feedback",
+            "create",
+            "--data",
+            r#"{"id":"77bf502a-026a-460b-a3d1-56a604465a7d","category":"from-data","lat":1}"#,
+            "--feedback",
+            "A test",
+            "--lat",
+            "37.77",
+            "--lon",
+            "-122.4",
+            "--category",
+            "poi",
+            "--dry-run",
+        ],
+    );
+
+    assert!(out.status.success(), "{}", stderr(&out));
+    let body = &json(&stdout(&out))["body"]["json"];
+    assert_eq!(
+        body,
+        &serde_json::json!({
+            "id": "77bf502a-026a-460b-a3d1-56a604465a7d",
+            "feedback": "A test",
+            "lat": 37.77,
+            "lon": -122.4,
+            "category": "poi",
+        })
+    );
+}
+
+/// A default that won over `--data` would silently move a real place to 0,0.
+#[test]
+fn coordinates_default_to_zero_only_when_unset() {
+    let config = config_dir("body-field-defaults");
+    let body = |extra: &[&str]| {
+        let mut args = vec![
+            "-o",
+            "json",
+            "--token",
+            "sk.a-test-token",
+            "feedback",
+            "create",
+            "--feedback",
+            "A test",
+            "--category",
+            "cli",
+            "--dry-run",
+        ];
+        args.extend_from_slice(extra);
+        let out = run(&config, &args);
+        assert!(out.status.success(), "{}", stderr(&out));
+        json(&stdout(&out))["body"]["json"].clone()
+    };
+
+    let unset = body(&[]);
+    assert_eq!((&unset["lat"], &unset["lon"]), (&0.into(), &0.into()));
+
+    let from_data = body(&["--data", r#"{"lat":60.17,"lon":24.94}"#]);
+    assert_eq!(from_data["lat"], 60.17);
+    assert_eq!(from_data["lon"], 24.94);
+}
+
 /// What the flag is for. A dry run that accepted a body the real call would
 /// reject would be worse than no dry run at all — it would be a green light
 /// on the mistake it was asked to look for.

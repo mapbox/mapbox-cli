@@ -1,6 +1,6 @@
 # Implemented commands
 
-Every command the CLI ships: five auth commands, 35 API operations across 11
+Every command the CLI ships: five auth commands, 36 API operations across 11
 command groups, the tilesets-cli proxy, `completion` and `generate-skills`. Each is
 shown in both of its renderings. Which one you get is decided by `--output`, whose default
 (`auto`) reads stdout: a terminal gets the left column, a pipe or redirect
@@ -10,10 +10,11 @@ gets the right one. See
 Account names, style ids and tokens in the examples are replaced; everything
 else is as the API sent it.
 
-**31 of the 35 were run against the live API and show what came back:** 26
+**32 of the 36 were run against the live API and show what came back:** 26
 on 2026-09-01, `fonts list`, `fonts upload` and `fonts delete` on
 2026-09-08, once `fonts:list`/`fonts:write` became registrable, and
-`feedback list` and `feedback get` on 2026-09-24.
+`feedback list` and `feedback get` on 2026-09-24, and `feedback create` on
+2026-10-02.
 The write operations were exercised as round trips on throwaway objects —
 a style created, updated, drafted and deleted; icons uploaded to a sprite
 and taken out again; a font uploaded and deleted — leaving the account as
@@ -81,7 +82,8 @@ nests, and is typed `mapbox styles draft get`.
 [accounts.list-scopes](#mapbox-accounts-list-scopes)
 
 **[Feedback](#feedback)** — [feedback.list](#mapbox-feedback-list) ·
-[feedback.get](#mapbox-feedback-get)
+[feedback.get](#mapbox-feedback-get) ·
+[feedback.create](#mapbox-feedback-create)
 
 **[Fonts](#fonts)** — [fonts.list](#mapbox-fonts-list) ·
 [fonts.upload](#mapbox-fonts-upload) · [fonts.delete](#mapbox-fonts-delete)
@@ -491,7 +493,8 @@ telling apart:
   registrable — nothing here can force that. `fonts:list` and
   `fonts:write` became registrable on 2026-09-08, which shipped
   `fonts list`, `fonts upload` and `fonts delete`; `styles:download`
-  followed on 2026-09-30 and shipped `styles download`.
+  followed on 2026-09-30 and shipped `styles download`, and
+  `user-feedback:write` on 2026-10-06 shipped `feedback create`.
 - **Withheld deliberately.** `styles set-style-protected` unlocks a style
   for deletion — a live token holding `styles:protect` (which *is*
   registrable) can call it successfully, this CLI just declines to offer a
@@ -901,11 +904,9 @@ hand down to the parameters documented at docs.mapbox.com/api/feedback —
 see `custom-openapi/README.md` for why this command group doesn't come from
 the vendored specs the way most others do.
 
-**`feedback create`, the write side of this API, is not a command.** It
-needs a `user-feedback:write` scope that `POST /oauth/register` silently
-drops from the granted set — confirmed directly against production, the
-same shape `accounts create-token` already documents. No
-`mapbox auth login` token can ever carry it.
+`list` and `get` need `user-feedback:read` and `create` needs
+`user-feedback:write`; `mapbox auth login` asks for both. A login from
+before `create` shipped lacks the write scope, so log in again to use it.
 
 ### `mapbox feedback list`
 
@@ -1033,6 +1034,75 @@ time, not wrapped in `items`:
 </table>
 
 Same trimming as `list` above.
+
+### `mapbox feedback create`
+
+Submits one feedback item, filed under the account that owns the token.
+It goes to Mapbox's review queue, and the API has no way to delete it, so
+check the body with `--dry-run` first.
+
+#### Parameters
+
+The body is JSON. The four required fields are also flags; everything
+else goes through `--data` (a string, `@<path>` or `@-`). Flags and
+`--data` combine, and a flag wins over the same field in `--data`.
+
+| Field | Effect |
+| --- | --- |
+| `--feedback` (required) | The text of the feedback. |
+| `--lat`, `--lon` | The place the feedback is about. The API requires both, so each defaults to `0` when neither the flag nor `--data` sets it — the Feedback API team's advice for feedback with no place, until the pair becomes optional. |
+| `--category` (required) | Any string. It isn't checked against a list; `feedback list` shows the ones already in use. |
+| `id` | A UUID. Generated when omitted. Send your own to make a retry safe: a second request with the same id gets a 400 `Feedback with id … already exists.` rather than a duplicate. |
+| `feature` | A GeoJSON Feature the feedback is about, coordinates in `[lon, lat]` order. |
+| `screenshot` | A PNG or JPEG as a data URI (`data:image/png;base64,…`), not bare base64. |
+
+`trace_id` can't be set here: the API drops it, and an item created this
+way has `trace_id: null`. The new item is readable with `get` at once; it
+can take a minute or so to show up in `list`.
+
+#### Examples
+
+```sh
+mapbox feedback create --dry-run --data @feedback.json
+mapbox feedback create --feedback "Test from mapbox-cli development (feedback create). Please ignore." --lat 60.1699 --lon 24.9384 --category general
+mapbox feedback create --data '{"id":"77bf502a-026a-460b-a3d1-56a604465a7d"}' --feedback "…" --lat 60.1699 --lon 24.9384 --category general
+```
+
+#### Outputs
+
+Captured live on 2026-10-02. `place_name` is filled in by the API from
+`lat`/`lon`:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```text
+category             general
+created_at           2026-10-02T11:59:35.969Z
+feedback             Test from mapbox-cli development (feedback create). Please ignore.
+has_screenshot       no
+id                   77bf502a-026a-460b-a3d1-56a604465a7d
+location.lat         60.1699
+location.lon         24.9384
+location.place_name  Mannerheimintie 20b, 00100 Helsinki, Finland
+received_at          2026-10-02T11:59:35.969Z
+status               received
+updated_at           2026-10-02T11:59:35.969Z
+```
+
+</td><td>
+
+```json
+{"category":"general","created_at":"2026-10-02T11:59:35.969Z","feedback":"Test from mapbox-cli development (feedback create). Please ignore.","has_screenshot":false,"id":"77bf502a-026a-460b-a3d1-56a604465a7d","location":{"lat":60.1699,"lon":24.9384,"place_name":"Mannerheimintie 20b, 00100 Helsinki, Finland"},"received_at":"2026-10-02T11:59:35.969Z","status":"received","updated_at":"2026-10-02T11:59:35.969Z"}
+```
+
+</td></tr>
+</table>
+
+A token without `user-feedback:write` gets a 403 naming the scope. For a
+login, the fix is `mapbox auth login` again; for a token passed with
+`--token` or `MAPBOX_ACCESS_TOKEN`, it is adding the scope to that token.
 
 ---
 ## Fonts

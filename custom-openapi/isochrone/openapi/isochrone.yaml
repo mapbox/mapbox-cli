@@ -105,20 +105,27 @@ paths:
           in: query
           required: false
           description: >-
-            Return each contour as a GeoJSON polygon instead of a
-            linestring.
+            Return each contour that forms a ring as a GeoJSON polygon
+            instead of a linestring — one that doesn't form a ring stays a
+            linestring either way.
           schema:
             type: boolean
         - name: "denoise"
           in: query
           required: false
-          # A number before the range, not after: `first_sentence` in
-          # `src/main.rs` cuts a `--help` line at the first `.`, and
-          # `0.0-1.0:` on its own left `--help` showing just `0`.
-          # `--schema` and `docs/commands.md` still show it in full.
+          # Spelled "0 to 1"/"1", not "0.0-1.0"/"1.0": `first_sentence` in
+          # `src/main.rs` cuts a `--help` line at the first `.`, and this
+          # value's own bounds are the first digits that would appear no
+          # matter where in the sentence they sit, so a literal decimal
+          # point anywhere before the end truncates it — not just at the
+          # front, the way `directions.yaml`'s own fix assumed. `--schema`
+          # and `docs/commands.md` still show the fuller description below
+          # in full, decimals included.
           description: >-
-            A smaller value removes more of the smaller contours, 0.0-1.0,
-            defaulting to 1.0.
+            A larger value removes more of the smaller contours, 0 to 1,
+            defaulting to 1. A value of 1 returns only the largest contour
+            for each level; 0.5 drops any contour under half the largest's
+            area.
           schema:
             type: number
             minimum: 0

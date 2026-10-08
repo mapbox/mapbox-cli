@@ -1574,8 +1574,8 @@ the API, though nothing here enforces it before the request goes out.
 | `--contours-minutes <mins>` | Up to 4 times in minutes, 1-60, comma-separated and increasing. One contour per value. |
 | `--contours-meters <meters>` | Up to 4 distances in meters, 1-100000, comma-separated and increasing. One contour per value. |
 | `--contours-colors <hex,...>` | A hex color per contour (no `#`), comma-separated — must match the contour count. |
-| `--polygons` | Return each contour as a GeoJSON polygon instead of a linestring. |
-| `--denoise <0.0-1.0>` | A smaller value removes more of the smaller contours. Defaults to 1.0. |
+| `--polygons` | Return each contour that forms a ring as a GeoJSON polygon instead of a linestring — one that doesn't form a ring stays a linestring either way. |
+| `--denoise <0-1>` | A larger value removes more of the smaller contours: 1 keeps only the largest contour for each level, 0.5 drops any contour under half the largest's area. Defaults to 1. |
 | `--generalize <meters>` | Douglas-Peucker simplification tolerance — a higher value is a coarser, smaller contour. |
 | `--exclude <types>` | Road types to route around, comma-separated (`motorway`, `toll`, `ferry`, `unpaved`, `cash_only_tolls`). |
 | `--depart-at <ISO 8601>` | For `mapbox/driving-traffic`, which live traffic conditions to route against. |

@@ -479,6 +479,29 @@ pub fn help_requested(argv: &[std::ffi::OsString]) -> bool {
     false
 }
 
+/// Whether argv asks for the top-level page itself — `mapbox --help`,
+/// `mapbox -h` or `mapbox help` with no command named — the help that opens
+/// with the banner. Options before it don't count as words, though one that
+/// takes a value (`-o text --help`) is missed, which costs only the banner.
+pub fn top_level_help_requested(argv: &[std::ffi::OsString]) -> bool {
+    let args: Vec<&str> = argv
+        .iter()
+        .skip(1)
+        .filter_map(|arg| arg.to_str())
+        .take_while(|arg| *arg != "--")
+        .collect();
+    let words: Vec<&str> = args
+        .iter()
+        .copied()
+        .filter(|arg| !arg.starts_with('-'))
+        .collect();
+    match words.as_slice() {
+        [] => args.iter().any(|arg| matches!(*arg, "-h" | "--help")),
+        ["help"] => true,
+        _ => false,
+    }
+}
+
 /// The copy of the tree that parses, and so renders every subcommand's
 /// help: compact, and about the command itself.
 ///
@@ -774,6 +797,24 @@ mod tests {
         assert!(!asks(&["styles", "delete", "help"]));
         assert!(!asks(&["tilesets-cli", "--", "--help"]));
         assert!(!asks(&["styles", "list"]));
+    }
+
+    #[test]
+    fn only_the_top_level_page_counts_as_top_level_help() {
+        let asks = |args: &[&str]| {
+            let argv: Vec<std::ffi::OsString> = std::iter::once("mapbox")
+                .chain(args.iter().copied())
+                .map(Into::into)
+                .collect();
+            top_level_help_requested(&argv)
+        };
+        assert!(asks(&["--help"]));
+        assert!(asks(&["-h"]));
+        assert!(asks(&["help"]));
+        assert!(asks(&["--no-color", "--help"]));
+        assert!(!asks(&["styles", "--help"]));
+        assert!(!asks(&["help", "styles"]));
+        assert!(!asks(&[]));
     }
 
     fn shown(text: &str) -> Vec<String> {

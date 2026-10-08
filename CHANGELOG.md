@@ -38,7 +38,9 @@ that may never merge. They are not releases and are not listed here.
 - Top-level `mapbox --help` lists commands in groups (Maps and data,
   Search, Account, Coding agents, CLI), each with a line saying what it
   does rather than which API it wraps, and the global options under
-  Authentication, Output and Behavior, wrapped to the terminal.
+  Authentication, Output and Behavior, wrapped to the terminal. At a
+  terminal it opens with the `mapbox · v<version>` banner, as a command
+  run does.
   Subcommand help uses clap's compact layout for `--help` as well as
   `-h`, with the command's full description at the top, and points to
   `mapbox --help` for the global options instead of repeating them; they

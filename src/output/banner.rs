@@ -10,6 +10,7 @@
 //!
 //! In color where [`super::style`] allows it.
 
+use std::ffi::OsString;
 use std::io::IsTerminal;
 
 use clap::ArgMatches;
@@ -32,6 +33,39 @@ pub fn show(matches: &ArgMatches) {
     if enabled(terminal, matches.get_flag(ARG), matches.subcommand_name()) {
         output::progress(&text(env!("CARGO_PKG_VERSION"), style::enabled(terminal)));
     }
+}
+
+/// Prints the banner ahead of top-level help, as `cf --help` opens with its
+/// own: help is the page read most, and the version is often what the
+/// reader came for.
+///
+/// clap writes help during the parse, before there are matches for `show`
+/// to read, so `-q`/`--quiet` and `MAPBOX_QUIET` are read here the way clap
+/// would: the flag anywhere before `--`, the variable as clap's
+/// `FalseyValueParser` reads it.
+pub fn show_before_help(argv: &[OsString]) {
+    let terminal = std::io::stderr().is_terminal();
+    let quiet = quiet_in(argv, std::env::var(ENV).ok().as_deref());
+    if enabled(terminal, quiet, None) {
+        output::progress(&text(env!("CARGO_PKG_VERSION"), style::enabled(terminal)));
+    }
+}
+
+fn quiet_in(argv: &[OsString], env: Option<&str>) -> bool {
+    let (long, short) = (format!("--{ARG}"), format!("-{SHORT}"));
+    let flag = argv
+        .iter()
+        .skip(1)
+        .filter_map(|arg| arg.to_str())
+        .take_while(|arg| *arg != "--")
+        .any(|arg| arg == long || arg == short);
+    let variable = env.is_some_and(|value| {
+        !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "" | "0" | "n" | "no" | "f" | "false" | "off"
+        )
+    });
+    flag || variable
 }
 
 /// `completion` is excluded because its usual caller is a shell startup
@@ -73,6 +107,23 @@ mod tests {
         assert_eq!(lines.next(), Some("🗺️  mapbox · v1.2.3"));
         assert_eq!(lines.next(), Some("─".repeat(RULE_WIDTH).as_str()));
         assert_eq!(lines.next(), None);
+    }
+
+    #[test]
+    fn quiet_before_help_is_read_as_clap_would() {
+        let argv = |args: &[&str]| -> Vec<OsString> {
+            std::iter::once("mapbox")
+                .chain(args.iter().copied())
+                .map(OsString::from)
+                .collect()
+        };
+        assert!(quiet_in(&argv(&["-q", "--help"]), None));
+        assert!(quiet_in(&argv(&["--help", "--quiet"]), None));
+        assert!(quiet_in(&argv(&["--help"]), Some("1")));
+        assert!(!quiet_in(&argv(&["--help"]), Some("0")));
+        assert!(!quiet_in(&argv(&["--help"]), Some("false")));
+        assert!(!quiet_in(&argv(&["--help"]), Some("")));
+        assert!(!quiet_in(&argv(&["--help"]), None));
     }
 
     #[test]

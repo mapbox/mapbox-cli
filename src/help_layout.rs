@@ -107,15 +107,30 @@ const OPTIONS: &str = "Options";
 /// description runs too far from its flag to read as one line.
 const MAX_WIDTH: usize = 100;
 
-/// The help palette, for subcommand help as well as the page rendered here.
-/// Three levels only: headings bold, what to type cyan — names bold, the
-/// values they take (`<TOKEN>`, `<tilesets>`) plain — and notes dimmed.
+/// The help palette, for subcommand help, clap's errors and the page
+/// rendered here: bold and the terminal's own foreground, nothing else.
+///
+/// A color is whatever the terminal theme says it is. Measured against
+/// common themes, cyan fell to 2.1:1 on iTerm2's light background, dimmed
+/// text to 1.9:1 on Solarized Light, and clap's yellow and green for a
+/// mistyped value and its suggestion to 1.9:1 and 2.4:1 — below the 3:1
+/// that bold text needs. The foreground is the one color every theme makes
+/// readable, so headings, names to type and suggestions are bold in it, and
+/// the values to fill in (`<TOKEN>`, `<tilesets>`) are underlined — the man
+/// page convention, and just as independent of the theme.
+/// The error label keeps clap's red, the one color that held 3:1 in every
+/// theme measured, and it never stands alone: it is bold and says "error".
+/// `theme_safe_colors_only` holds this.
 pub fn styles() -> Styles {
-    Styles::styled()
-        .header(Style::new().bold())
-        .usage(Style::new().bold())
-        .literal(AnsiColor::Cyan.on_default().bold())
-        .placeholder(AnsiColor::Cyan.on_default())
+    let bold = Style::new().bold();
+    Styles::plain()
+        .header(bold)
+        .usage(bold)
+        .literal(bold)
+        .placeholder(Style::new().underline())
+        .valid(bold)
+        .invalid(bold)
+        .error(AnsiColor::Red.on_default().bold())
 }
 
 /// Gives `app` a help template holding the whole top-level page. Call it
@@ -146,7 +161,6 @@ struct Palette {
     header: Style,
     literal: Style,
     placeholder: Style,
-    note: Style,
 }
 
 impl Palette {
@@ -155,7 +169,6 @@ impl Palette {
             header: *styles.get_header(),
             literal: *styles.get_literal(),
             placeholder: *styles.get_placeholder(),
-            note: Style::new().dimmed(),
         }
     }
 }
@@ -321,9 +334,9 @@ fn flag_row(
 }
 
 impl Row {
-    /// Appends the arg's environment variable as a dimmed note. A help text
+    /// Appends the arg's environment variable as a note. A help text
     /// that names one by hand — `--timeout` and `--output` read theirs
-    /// leniently rather than through clap — has its note dimmed the same way.
+    /// leniently rather than through clap — has its note kept whole the same way.
     fn with_env(mut self, env: Option<String>) -> Self {
         if let Some(name) = env {
             self.description
@@ -334,8 +347,7 @@ impl Row {
 }
 
 /// Splits help text into pieces: words, `code` spans kept whole and shown
-/// without their backticks, and a trailing `[env: …]` note kept whole and
-/// dimmed.
+/// without their backticks, and a trailing `[env: …]` note kept whole.
 fn pieces(text: &str) -> Vec<Piece> {
     let (body, note) = match text.rfind(" [env: ") {
         Some(at) if text.ends_with(']') => (&text[..at], Some(&text[at + 1..])),
@@ -391,21 +403,20 @@ fn render(sections: &[Section], width: usize, palette: &Palette) -> String {
             let mut lines = wrap(&row.description, room).into_iter();
             if let Some(first) = lines.next() {
                 page.push_str(&" ".repeat(column - 2 - row.left_width));
-                page.push_str(&styled_line(&first, palette));
+                page.push_str(&line_text(&first));
             }
             for line in lines {
                 page.push('\n');
                 page.push_str(&" ".repeat(column));
-                page.push_str(&styled_line(&line, palette));
+                page.push_str(&line_text(&line));
             }
             page.push('\n');
         }
         page.push('\n');
     }
     let lit = palette.literal;
-    let note = palette.note;
     page.push_str(&format!(
-        "{note}Run{note:#} {lit}mapbox <command> --help{lit:#} {note}for a command's own options.{note:#}"
+        "Run {lit}mapbox <command> --help{lit:#} for a command's own options."
     ));
     page
 }
@@ -437,25 +448,14 @@ fn wrap(pieces: &[Piece], room: usize) -> Vec<Vec<&Piece>> {
     lines
 }
 
-fn styled_line(line: &[&Piece], palette: &Palette) -> String {
-    let words: Vec<String> = line
-        .iter()
-        .map(|piece| {
-            // A code span is kept whole but not colored: in a description it
-            // is prose, and cyan belongs to the names on the left.
-            let style = match piece.kind {
-                Kind::Plain | Kind::Literal => {
-                    return format!("{}{}{}", piece.prefix, piece.text, piece.suffix);
-                }
-                Kind::Note => palette.note,
-            };
-            format!(
-                "{}{style}{}{style:#}{}",
-                piece.prefix, piece.text, piece.suffix
-            )
-        })
-        .collect();
-    words.join(" ")
+/// A wrapped line's pieces, joined. Descriptions carry no styling: in a
+/// description a code span is prose, and the names on the left are what is
+/// bold.
+fn line_text(line: &[&Piece]) -> String {
+    line.iter()
+        .map(|piece| format!("{}{}{}", piece.prefix, piece.text, piece.suffix))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The terminal's width, as clap would read it, capped at [`MAX_WIDTH`].
@@ -504,10 +504,8 @@ pub fn for_parsing(app: Command) -> Command {
 /// kubectl's pointer to its global options.
 fn global_options_footer(app: &Command) -> StyledStr {
     let lit = *app.get_styles().get_literal();
-    let note = Style::new().dimmed();
     StyledStr::from(format!(
-        "{note}Run{note:#} {lit}mapbox --help{lit:#} \
-         {note}for the global options, which apply to every command.{note:#}"
+        "Run {lit}mapbox --help{lit:#} for the global options, which apply to every command."
     ))
 }
 
@@ -672,6 +670,48 @@ mod tests {
         assert!(missing.is_empty(), "{}", missing.join("\n"));
     }
 
+    /// Help and clap's errors use bold, underline and the error label's red,
+    /// never a color a terminal theme can make unreadable. See [`styles`].
+    #[test]
+    fn theme_safe_colors_only() {
+        // Reset, bold, underline, their resets, and red.
+        const ALLOWED: &[&str] = &["", "0", "1", "4", "22", "24", "31"];
+
+        let parsing = for_parsing(apply(app()));
+        let mut rendered = Vec::new();
+        for argv in [
+            &["mapbox", "--help"][..],
+            &["mapbox", "tilesets", "query", "--help"],
+            &["mapbox", "help", "styles"],
+            &["mapbox", "--versiomn"],
+            &["mapbox", "styles", "list", "--outptu", "json"],
+            &["mapbox", "styles", "get"],
+        ] {
+            let err = parsing
+                .clone()
+                .try_get_matches_from(argv)
+                .expect_err("help and mistakes stop the parse");
+            rendered.push((argv, err.render().ansi().to_string()));
+        }
+
+        for (argv, text) in rendered {
+            let mut codes = Vec::new();
+            for sequence in text.split("\x1b[").skip(1) {
+                let params = sequence.split('m').next().unwrap_or_default();
+                codes.extend(params.split(';').map(str::to_string));
+            }
+            assert!(!codes.is_empty(), "{argv:?} rendered no styling at all");
+            let unsafe_codes: std::collections::BTreeSet<&String> = codes
+                .iter()
+                .filter(|c| !ALLOWED.contains(&c.as_str()))
+                .collect();
+            assert!(
+                unsafe_codes.is_empty(),
+                "{argv:?} uses {unsafe_codes:?}, which a terminal theme decides:\n{text}"
+            );
+        }
+    }
+
     fn shown(text: &str) -> Vec<String> {
         pieces(text)
             .iter()
@@ -702,7 +742,7 @@ mod tests {
     }
 
     #[test]
-    fn a_trailing_env_note_is_one_dimmed_piece() {
+    fn a_trailing_env_note_is_one_piece() {
         let pieces = pieces("Seconds per request [env: MAPBOX_TIMEOUT]");
         let last = pieces.last().expect("pieces");
         assert_eq!(last.text, "[env: MAPBOX_TIMEOUT]");

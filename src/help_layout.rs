@@ -26,7 +26,7 @@
 //! A command missing from [`GROUPS`] still shows, under "Other", so a slip
 //! here cannot hide a command — but `every_command_has_a_place` fails first.
 
-use clap::builder::styling::{AnsiColor, Style, Styles};
+use clap::builder::styling::{Style, Styles};
 use clap::builder::StyledStr;
 use clap::{Arg, Command};
 
@@ -107,33 +107,6 @@ const OPTIONS: &str = "Options";
 /// description runs too far from its flag to read as one line.
 const MAX_WIDTH: usize = 100;
 
-/// The help palette, for subcommand help, clap's errors and the page
-/// rendered here: bold and the terminal's own foreground, nothing else.
-///
-/// A color is whatever the terminal theme says it is. Measured against
-/// common themes, cyan fell to 2.1:1 on iTerm2's light background, dimmed
-/// text to 1.9:1 on Solarized Light, and clap's yellow and green for a
-/// mistyped value and its suggestion to 1.9:1 and 2.4:1 — below the 3:1
-/// that bold text needs. The foreground is the one color every theme makes
-/// readable, so headings, names to type, the values to fill in (`<TOKEN>`,
-/// `<tilesets>`, told apart by their angle brackets) and suggestions are
-/// bold in it. Not underlined: clap gives the space before a value the
-/// value's style, which bold hides and an underline shows as a stray rule.
-/// The error label keeps clap's red, the one color that held 3:1 in every
-/// theme measured, and it never stands alone: it is bold and says "error".
-/// `theme_safe_colors_only` holds this.
-pub fn styles() -> Styles {
-    let bold = Style::new().bold();
-    Styles::plain()
-        .header(bold)
-        .usage(bold)
-        .literal(bold)
-        .placeholder(bold)
-        .valid(bold)
-        .invalid(bold)
-        .error(AnsiColor::Red.on_default().bold())
-}
-
 /// Gives `app` a help template holding the whole top-level page. Call it
 /// last: the page is rendered from the commands and arguments `app` already
 /// has.
@@ -158,10 +131,15 @@ pub fn apply(app: Command) -> Command {
     app.help_template(StyledStr::from(template))
 }
 
+/// The styles this page uses, read from the ones clap was given (see
+/// `output::theme`), so a test can render either palette.
 struct Palette {
     header: Style,
     literal: Style,
     placeholder: Style,
+    /// Notes and hints. clap calls it `context`: its `[env: …]` and
+    /// `[default: …]` notes, which these sit beside.
+    muted: Style,
 }
 
 impl Palette {
@@ -170,6 +148,7 @@ impl Palette {
             header: *styles.get_header(),
             literal: *styles.get_literal(),
             placeholder: *styles.get_placeholder(),
+            muted: *styles.get_context(),
         }
     }
 }
@@ -404,12 +383,12 @@ fn render(sections: &[Section], width: usize, palette: &Palette) -> String {
             let mut lines = wrap(&row.description, room).into_iter();
             if let Some(first) = lines.next() {
                 page.push_str(&" ".repeat(column - 2 - row.left_width));
-                page.push_str(&line_text(&first));
+                page.push_str(&line_text(&first, palette));
             }
             for line in lines {
                 page.push('\n');
                 page.push_str(&" ".repeat(column));
-                page.push_str(&line_text(&line));
+                page.push_str(&line_text(&line, palette));
             }
             page.push('\n');
         }
@@ -417,7 +396,9 @@ fn render(sections: &[Section], width: usize, palette: &Palette) -> String {
     }
     let lit = palette.literal;
     page.push_str(&format!(
-        "Run {lit}mapbox <command> --help{lit:#} for a command's own options."
+        "{muted}Run{muted:#} {lit}mapbox <command> --help{lit:#} \
+         {muted}for a command's own options.{muted:#}",
+        muted = palette.muted,
     ));
     page
 }
@@ -449,12 +430,21 @@ fn wrap(pieces: &[Piece], room: usize) -> Vec<Vec<&Piece>> {
     lines
 }
 
-/// A wrapped line's pieces, joined. Descriptions carry no styling: in a
+/// A wrapped line's pieces, joined. Only notes are styled: in a
 /// description a code span is prose, and the names on the left are what is
 /// bold.
-fn line_text(line: &[&Piece]) -> String {
+fn line_text(line: &[&Piece], palette: &Palette) -> String {
+    let muted = palette.muted;
     line.iter()
-        .map(|piece| format!("{}{}{}", piece.prefix, piece.text, piece.suffix))
+        .map(|piece| match piece.kind {
+            Kind::Note => format!(
+                "{}{muted}{}{muted:#}{}",
+                piece.prefix, piece.text, piece.suffix
+            ),
+            Kind::Plain | Kind::Literal => {
+                format!("{}{}{}", piece.prefix, piece.text, piece.suffix)
+            }
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -504,9 +494,11 @@ pub fn for_parsing(app: Command) -> Command {
 /// options. Phrased like the top-level page's closing line, and like
 /// kubectl's pointer to its global options.
 fn global_options_footer(app: &Command) -> StyledStr {
-    let lit = *app.get_styles().get_literal();
+    let styles = app.get_styles();
+    let (lit, muted) = (*styles.get_literal(), *styles.get_context());
     StyledStr::from(format!(
-        "Run {lit}mapbox --help{lit:#} for the global options, which apply to every command."
+        "{muted}Run{muted:#} {lit}mapbox --help{lit:#} \
+         {muted}for the global options, which apply to every command.{muted:#}"
     ))
 }
 
@@ -671,46 +663,75 @@ mod tests {
         assert!(missing.is_empty(), "{}", missing.join("\n"));
     }
 
-    /// Help and clap's errors use bold, underline and the error label's red,
-    /// never a color a terminal theme can make unreadable. See [`styles`].
+    /// Help and clap's errors use bold and the palette's fixed colors, never
+    /// one of the sixteen a terminal theme decides — and without 24-bit
+    /// color, no color at all. See `output::theme`.
     #[test]
     fn theme_safe_colors_only() {
-        // Reset, bold, underline, their resets, and red.
-        const ALLOWED: &[&str] = &["", "0", "1", "4", "22", "24", "31"];
-
-        let parsing = for_parsing(apply(app()));
-        let mut rendered = Vec::new();
-        for argv in [
-            &["mapbox", "--help"][..],
-            &["mapbox", "tilesets", "query", "--help"],
-            &["mapbox", "help", "styles"],
-            &["mapbox", "--versiomn"],
-            &["mapbox", "styles", "list", "--outptu", "json"],
-            &["mapbox", "styles", "get"],
-        ] {
-            let err = parsing
-                .clone()
-                .try_get_matches_from(argv)
-                .expect_err("help and mistakes stop the parse");
-            rendered.push((argv, err.render().ansi().to_string()));
-        }
-
-        for (argv, text) in rendered {
-            let mut codes = Vec::new();
-            for sequence in text.split("\x1b[").skip(1) {
-                let params = sequence.split('m').next().unwrap_or_default();
-                codes.extend(params.split(';').map(str::to_string));
+        for truecolor in [true, false] {
+            let app = app().styles(crate::output::theme::styles_for(truecolor));
+            let parsing = for_parsing(apply(app));
+            for argv in [
+                &["mapbox", "--help"][..],
+                &["mapbox", "tilesets", "query", "--help"],
+                &["mapbox", "help", "styles"],
+                &["mapbox", "--versiomn"],
+                &["mapbox", "styles", "list", "--outptu", "json"],
+                &["mapbox", "styles", "get"],
+            ] {
+                let err = parsing
+                    .clone()
+                    .try_get_matches_from(argv)
+                    .expect_err("help and mistakes stop the parse");
+                let text = err.render().ansi().to_string();
+                let problems = unsafe_styles(&text, truecolor);
+                assert!(
+                    problems.is_empty(),
+                    "{argv:?} (truecolor: {truecolor}) uses {problems:?}:\n{text}"
+                );
             }
-            assert!(!codes.is_empty(), "{argv:?} rendered no styling at all");
-            let unsafe_codes: std::collections::BTreeSet<&String> = codes
-                .iter()
-                .filter(|c| !ALLOWED.contains(&c.as_str()))
-                .collect();
-            assert!(
-                unsafe_codes.is_empty(),
-                "{argv:?} uses {unsafe_codes:?}, which a terminal theme decides:\n{text}"
-            );
         }
+    }
+
+    /// The SGR parameters in `text` that are neither a reset, bold, nor —
+    /// with `truecolor` — a 24-bit color from the palette.
+    fn unsafe_styles(text: &str, truecolor: bool) -> Vec<String> {
+        let palette: Vec<String> = crate::output::theme::PALETTE
+            .iter()
+            .map(|c| format!("{};{};{}", c.0, c.1, c.2))
+            .collect();
+        let mut problems = Vec::new();
+        for sequence in text.split("\x1b[").skip(1) {
+            let params: Vec<&str> = sequence
+                .split('m')
+                .next()
+                .unwrap_or_default()
+                .split(';')
+                .collect();
+            let mut i = 0;
+            while i < params.len() {
+                match params[i] {
+                    "" | "0" | "1" | "22" | "39" => i += 1,
+                    "38" if truecolor
+                        && params.get(i + 1) == Some(&"2")
+                        && params.len() >= i + 5 =>
+                    {
+                        let rgb = params[i + 2..i + 5].join(";");
+                        if !palette.contains(&rgb) {
+                            problems.push(format!("38;2;{rgb}"));
+                        }
+                        i += 5;
+                    }
+                    other => {
+                        problems.push(other.to_string());
+                        i += 1;
+                    }
+                }
+            }
+        }
+        problems.sort();
+        problems.dedup();
+        problems
     }
 
     fn shown(text: &str) -> Vec<String> {

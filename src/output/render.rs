@@ -299,7 +299,7 @@ fn render_geocoder_list(value: &Value) -> Option<Rendered> {
 
 /// The terms under a list, dimmed so the results stay what the eye lands on.
 fn notice_text(notice: &str, color: bool) -> String {
-    format!("\n\n{}", style::paint(notice, style::DIM, color))
+    format!("\n\n{}", style::paint(notice, &style::muted(), color))
 }
 
 /// A `FeatureCollection`'s `attribution`, when it carries a usable one.
@@ -545,7 +545,7 @@ fn render_feature_list(rows: &[Value]) -> Rendered {
 /// category, distance, coordinates and attribute names are dimmed, leaving
 /// the name and address as what a reader scans.
 fn feature_list_text(rows: &[Value], color: bool) -> String {
-    let dim = |text: &str| style::paint(text, style::DIM, color);
+    let dim = |text: &str| style::paint(text, &style::muted(), color);
     let mut out = String::new();
     for (index, row) in rows.iter().enumerate() {
         if index > 0 {
@@ -1088,18 +1088,21 @@ mod tests {
     }
 
     #[test]
-    fn a_feature_lists_names_are_bold_and_its_details_dim() {
+    fn a_feature_lists_names_are_bold_and_its_details_muted() {
         let value = rows(
             r#"{"type":"FeatureCollection","attribution":"NOTICE: terms","features":[{"type":"Feature","geometry":{"coordinates":[24.941822,60.167507],"type":"Point"},"properties":{"name":"Helsinki","feature_type":"place","full_address":"Helsinki, Uusimaa, Finland"}}]}"#,
         );
         let list = list_rendering(&value, Some("geocoder")).expect("renders");
         let colored = styled(&list, true);
-        let (b, d, r) = (style::BOLD, style::DIM, style::RESET);
+        let (b, r) = (style::BOLD, style::RESET);
+        let d = |text: &str| style::paint(text, &style::muted(), true);
         assert_eq!(
             colored,
             format!(
-                "1. {b}Helsinki{r} {d}(place){r}\n   Helsinki, Uusimaa, Finland\n   \
-                 {d}24.941822,60.167507{r}\n\n{d}NOTICE: terms{r}"
+                "1. {b}Helsinki{r} {}\n   Helsinki, Uusimaa, Finland\n   {}\n\n{}",
+                d("(place)"),
+                d("24.941822,60.167507"),
+                d("NOTICE: terms"),
             )
         );
         assert_eq!(style::strip(&colored), list.text);

@@ -24,6 +24,7 @@ pub mod banner;
 mod error;
 mod render;
 pub mod style;
+pub mod theme;
 
 pub use error::{emit_error, CliError};
 pub use render::field_lines;

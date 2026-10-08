@@ -469,9 +469,12 @@ where there is advice to give. See [docs/commands.md](./docs/commands.md#errors)
 for the list of codes.
 
 At a terminal, a run opens with a `mapbox · v<version>` line on stderr, and
-tables, labels and tips are in color. Neither reaches a pipe or a file.
-`-q`/`--quiet` (or `MAPBOX_QUIET=1`) hides the banner; `NO_COLOR` turns
-color off.
+help, tables, labels and tips are in color. Neither reaches a pipe or a
+file. `-q`/`--quiet` (or `MAPBOX_QUIET=1`) hides the banner. `NO_COLOR`
+turns color off; `FORCE_COLOR=1` keeps it on into a pipe, for a pager such
+as `less -R`, and `NO_COLOR` wins over it. The colors are fixed and chosen
+to read on light and dark themes alike; a terminal not known to show 24-bit
+color gets bold text instead.
 
 ### `--schema`
 

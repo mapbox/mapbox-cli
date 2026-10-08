@@ -414,7 +414,8 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
     let mut app = Command::new("mapbox")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Mapbox API CLI — interact with Mapbox APIs from the command line")
-        .styles(help_layout::styles())
+        .styles(output::theme::styles())
+        .color(output::style::color_choice())
         // clap's own 100-column cap is skipped when `COLUMNS` is set, as many
         // shells do; past 100 a description runs too far from its flag.
         .max_term_width(100)

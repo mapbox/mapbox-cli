@@ -14,7 +14,7 @@ use std::io::IsTerminal;
 
 use clap::ArgMatches;
 
-use super::style::{self, DIM, RESET};
+use super::style::{self, RESET};
 use crate::{completion, output};
 
 pub const ARG: &str = "quiet";
@@ -34,9 +34,6 @@ pub fn show(matches: &ArgMatches) {
     }
 }
 
-/// Bold, in the accent color.
-const NAME: &str = "\x1b[1;94m";
-
 /// `completion` is excluded because its usual caller is a shell startup
 /// file, where a banner on every new shell is noise.
 fn enabled(stderr_is_terminal: bool, quiet: bool, command: Option<&str>) -> bool {
@@ -46,7 +43,8 @@ fn enabled(stderr_is_terminal: bool, quiet: bool, command: Option<&str>) -> bool
 fn text(version: &str, color: bool) -> String {
     let rule = "─".repeat(RULE_WIDTH);
     if color {
-        format!("🗺️  {NAME}mapbox{RESET} {DIM}· v{version}{RESET}\n{DIM}{rule}{RESET}")
+        let (name, muted) = (style::accent(), style::muted());
+        format!("🗺️  {name}mapbox{RESET} {muted}· v{version}{RESET}\n{muted}{rule}{RESET}")
     } else {
         format!("🗺️  mapbox · v{version}\n{rule}")
     }
@@ -80,7 +78,10 @@ mod tests {
     #[test]
     fn color_changes_the_escapes_and_nothing_else() {
         let colored = text("1.2.3", true);
-        assert!(colored.contains(NAME), "{colored:?}");
+        assert!(
+            colored.contains(&format!("{}mapbox", style::accent())),
+            "{colored:?}"
+        );
         assert!(colored.ends_with(RESET), "{colored:?}");
         assert_eq!(style::strip(&colored), text("1.2.3", false));
     }

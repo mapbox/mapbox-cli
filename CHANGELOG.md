@@ -19,6 +19,13 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- Color reads on light and dark terminal themes alike. Help, tables, tips
+  and the banner use a small fixed palette (Mapbox blue, gray, red) whose
+  colors all clear 3.5:1 on common themes, instead of the terminal's own
+  bright blue and dim, which fell below 2:1 on some light ones. A terminal
+  not known to show 24-bit color gets bold and plain text instead.
+  `FORCE_COLOR=1` now keeps color in a pipe; `NO_COLOR` still wins.
+
 - Top-level `mapbox --help` lists commands in groups (Maps and data,
   Search, Account, Coding agents, CLI), each with a line saying what it
   does rather than which API it wraps, and the global options under
@@ -26,10 +33,10 @@ that may never merge. They are not releases and are not listed here.
   Subcommand help uses clap's compact layout for `--help` as well as
   `-h`, with the command's full description at the top, and points to
   `mapbox --help` for the global options instead of repeating them; they
-  still work on every command. Names to type and values to fill in are
-  bold in the terminal's own foreground color, with no other color, so
-  help reads the same on light and dark themes; clap's yellow and green in
-  usage errors are bold now too.
+  still work on every command. Headings are in the palette's blue (see
+  the entry above), and names to type and values to fill in are bold in
+  the terminal's own foreground; clap's yellow and green in usage errors
+  are bold now too.
   Help text only: no command, flag, exit code or result output changes.
 
 - Top-level `mapbox --help` / `mapbox help` changes. It ends with a

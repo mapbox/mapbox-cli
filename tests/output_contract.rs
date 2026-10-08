@@ -667,6 +667,64 @@ fn the_schema_keeps_the_text_help_simplifies() {
     );
 }
 
+/// Color follows the order `cf` uses: `NO_COLOR` wins, then `FORCE_COLOR`
+/// (`0` meaning off), then whether the stream is a terminal — which here it
+/// never is. The palette's 24-bit colors appear only where the terminal is
+/// known to render them; elsewhere styling is bold alone.
+#[test]
+fn color_follows_no_color_then_force_color() {
+    let help = |vars: &[(&str, &str)]| {
+        let mut cmd = command();
+        for var in [
+            "NO_COLOR",
+            "FORCE_COLOR",
+            "COLORTERM",
+            "TERM_PROGRAM",
+            "WT_SESSION",
+            "TERM",
+        ] {
+            cmd.env_remove(var);
+        }
+        cmd.envs(vars.iter().copied());
+        stdout(&cmd.arg("--help").output().expect("run mapbox"))
+    };
+    const ACCENT: &str = "\x1b[38;2;82;114;251m";
+
+    assert!(!help(&[]).contains('\x1b'), "a pipe gets plain text");
+
+    let forced = help(&[("FORCE_COLOR", "1")]);
+    assert!(
+        forced.contains("\x1b[1m"),
+        "FORCE_COLOR should style a pipe: {forced:?}"
+    );
+    assert!(
+        !forced.contains("\x1b[38;2;"),
+        "no 24-bit color where the terminal is not known to render it: {forced:?}"
+    );
+
+    let truecolor = help(&[("FORCE_COLOR", "1"), ("COLORTERM", "truecolor")]);
+    assert!(truecolor.contains(ACCENT), "{truecolor:?}");
+
+    let both = help(&[("FORCE_COLOR", "1"), ("NO_COLOR", "1")]);
+    assert!(!both.contains('\x1b'), "NO_COLOR wins: {both:?}");
+    assert!(!help(&[("FORCE_COLOR", "0")]).contains('\x1b'));
+}
+
+/// Forced color is for a person reading a pipe through a pager; a JSON error
+/// is for a program, and must not carry escapes inside its strings.
+#[test]
+fn forced_color_never_reaches_json() {
+    let out = command()
+        .env("FORCE_COLOR", "1")
+        .env("COLORTERM", "truecolor")
+        .args(["-o", "json", "--versiomn"])
+        .output()
+        .expect("run mapbox");
+    let err = stderr(&out);
+    assert!(!err.contains('\x1b'), "{err:?}");
+    assert_eq!(json(&err)["code"], "usage");
+}
+
 /// An operation that can never succeed is not in the command surface, so it
 /// answers exactly as a mistyped name does — same code, same shape, same
 /// exit. Anything else would tell a caller which scopes exist while still

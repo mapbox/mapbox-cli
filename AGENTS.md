@@ -55,7 +55,9 @@ easy thing to add:
 Everything about how output looks lives in `src/output/`: `mod.rs` is the
 entry point (modes, `emit`, tips), `error.rs` shapes and prints failures,
 `render.rs` builds tables and field lists, `style.rs` decides when color is
-allowed, and `banner.rs` is the version line a run opens with.
+allowed, `theme.rs` is the palette — every color the CLI uses, each held to
+a contrast rule by a test — and `banner.rs` is the version line a run opens
+with.
 
 Four modules may touch stdout, and the guard lists each with its reason:
 `output/mod.rs`, which is the machinery; `completion.rs`, because a shell

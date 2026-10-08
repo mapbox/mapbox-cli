@@ -4180,9 +4180,9 @@ every line `-o text` prints around the table, is exactly what came back.
 Usage · 2026-08-09 → 2026-09-08
 
 PRODUCT                TOTAL  DAILY TREND
-Directions API    67,840,000  ▄▅▇▆▆▆▆▇▇▇▇▆▆▆▅▇▇▇▇▇▇▆▆▆▇▇▇▇▇▇▆  max 2,618,385
-Matrix API        45,260,000  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇  max 1,460,000
-Vector Tiles API       6,300  ▁▁▁▁▁▁▇▁▁▁▁▁▁▄▁▁▁▄▁▁▄▁▁▁▁▁▁▁▁▁▁  max 3,300
+Directions API    67,840,000  ▄▅▇▆▆▆▆▇▇▇▇▆▆▆▅▇▇▇▇▇▇▆▆▆▇▇▇▇▇▇▆  peak 2,618,385/day
+Matrix API        45,260,000  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇  peak 1,460,000/day
+Vector Tiles API       6,300  ▁▁▁▁▁▁▇▁▁▁▁▁▁▄▁▁▁▄▁▁▄▁▁▁▁▁▁▁▁▁▁  peak 3,300/day
 
 31 active days · generated 2026-09-08 09:49 UTC
 
@@ -4229,7 +4229,7 @@ width. Bars scale from zero to the product's own busiest day, the way
 ratatui's sparkline scales, so a bar's height is proportional to its value
 and a product used the same amount every day is at the top every day
 (`Matrix API` above). Since every row is to its own scale, each line ends
-with `max N`, the day's usage its tallest bar stands for. A day with any
+with `peak N/day`, the day's usage its tallest bar stands for. A day with any
 usage is never drawn as the zero glyph.
 Rows stack one per line, and the tallest bar stops at `▇` rather than `█`,
 which leaves a gap under the row above so the products don't run

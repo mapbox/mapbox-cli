@@ -346,7 +346,7 @@ fn render_text(json: &Value, daily: bool, already_filtered: bool, color: bool) -
                     let peak = values.iter().copied().max().filter(|&max| max > 0);
                     let label = peak
                         .map(|max| {
-                            let text = format!("max {}", with_thousands(max));
+                            let text = format!("peak {}/day", with_thousands(max));
                             format!("  {}", style::paint(&text, &style::muted(), color))
                         })
                         .unwrap_or_default();
@@ -1070,8 +1070,8 @@ mod tests {
         });
         let text = render_text(&json, false, false, false);
         let row = |name: &str| text.lines().find(|l| l.contains(name)).expect("a row");
-        assert!(row("Busy API").ends_with("  max 1,500"), "{text}");
-        assert!(!row("Idle API").contains("max"), "{text}");
+        assert!(row("Busy API").ends_with("  peak 1,500/day"), "{text}");
+        assert!(!row("Idle API").contains("peak"), "{text}");
     }
 
     /// `TOTAL` is wider than a small total; the numbers sit right-aligned

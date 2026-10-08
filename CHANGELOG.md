@@ -23,7 +23,7 @@ that may never merge. They are not releases and are not listed here.
   lines between, every sparkline as wide as the period, bars scaled from
   zero so their height is proportional to the value, and the tallest
   stopping short of the row above. Each row is to its own scale and ends
-  with the peak its tallest bar stands for (`max 407`). A day with any
+  with the peak its tallest bar stands for (`peak 407/day`). A day with any
   usage never draws as a day without.
   At a terminal the title and bars are in the accent over a muted
   baseline, and the tips look like every other command's. The footer is

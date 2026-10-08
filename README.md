@@ -251,6 +251,20 @@ mapbox styles <operation>
 mapbox tilesets <operation>
 ```
 
+`mapbox directions` is the one exception: its API has a single operation,
+so there's a bare command with no subcommand at all, the same shape
+`mapbox usage` already has — see [docs/commands.md](./docs/commands.md) for
+its own parameters.
+
+A command group is not the same thing as a spec file: which one an operation
+belongs to is decided per operation. So `sprites` and `tilesets` are each
+assembled from operations declared by the Styles, Raster Tiles and Vector
+Tiles specs. `mapbox tilesets` is also unrelated to `mapbox tilesets-cli`,
+which proxies to the separate Python tool.
+
+An operation can nest one level deeper where a group reads better, as in
+`mapbox styles draft get`, `draft update` and `draft delete`.
+
 For example:
 
 ```sh

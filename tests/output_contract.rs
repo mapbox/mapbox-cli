@@ -363,6 +363,39 @@ fn help_is_never_wrapped() {
     assert!(text.contains("--output"), "--output should be documented");
 }
 
+/// Top-level help is where an agent that only installed the CLI looks for
+/// the rest of Mapbox's agent tooling, so it must list each link — on stdout,
+/// with the help — and subcommand help must not repeat them.
+#[test]
+fn top_level_help_links_to_mapbox_resources() {
+    const LINKS: &[&str] = &[
+        "https://docs.mapbox.com/cli/",
+        "https://cli.mapbox.com/agent-setup/prompt.md",
+        "https://github.com/mapbox/mapbox-agent-skills",
+        "mapbox agent-skills",
+        "https://github.com/mapbox/mcp-server",
+        "mapbox mcp",
+        "https://docs.mapbox.com/api/overview/",
+    ];
+
+    for args in [&["--help"][..], &["-h"][..], &["help"][..]] {
+        let out = run(args);
+        assert!(out.status.success(), "{args:?} exited non-zero");
+        let text = stdout(&out);
+        for link in LINKS {
+            assert!(text.contains(link), "{args:?} is missing {link}: {text}");
+        }
+    }
+
+    for args in [&["styles", "--help"][..], &["help", "styles"][..]] {
+        let text = stdout(&run(args));
+        assert!(
+            !text.contains("Learn more:"),
+            "{args:?} should not carry the top-level links: {text}"
+        );
+    }
+}
+
 /// An operation that can never succeed is not in the command surface, so it
 /// answers exactly as a mistyped name does — same code, same shape, same
 /// exit. Anything else would tell a caller which scopes exist while still

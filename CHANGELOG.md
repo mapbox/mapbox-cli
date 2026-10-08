@@ -19,6 +19,10 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox --help` and `mapbox help` end with a "Learn more" section
+  linking the CLI docs, the agent-setup prompt, Mapbox Agent Skills, the
+  Mapbox MCP server and the API docs. Subcommand help is unchanged.
+
 - **Breaking**: `--eta-type`, `--navigation-profile` and `--origin` removed
   from `mapbox search category`. The category endpoint does not currently
   return an ETA, so the flags were accepted but had no effect. A script

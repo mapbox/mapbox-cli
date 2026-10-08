@@ -53,6 +53,16 @@ use spec::ServiceSpec;
 /// single source for the Rust half rather than for all three.
 const REPO_URL: &str = "https://github.com/mapbox/cli";
 
+/// Closes the top-level help. `tests/output_contract.rs` checks each URL is
+/// printed, not that it still resolves; that is checked by hand.
+const LEARN_MORE: &str = "\
+Learn more:
+  CLI docs        https://docs.mapbox.com/cli/
+  Agent setup     https://cli.mapbox.com/agent-setup/prompt.md
+  Agent Skills    https://github.com/mapbox/mapbox-agent-skills (install: mapbox agent-skills)
+  MCP servers     https://github.com/mapbox/mcp-server (install: mapbox mcp)
+  API docs        https://docs.mapbox.com/api/overview/";
+
 /// Rejects a value the spec says is a number, while still yielding a
 /// `String`.
 ///
@@ -400,6 +410,11 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
     let mut app = Command::new("mapbox")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Mapbox API CLI — interact with Mapbox APIs from the command line")
+        // An agent that only installed the CLI finds the rest of Mapbox's
+        // agent tooling here or nowhere: it reads `--help` when stuck, and
+        // the install-time pointers are easy to skip. `after_help` does not
+        // propagate, so subcommand help stays as it was.
+        .after_help(LEARN_MORE)
         // See `build_service_command`: without this, `mapbox -o json` is a
         // successful parse of no command at all, and pairing it with
         // `arg_required_else_help` made a bare `mapbox` show full help or a

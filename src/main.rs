@@ -585,6 +585,16 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 ),
         )
         .arg(
+            // Read off argv before the parse, by `style::requested_off`;
+            // declared here so that it parses, and shows in help.
+            Arg::new(output::style::NO_COLOR_ARG)
+                .long(output::style::NO_COLOR_ARG)
+                .action(ArgAction::SetTrue)
+                .help_heading(OUTPUT_OPTIONS)
+                .global(true)
+                .help("Turn off color, as NO_COLOR does"),
+        )
+        .arg(
             Arg::new(schema::ARG)
                 .long(schema::ARG)
                 .action(ArgAction::SetTrue)
@@ -821,6 +831,12 @@ fn cli() -> u8 {
             return 1;
         }
     };
+
+    // Before the tree is built: it carries clap's color choice, and help is
+    // rendered during the parse. See `style::requested_off`.
+    if output::style::requested_off(&raw_argv) {
+        output::style::turn_off();
+    }
 
     let mut app = build_app(&specs);
     // Here rather than in `build_app`, which tests call directly and which

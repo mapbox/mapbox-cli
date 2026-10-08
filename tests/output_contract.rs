@@ -711,6 +711,48 @@ fn color_follows_no_color_then_force_color() {
     assert!(!help(&[("FORCE_COLOR", "0")]).contains('\x1b'));
 }
 
+/// `--no-color` does what `NO_COLOR` does, wherever it is on the line, and
+/// wins over `FORCE_COLOR` — including in help, which clap renders before
+/// the matches that would say so exist.
+#[test]
+fn the_no_color_flag_turns_color_off() {
+    let run_with = |args: &[&str]| {
+        command()
+            .env("FORCE_COLOR", "1")
+            .env("COLORTERM", "truecolor")
+            .env_remove("NO_COLOR")
+            .args(args)
+            .output()
+            .expect("run mapbox")
+    };
+
+    for args in [
+        &["--no-color", "--help"][..],
+        &["tilesets", "query", "--help", "--no-color"],
+    ] {
+        let text = stdout(&run_with(args));
+        assert!(!text.contains('\x1b'), "{args:?} kept color: {text:?}");
+    }
+
+    let typo = run_with(&["-o", "text", "--no-color", "--versiomn"]);
+    assert!(!stderr(&typo).contains('\x1b'), "{:?}", stderr(&typo));
+
+    let parsed = run_with(&[
+        "--no-color",
+        "styles",
+        "delete",
+        "some-style",
+        "--username",
+        "someone",
+        "--dry-run",
+    ]);
+    assert!(
+        !stderr(&parsed).contains("unexpected argument"),
+        "{}",
+        stderr(&parsed)
+    );
+}
+
 /// Forced color is for a person reading a pipe through a pager; a JSON error
 /// is for a program, and must not carry escapes inside its strings.
 #[test]

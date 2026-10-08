@@ -698,7 +698,7 @@ mod tests {
     fn unsafe_styles(text: &str, truecolor: bool) -> Vec<String> {
         let palette: Vec<String> = crate::output::theme::PALETTE
             .iter()
-            .map(|c| format!("{};{};{}", c.0, c.1, c.2))
+            .map(|(c, _)| format!("{};{};{}", c.0, c.1, c.2))
             .collect();
         let mut problems = Vec::new();
         for sequence in text.split("\x1b[").skip(1) {

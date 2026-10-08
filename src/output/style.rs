@@ -2,9 +2,10 @@
 //! color, and raw ANSI helpers for the code that writes its own escapes.
 //! What the colors are is [`super::theme`]'s business.
 //!
-//! Whether follows the order `cf` uses: `NO_COLOR` turns color off whatever
-//! else is set, `FORCE_COLOR` (anything but `0`) turns it on even into a
-//! pipe, and otherwise a stream is colored when it is a terminal that is not
+//! Whether follows the order `cf` uses, with the command line first:
+//! `--no-color` or `NO_COLOR` turns color off whatever else is set,
+//! `FORCE_COLOR` (anything but `0`) turns it on even into a pipe, and
+//! otherwise a stream is colored when it is a terminal that is not
 //! `TERM=dumb`. `color_choice` hands clap the same answer for help and usage
 //! errors.
 //!
@@ -17,9 +18,38 @@
 //! probing it, so that stdout is only ever touched by the modules
 //! `tests/source_guards.rs` allows to.
 
+use std::ffi::OsString;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use clap::ColorChoice;
 
 use super::theme;
+
+/// The global flag that turns color off.
+pub const NO_COLOR_ARG: &str = "no-color";
+
+static TURNED_OFF: AtomicBool = AtomicBool::new(false);
+
+/// Whether argv asks for no color, read before clap parses it.
+///
+/// Help and usage errors are rendered during the parse, so by the time
+/// matches say `--no-color` they have already been printed. This reads the
+/// line the way `Mode::early` reads `--output`: up to `--`, past which
+/// nothing is ours. An argument meant for `tilesets-cli` that happens to be
+/// `--no-color` turns ours off too, which costs only color.
+pub fn requested_off(argv: &[OsString]) -> bool {
+    let flag = format!("--{NO_COLOR_ARG}");
+    argv.iter()
+        .skip(1)
+        .filter_map(|arg| arg.to_str())
+        .take_while(|arg| *arg != "--")
+        .any(|arg| arg == flag)
+}
+
+/// Turns color off for the rest of the run, as `--no-color` asks.
+pub fn turn_off() {
+    TURNED_OFF.store(true, Ordering::Relaxed);
+}
 
 pub const RESET: &str = "\x1b[0m";
 pub const BOLD: &str = "\x1b[1m";
@@ -38,26 +68,24 @@ pub fn muted() -> String {
 
 /// Whether a stream should be written in color.
 pub fn enabled(stream_is_terminal: bool) -> bool {
-    decide(
-        env_value("NO_COLOR").is_some(),
-        env_value("FORCE_COLOR").as_deref(),
-    )
-    .unwrap_or_else(|| {
+    decide(no_color(), env_value("FORCE_COLOR").as_deref()).unwrap_or_else(|| {
         stream_is_terminal && env_value("TERM").as_deref() != Some("dumb") && console_renders_ansi()
     })
 }
 
 /// The same decision for clap, which checks for a terminal itself.
 pub fn color_choice() -> ColorChoice {
-    match decide(
-        env_value("NO_COLOR").is_some(),
-        env_value("FORCE_COLOR").as_deref(),
-    ) {
+    match decide(no_color(), env_value("FORCE_COLOR").as_deref()) {
         Some(true) => ColorChoice::Always,
         Some(false) => ColorChoice::Never,
         None if env_value("TERM").as_deref() == Some("dumb") => ColorChoice::Never,
         None => ColorChoice::Auto,
     }
+}
+
+/// `--no-color` or `NO_COLOR`.
+fn no_color() -> bool {
+    TURNED_OFF.load(Ordering::Relaxed) || env_value("NO_COLOR").is_some()
 }
 
 /// What the environment settles before the stream is looked at, if anything.
@@ -147,6 +175,21 @@ mod tests {
         assert_eq!(decide(false, Some("3")), Some(true));
         assert_eq!(decide(false, Some("0")), Some(false));
         assert_eq!(decide(false, None), None);
+    }
+
+    #[test]
+    fn no_color_is_read_up_to_the_end_of_options() {
+        let argv = |args: &[&str]| -> Vec<OsString> {
+            std::iter::once("mapbox")
+                .chain(args.iter().copied())
+                .map(OsString::from)
+                .collect()
+        };
+        assert!(requested_off(&argv(&["--no-color", "--help"])));
+        assert!(requested_off(&argv(&["styles", "list", "--no-color"])));
+        assert!(!requested_off(&argv(&["styles", "list"])));
+        assert!(!requested_off(&argv(&["tilesets-cli", "--", "--no-color"])));
+        assert!(!requested_off(&argv(&["--no-colors"])));
     }
 
     #[test]

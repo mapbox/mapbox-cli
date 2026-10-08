@@ -6,12 +6,12 @@
 //! text to 1.9:1 on Solarized Light — below the 3:1 bold text needs.
 //!
 //! So this palette is fixed RGB, the approach Cloudflare's `cf` CLI takes,
-//! and every color in it has the same relative luminance, about 0.21. That
-//! is the band where a color reads on black and on white alike: about 5.2:1
-//! on one and 4.1:1 on the other, and no worse than 3.5:1 on any of the
-//! themes measured (Dracula's background is the darkest that is not black).
-//! The colors differ in hue only. `every_color_reads_on_black_and_on_white`
-//! holds the rule, so a new color has to meet it too.
+//! at mid luminance — the band where a color reads on black and on white
+//! alike. Text colors sit at about 0.21: 5.2:1 on black, 4.1:1 on white,
+//! and no worse than 3.5:1 on any theme measured. The accent, only ever
+//! bold, sits a little higher (see [`ACCENT`]). The colors differ in hue
+//! rather than lightness. `every_color_reads_on_black_and_on_white` holds
+//! each to its floor, so a new color has to meet one too.
 //!
 //! RGB needs a terminal that renders it. Where one is not known to, the
 //! palette falls back to what any terminal shows the same way: the accent
@@ -22,9 +22,13 @@
 
 use clap::builder::styling::{RgbColor, Style, Styles};
 
-/// Mapbox blue, lightened to the palette's luminance: the brand color is
-/// 0.17, a little dark for a dark background.
-const ACCENT: RgbColor = RgbColor(0x52, 0x72, 0xfb);
+/// Mapbox blue (`#4264FB`), lightened to 0.26 luminance. Only ever bold, so
+/// it needs 3:1 rather than 4:1, and spends the difference on dark themes:
+/// it is the brightest blue of that hue still at 3:1 on every theme
+/// measured (Solarized Light, 3.1:1), and 6.2:1 on black. At the 0.21 the
+/// rest of the palette sits at, headings looked darker than the reader's
+/// own text on a dark theme.
+const ACCENT: RgbColor = RgbColor(0x67, 0x83, 0xfc);
 /// Secondary text — notes, hints, the banner's version — set back from the
 /// result without the faintness `dim` has on some themes.
 const MUTED: RgbColor = RgbColor(0x7f, 0x7f, 0x7f);
@@ -59,8 +63,8 @@ fn supports_truecolor(
         || windows_terminal
 }
 
-/// The accent: the banner's name, and the names in a tip a reader copies —
-/// small marks, not structure (see [`styles_for`]).
+/// The accent: headings, the banner's name, and the names in a tip a reader
+/// copies. Always bold.
 pub fn accent() -> Style {
     accent_for(truecolor())
 }
@@ -92,13 +96,10 @@ fn colored(color: RgbColor, truecolor: bool) -> Style {
 
 /// clap's styles for help and usage errors.
 ///
-/// Headings, names to type, values to fill in and clap's suggestions are
-/// bold in the terminal's own foreground; notes are muted. No accent: a
-/// fixed color has to sit at mid luminance to read on light themes, which
-/// on a dark one is darker than the reader's own text, so headings in it
-/// receded where they should lead — and clashed with whatever hue the
-/// reader's theme uses. Help takes its color from the theme; layout and
-/// bold give it structure. Values are not underlined: clap gives the space
+/// Headings in the accent; names to type, values to fill in and clap's
+/// suggestions bold in the terminal's own foreground — the color every
+/// theme makes most readable, for the part a reader has to get exactly
+/// right; notes muted. Values are not underlined: clap gives the space
 /// before a value the value's style, which bold hides and an underline
 /// shows as a stray rule.
 pub fn styles() -> Styles {
@@ -108,8 +109,8 @@ pub fn styles() -> Styles {
 pub fn styles_for(truecolor: bool) -> Styles {
     let bold = Style::new().bold();
     Styles::plain()
-        .header(bold)
-        .usage(bold)
+        .header(accent_for(truecolor))
+        .usage(accent_for(truecolor))
         .literal(bold)
         .placeholder(bold)
         .valid(bold)
@@ -126,8 +127,10 @@ pub fn open(style: Style) -> String {
     style.render().to_string()
 }
 
+/// Every color, with the contrast it must clear on both black and white:
+/// 3:1 for one only ever bold, 4:1 for one used on plain text.
 #[cfg(test)]
-pub(crate) const PALETTE: &[RgbColor] = &[ACCENT, MUTED, ERROR];
+pub(crate) const PALETTE: &[(RgbColor, f64)] = &[(ACCENT, 3.0), (MUTED, 4.0), (ERROR, 4.0)];
 
 #[cfg(test)]
 mod tests {
@@ -149,18 +152,19 @@ mod tests {
         (a.max(b) + 0.05) / (a.min(b) + 0.05)
     }
 
-    /// The palette's one rule. 3:1 is what bold text needs; on pure black and
-    /// pure white the palette clears 4:1, which leaves room for the themes
-    /// whose backgrounds are neither.
+    /// The palette's one rule. 3:1 is what bold text needs, and the accent
+    /// is only ever bold; the colors used on plain text clear 4:1, which
+    /// leaves room for the themes whose backgrounds are neither black nor
+    /// white.
     #[test]
     fn every_color_reads_on_black_and_on_white() {
-        for &color in PALETTE {
+        for &(color, floor) in PALETTE {
             let l = luminance(color);
             let on_black = contrast(l, 0.0);
             let on_white = contrast(l, 1.0);
             assert!(
-                on_black >= 4.0 && on_white >= 4.0,
-                "{color:?} is {on_black:.1}:1 on black and {on_white:.1}:1 on white"
+                on_black >= floor && on_white >= floor,
+                "{color:?} is {on_black:.1}:1 on black and {on_white:.1}:1 on white, under {floor}:1"
             );
         }
     }

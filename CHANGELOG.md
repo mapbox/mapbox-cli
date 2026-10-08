@@ -19,6 +19,11 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- An API parameter's help line no longer stops at the first dot inside an
+  id, a number or "e.g.": `tilesets get-tile` described `<tilesets>` as
+  "Tileset ID(s) in the format `username" and now shows the whole first
+  sentence. Help text only; `--schema` always had the full description.
+
 - Color reads on light and dark terminal themes alike. Tables, tips, the
   banner and help notes use a small fixed palette (Mapbox blue, gray, red)
   whose colors all clear 3.5:1 on common themes, instead of the

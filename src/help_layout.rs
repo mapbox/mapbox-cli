@@ -136,8 +136,11 @@ pub fn apply(app: Command) -> Command {
     ));
 
     let page = render(&sections, page_width(), &Palette::new(app.get_styles()));
-    let template =
-        format!("{{before-help}}{{about-with-newline}}\n{{usage-heading}} {{usage}}\n\n{page}");
+    // Rendered now rather than through `{usage}`: help is shown by the
+    // parsing copy, whose global options are hidden (see `for_parsing`), and
+    // clap would drop `[OPTIONS]` from a usage line with none visible.
+    let usage = app.clone().render_usage().ansi().to_string();
+    let template = format!("{{before-help}}{{about-with-newline}}\n{usage}\n\n{page}");
     app.help_template(StyledStr::from(template))
 }
 
@@ -468,30 +471,59 @@ fn page_width() -> usize {
 }
 
 /// The copy of the tree that parses, and so renders every subcommand's
-/// help, in clap's compact layout.
+/// help: compact, and about the command itself.
 ///
 /// clap switches `--help` to its long layout whenever a command has a
 /// `long_about`, and nearly every command here does: each option's
 /// description on a line of its own, a blank line between options, and
-/// `[env: …]` as a paragraph. That made a subcommand's help several screens
-/// of mostly white space. Here the long description moves to the top of the
-/// command's own page instead, which leaves clap nothing long to show.
+/// `[env: …]` as a paragraph. Here the long description moves to the top of
+/// the command's own page instead, which leaves clap nothing long to show.
 ///
-/// Only the parsing copy: `--schema` and `generate-skills` read
-/// `long_about` from the tree `build_app` returned. Backticks go too — in a
-/// terminal they are noise, not markup.
+/// The eleven global options are listed on the top-level page and named in
+/// one line on every other. Spelled out on each, they outweighed what the
+/// command itself takes, and clap aligned each of their headings on a
+/// column of its own. Hidden only from help: they still parse, and clap
+/// still suggests them for a typo.
+///
+/// Only the parsing copy: `--schema`, completion and `generate-skills` read
+/// the tree `build_app` returned. Backticks go too — in a terminal they are
+/// noise, not markup.
 pub fn for_parsing(app: Command) -> Command {
-    app.mut_args(plain_arg_help).mut_subcommands(compact)
+    let footer = global_options_footer(&app);
+    app.mut_args(|arg| {
+        let arg = plain_arg_help(arg);
+        if arg.is_global_set() {
+            arg.hide(true)
+        } else {
+            arg
+        }
+    })
+    .mut_subcommands(|cmd| compact(cmd, &footer))
 }
 
-fn compact(cmd: Command) -> Command {
+/// One line closing a subcommand's help, standing in for the global
+/// options. Phrased like the top-level page's closing line, and like
+/// kubectl's pointer to its global options.
+fn global_options_footer(app: &Command) -> StyledStr {
+    let lit = *app.get_styles().get_literal();
+    let note = Style::new().dimmed();
+    StyledStr::from(format!(
+        "{note}Run{note:#} {lit}mapbox --help{lit:#} \
+         {note}for the global options, which apply to every command.{note:#}"
+    ))
+}
+
+fn compact(cmd: Command, footer: &StyledStr) -> Command {
     let long = cmd
         .get_long_about()
         .map(|text| without_backticks(&text.to_string()));
     let about = cmd
         .get_about()
         .map(|text| without_backticks(&text.to_string()));
-    let mut cmd = cmd.mut_args(plain_arg_help).mut_subcommands(compact);
+    let mut cmd = cmd
+        .mut_args(plain_arg_help)
+        .mut_subcommands(|sub| compact(sub, footer))
+        .after_help(footer.clone());
     if let Some(about) = about {
         cmd = cmd.about(about);
     }
@@ -501,7 +533,7 @@ fn compact(cmd: Command) -> Command {
         Some(long) => cmd
             .long_about(None::<&'static str>)
             .before_help(long)
-            .help_template("{before-help}{usage-heading} {usage}\n\n{all-args}"),
+            .help_template("{before-help}{usage-heading} {usage}\n\n{all-args}{after-help}"),
         None => cmd,
     }
 }

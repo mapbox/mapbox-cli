@@ -588,12 +588,13 @@ fn top_level_help_aligns_and_wraps_to_the_terminal() {
 }
 
 /// clap's long layout — every description on a line of its own, a blank
-/// line between options, `[env: …]` as a paragraph — made a subcommand's
-/// `--help` mostly white space. It is now the compact layout, with the
-/// command's long description still at the top, whichever way help is
-/// asked for.
+/// line between options, notes as paragraphs — made a subcommand's `--help`
+/// mostly white space, and the eleven global options repeated on every page
+/// outweighed the command's own. Now: the compact layout, the command's long
+/// description at the top, and one line standing in for the global options,
+/// whichever way help is asked for.
 #[test]
-fn subcommand_help_is_compact_and_keeps_its_description() {
+fn subcommand_help_is_compact_and_about_the_command() {
     for args in [
         &["tilesets", "query", "--help"][..],
         &["help", "tilesets", "query"][..],
@@ -608,20 +609,49 @@ fn subcommand_help_is_compact_and_keeps_its_description() {
         );
         assert!(
             text.lines()
-                .any(|line| line.contains("--token") && line.contains("[env: MAPBOX_ACCESS_TOKEN]")),
-            "{args:?} should keep the env note on the option's line: {text}"
+                .any(|line| line.contains("--geometry") && line.contains("[possible values:")),
+            "{args:?} should keep notes on the option's line: {text}"
         );
-        // The long layout's mark: a blank line, then the note as a
-        // paragraph. A note wrapped onto the next line is fine.
-        let lines: Vec<&str> = text.lines().collect();
         assert!(
-            !lines
-                .windows(2)
-                .any(|pair| pair[0].trim().is_empty() && pair[1].trim_start().starts_with("[env:")),
-            "{args:?} set an env note apart as a paragraph: {text}"
+            !text.contains("--token <TOKEN>") && !text.contains("Authentication:"),
+            "{args:?} spells out the global options again: {text}"
+        );
+        assert!(
+            text.contains("Run mapbox --help for the global options"),
+            "{args:?} should still point at the global options: {text}"
         );
         assert!(!text.contains('`'), "{args:?} shows backticks: {text}");
     }
+}
+
+/// Hidden from a subcommand's help, a global option still parses there and
+/// is still offered for a typo; and the top-level usage line still says the
+/// command takes options.
+#[test]
+fn hidden_global_options_still_work_and_are_suggested() {
+    let typo = run(&["-o", "text", "styles", "list", "--outptu", "json"]);
+    assert!(
+        stderr(&typo).contains("a similar argument exists: '--output'"),
+        "{}",
+        stderr(&typo)
+    );
+
+    let dry = run(&[
+        "styles",
+        "delete",
+        "some-style",
+        "--username",
+        "someone",
+        "--dry-run",
+    ]);
+    assert!(
+        !stderr(&dry).contains("unexpected argument"),
+        "a global option was refused on a subcommand: {}",
+        stderr(&dry)
+    );
+
+    let help = stdout(&run(&["--help"]));
+    assert!(help.contains("Usage: mapbox [OPTIONS] <COMMAND>"), "{help}");
 }
 
 /// The compact help is made on the copy of the tree that parses; `--schema`

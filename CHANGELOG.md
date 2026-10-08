@@ -27,7 +27,9 @@ that may never merge. They are not releases and are not listed here.
   terminal, and in a terminal commands and flags show in cyan with
   `[env: …]` notes dimmed. Subcommand help uses the same colors and
   clap's compact layout for `--help` as well as `-h`, with the command's
-  full description at the top.
+  full description at the top; it no longer repeats the global options,
+  which still work on every command, and points to `mapbox --help` for
+  them instead.
   Help text only: no command, flag, exit code or result output changes.
 
 - Top-level `mapbox --help` / `mapbox help` changes. It ends with a

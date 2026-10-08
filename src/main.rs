@@ -977,7 +977,7 @@ fn clap_tip(rendered: &str) -> Option<String> {
 /// The subcommand placeholder clap ends a usage line with when one is still
 /// required. Nothing here sets `subcommand_value_name`, so this is clap's own
 /// default spelling.
-const SUBCOMMAND_PLACEHOLDER: &str = " <COMMAND>";
+const SUBCOMMAND_PLACEHOLDER: &str = "<COMMAND>";
 
 /// Takes `<COMMAND>` back off the usage line of a suggestion that cannot take one.
 ///
@@ -1025,10 +1025,18 @@ fn drop_subcommand_from_short_circuit_usage(mut err: clap::Error) -> clap::Error
         };
         // `StyledStr` carries its styling as ANSI inside the string, so
         // pushing the trimmed rendering back into a new one round-trips the
-        // styling exactly. The placeholder is plain text at the very end,
-        // after every styled span, which is what makes it safe to cut.
+        // styling exactly. The placeholder comes last, wrapped in the help's
+        // placeholder style: cut it, its style codes, and the space before.
         let rendered = usage.ansi().to_string();
-        let Some(without_subcommand) = rendered.strip_suffix(SUBCOMMAND_PLACEHOLDER) else {
+        let Some(at) = rendered.rfind(SUBCOMMAND_PLACEHOLDER) else {
+            return err;
+        };
+        if !is_style_codes(&rendered[at + SUBCOMMAND_PLACEHOLDER.len()..]) {
+            return err;
+        }
+        let Some(without_subcommand) =
+            without_trailing_style_codes(&rendered[..at]).strip_suffix(' ')
+        else {
             return err;
         };
         let mut corrected = StyledStr::new();
@@ -1037,6 +1045,25 @@ fn drop_subcommand_from_short_circuit_usage(mut err: clap::Error) -> clap::Error
     };
     err.insert(ContextKind::Usage, ContextValue::StyledStr(corrected));
     err
+}
+
+/// Whether `text` is nothing but ANSI style sequences (`ESC [ … m`).
+fn is_style_codes(text: &str) -> bool {
+    without_trailing_style_codes(text).is_empty()
+}
+
+fn without_trailing_style_codes(mut text: &str) -> &str {
+    while let Some(start) = text.rfind("\x1b[") {
+        let code = &text[start + 2..];
+        let Some(params) = code.strip_suffix('m') else {
+            break;
+        };
+        if !params.chars().all(|c| c.is_ascii_digit() || c == ';') {
+            break;
+        }
+        text = &text[..start];
+    }
+    text
 }
 
 /// The command clap says needs a subcommand, as something to run.

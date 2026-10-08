@@ -108,16 +108,14 @@ const OPTIONS: &str = "Options";
 const MAX_WIDTH: usize = 100;
 
 /// The help palette, for subcommand help as well as the page rendered here.
-/// Three levels only: headings bold, names to type cyan, notes dimmed.
-///
-/// Placeholders stay plain, as in clap's default: the usage correction in
-/// `drop_subcommand_from_short_circuit_usage` cuts a plain ` <COMMAND>` off
-/// the end of a usage line.
+/// Three levels only: headings bold, what to type cyan — names bold, the
+/// values they take (`<TOKEN>`, `<tilesets>`) plain — and notes dimmed.
 pub fn styles() -> Styles {
     Styles::styled()
         .header(Style::new().bold())
         .usage(Style::new().bold())
         .literal(AnsiColor::Cyan.on_default().bold())
+        .placeholder(AnsiColor::Cyan.on_default())
 }
 
 /// Gives `app` a help template holding the whole top-level page. Call it

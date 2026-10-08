@@ -1576,9 +1576,9 @@ the API, though nothing here enforces it before the request goes out.
 | `--contours-colors <hex,...>` | A hex color per contour (no `#`), comma-separated — must match the contour count. |
 | `--polygons` | Return each contour that forms a ring as a GeoJSON polygon instead of a linestring — one that doesn't form a ring stays a linestring either way. |
 | `--denoise <0-1>` | A larger value removes more of the smaller contours: 1 keeps only the largest contour for each level, 0.5 drops any contour under half the largest's area. Defaults to 1. |
-| `--generalize <meters>` | Douglas-Peucker simplification tolerance — a higher value is a coarser, smaller contour. |
-| `--exclude <types>` | Road types to route around, comma-separated (`motorway`, `toll`, `ferry`, `unpaved`, `cash_only_tolls`). |
-| `--depart-at <ISO 8601>` | For `mapbox/driving-traffic`, which live traffic conditions to route against. |
+| `--generalize <meters>` | Douglas-Peucker simplification tolerance — a higher value gives a coarser contour. |
+| `--exclude <types>` | Road types to route around, comma-separated (`motorway`, `toll`, `ferry`, `unpaved`, `cash_only_tolls`) — all five only available for `mapbox/driving` and `mapbox/driving-traffic`. |
+| `--depart-at <ISO 8601>` | Defaults to now in the coordinates' own timezone — the contours reflect traffic conditions at this time. |
 
 #### Examples
 
@@ -1593,7 +1593,7 @@ Captured live against `mapbox/walking`, two 5- and 10-minute contours as
 polygons. This response is a real GeoJSON `FeatureCollection`, unlike
 `mapbox directions`'s response, but isochrone isn't one of the three
 services (`search`, `geocoder`, `tilequery`) this CLI has a bespoke
-list-per-feature rendering for yet (`output.rs`'s `list_rendering` is an
+list-per-feature rendering for yet (`output/render.rs`'s `list_rendering` is an
 exact service allow-list, not a "looks like GeoJSON" test), so both output
 modes print the same JSON, `-o text` pretty-printed and `-o json` on one
 line, same shape as `mapbox directions`'s Outputs section above:

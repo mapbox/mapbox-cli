@@ -2119,7 +2119,7 @@ mod tests {
             .expect("--output is global");
         let described = describe(output);
         assert!(
-            described.contains("text in a terminal, else JSON"),
+            described.contains("text in a terminal, JSON when piped"),
             "the whole of --output's help should survive: {described}"
         );
 

@@ -21,10 +21,11 @@ that may never merge. They are not releases and are not listed here.
 
 - Top-level `mapbox --help` lists commands in groups (Maps and data,
   Search, Account, Coding agents, CLI), each with a line saying what it
-  does rather than which API it wraps. Global options appear under
-  Authentication, Output and Behavior, in subcommand help too, with
-  uppercase placeholders (`--token <TOKEN>`). Help text only: no command,
-  flag, exit code or result output changes.
+  does rather than which API it wraps, and the global options under
+  Authentication, Output and Behavior. Every section shares one column,
+  wraps to the terminal, and in a terminal shows commands and flags in
+  cyan with `[env: …]` notes dimmed; subcommand help uses the same colors.
+  Help text only: no command, flag, exit code or result output changes.
 
 - Top-level `mapbox --help` / `mapbox help` changes. It ends with a
   "Learn more" section linking the CLI docs, the agent-setup prompt,

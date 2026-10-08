@@ -372,9 +372,7 @@ fn top_level_help_links_to_mapbox_resources() {
         "https://docs.mapbox.com/cli/",
         "https://cli.mapbox.com/agent-setup/prompt.md",
         "https://github.com/mapbox/mapbox-agent-skills",
-        "mapbox agent-skills",
         "https://github.com/mapbox/mcp-server",
-        "mapbox mcp",
         "https://docs.mapbox.com/api/overview/",
     ];
 
@@ -511,8 +509,64 @@ fn top_level_help_groups_commands_and_options() {
         "a command fell through to Other: {text}"
     );
     assert!(
-        text.contains("  accounts         List access tokens and their scopes\n"),
+        text.lines().any(|line| line.starts_with("  accounts ")
+            && line.ends_with(" List access tokens and their scopes")),
         "an API command should describe what it does, not its spec title: {text}"
+    );
+    // The commands that install the linked skills and MCP server are listed
+    // with the rest, which is why the links themselves don't repeat them.
+    for command in ["agent-skills", "mcp"] {
+        assert!(
+            text.lines()
+                .any(|line| line.starts_with(&format!("  {command} "))),
+            "`{command}` is not listed: {text}"
+        );
+    }
+}
+
+/// Every section shares one description column, wrapped lines continue on
+/// it, and nothing passes the terminal's width — the page is rendered here
+/// rather than by clap, so none of that comes for free.
+#[test]
+fn top_level_help_aligns_and_wraps_to_the_terminal() {
+    let out = command()
+        .env("COLUMNS", "80")
+        .env_remove("CLAUDECODE")
+        .arg("--help")
+        .output()
+        .expect("run mapbox");
+    let text = stdout(&out);
+    let page = &text[text.find("Usage:").expect("a usage line")..];
+
+    let column = |line: &str| {
+        line.trim_start()
+            .find("  ")
+            .map(|gap| line.len() - line.trim_start().len() + gap)
+            .map(|end| end + line[end..].len() - line[end..].trim_start().len())
+    };
+    let first = page
+        .lines()
+        .find(|line| line.starts_with("  styles "))
+        .and_then(column)
+        .expect("a styles row");
+
+    for line in page.lines() {
+        assert!(line.chars().count() <= 80, "over 80 columns: {line:?}");
+        if line.starts_with("  ") && !line.trim().is_empty() {
+            // A wrapped line starts on the column; a row reaches it after
+            // its name.
+            let indent = line.len() - line.trim_start().len();
+            let at = if indent == first {
+                Some(indent)
+            } else {
+                column(line)
+            };
+            assert_eq!(at, Some(first), "off the shared column: {line:?}");
+        }
+    }
+    assert!(
+        !page.contains('`'),
+        "code spans should be styled, not shown with backticks: {page}"
     );
 }
 

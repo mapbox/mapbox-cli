@@ -801,6 +801,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "tar",
+ "terminal_size",
 ]
 
 [[package]]

@@ -60,6 +60,10 @@ unimplemented = "deny"
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env", "string", "wrap_help"] }
+# Already in the graph through clap's `wrap_help`. Used directly by the
+# top-level help, which src/help_layout.rs renders itself and so has to wrap
+# to the terminal itself.
+terminal_size = "0.4"
 # Renders `mapbox completion <shell>` from the same `Command` tree everything
 # else here is built from. Kept to the default features on purpose: the
 # dynamic-completion half is `unstable-dynamic`, and value completion is out

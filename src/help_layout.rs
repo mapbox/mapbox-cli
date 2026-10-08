@@ -16,17 +16,19 @@
 //! Routing APIs (Directions, Matrix, Isochrone, Map Matching, Optimization)
 //! are expected to land as a "Navigation" group of their own.
 //!
-//! clap has no notion of command groups, so this renders the list itself and
-//! hands it to clap as the root's help template. Nothing else changes: the
-//! command tree that parsing, completion, `--schema` and suggestions read is
-//! the one `build_app` built.
+//! clap has no notion of command groups, and aligns each option heading on
+//! its own column, so this renders the whole top-level page itself — one
+//! column for every section — and hands it to clap as the root's help
+//! template. Nothing else changes: the command tree that parsing,
+//! completion, `--schema` and suggestions read is the one `build_app` built,
+//! and subcommand help is clap's own, in the same [`styles`].
 //!
 //! A command missing from [`GROUPS`] still shows, under "Other", so a slip
 //! here cannot hide a command — but `every_command_has_a_place` fails first.
 
-use clap::builder::styling::Styles;
+use clap::builder::styling::{AnsiColor, Style, Styles};
 use clap::builder::StyledStr;
-use clap::Command;
+use clap::{Arg, Command};
 
 /// Help groups in display order, each listing its commands in display order.
 const GROUPS: &[(&str, &[&str])] = &[
@@ -51,11 +53,11 @@ const GROUPS: &[(&str, &[&str])] = &[
     ),
 ];
 
-/// One-line descriptions for commands whose own `about` this crate does not
-/// write: the API commands, which carry their spec's title ("Mapbox Tokens
-/// API") — that says which API, not what the command does — and clap's
-/// `help`. Used in this list only; `--schema` and `generate-skills` keep the
-/// spec's wording.
+/// One-line descriptions for this list, where a command's own `about` does
+/// not serve: the API commands, which carry their spec's title ("Mapbox
+/// Tokens API") — that says which API, not what the command does — clap's
+/// `help`, and a hand-written `about` too long for one line here. Used in
+/// this list only; `--schema` and generated skills keep the command's own.
 const DESCRIPTIONS: &[(&str, &str)] = &[
     ("styles", "Create, read, update and delete map styles"),
     ("sprites", "Add and remove images in a style's sprite"),
@@ -72,51 +74,379 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ("geocoder", "Forward, reverse and batch geocoding"),
     ("feedback", "Submit and list feedback about Mapbox data"),
     ("accounts", "List access tokens and their scopes"),
+    (
+        "generate-skills",
+        "Write Agent Skills describing this CLI's own commands",
+    ),
     ("help", "Print help for mapbox or a command"),
 ];
 
+/// Where the rest of Mapbox's agent tooling lives. An agent that only
+/// installed the CLI finds these here or nowhere: it reads `--help` when
+/// stuck, and the install-time pointers are easy to skip.
+/// `tests/output_contract.rs` checks each URL is printed, not that it still
+/// resolves; that is checked by hand.
+const LINKS: &[(&str, &str)] = &[
+    ("CLI docs", "https://docs.mapbox.com/cli/"),
+    (
+        "Agent setup",
+        "https://cli.mapbox.com/agent-setup/prompt.md",
+    ),
+    (
+        "Agent Skills",
+        "https://github.com/mapbox/mapbox-agent-skills",
+    ),
+    ("MCP server", "https://github.com/mapbox/mcp-server"),
+    ("API docs", "https://docs.mapbox.com/api/overview/"),
+];
+
 const OTHER: &str = "Other";
+const OPTIONS: &str = "Options";
 
-/// Gives `app` a help template that lists its commands by group. Call it
-/// last: the options section is rendered here, from the arguments `app`
-/// already has.
+/// The widest the page gets, terminal or not: past 100 columns a
+/// description runs too far from its flag to read as one line.
+const MAX_WIDTH: usize = 100;
+
+/// The help palette, for subcommand help as well as the page rendered here.
+/// Three levels only: headings bold, names to type cyan, notes dimmed.
+///
+/// Placeholders stay plain, as in clap's default: the usage correction in
+/// `drop_subcommand_from_short_circuit_usage` cuts a plain ` <COMMAND>` off
+/// the end of a usage line.
+pub fn styles() -> Styles {
+    Styles::styled()
+        .header(Style::new().bold())
+        .usage(Style::new().bold())
+        .literal(AnsiColor::Cyan.on_default().bold())
+}
+
+/// Gives `app` a help template holding the whole top-level page. Call it
+/// last: the page is rendered from the commands and arguments `app` already
+/// has.
 pub fn apply(app: Command) -> Command {
-    let styles = Styles::default();
-    let header = *styles.get_header();
-    let literal = *styles.get_literal();
+    let mut sections = command_sections(&app);
+    sections.extend(option_sections(&app));
+    sections.push((
+        "Learn more".to_string(),
+        LINKS
+            .iter()
+            .map(|(label, url)| Row::new(label, label.to_string(), vec![Piece::plain(url)]))
+            .collect(),
+    ));
 
-    let rows = rows(&app);
-    let width = rows.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    let page = render(&sections, page_width(), &Palette::new(app.get_styles()));
+    let template =
+        format!("{{before-help}}{{about-with-newline}}\n{{usage-heading}} {{usage}}\n\n{page}");
+    app.help_template(StyledStr::from(template))
+}
 
-    let mut commands = String::new();
-    for (heading, rows) in grouped(rows) {
-        commands.push_str(&format!("{header}{heading}:{header:#}\n"));
-        for (name, about) in rows {
-            commands.push_str(&format!(
-                "  {literal}{name}{literal:#}{pad}  {about}\n",
-                pad = " ".repeat(width - name.len()),
-            ));
+struct Palette {
+    header: Style,
+    literal: Style,
+    placeholder: Style,
+    note: Style,
+}
+
+impl Palette {
+    fn new(styles: &Styles) -> Self {
+        Palette {
+            header: *styles.get_header(),
+            literal: *styles.get_literal(),
+            placeholder: *styles.get_placeholder(),
+            note: Style::new().dimmed(),
         }
-        commands.push('\n');
+    }
+}
+
+/// A word, or a run of words that must stay on one line, and how it looks.
+/// `prefix` and `suffix` are plain punctuation touching a styled piece with
+/// no space between: the parentheses in "(`tilesets`)".
+struct Piece {
+    prefix: String,
+    text: String,
+    kind: Kind,
+    suffix: String,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Plain,
+    Literal,
+    Note,
+}
+
+impl Piece {
+    fn new(text: &str, kind: Kind) -> Self {
+        Piece {
+            prefix: String::new(),
+            text: text.to_string(),
+            kind,
+            suffix: String::new(),
+        }
     }
 
-    // clap writes its single "Commands:" list into `{all-args}` whenever
-    // the command has a visible subcommand, so the options come from a copy
-    // with none. Hiding them on `app` itself would drop them from
-    // completion and suggestions too.
-    let options = app
-        .clone()
-        .mut_subcommands(|c| c.hide(true))
-        .disable_help_subcommand(true)
-        .help_template("{all-args}")
-        .render_help();
+    fn plain(text: &str) -> Self {
+        Piece::new(text, Kind::Plain)
+    }
 
-    let template = format!(
-        "{{before-help}}{{about-with-newline}}\n{{usage-heading}} {{usage}}\n\n{commands}{}{{after-help}}",
-        // `{after-help}` brings its own blank line.
-        options.ansi().to_string().trim_end()
-    );
-    app.help_template(StyledStr::from(template))
+    fn width(&self) -> usize {
+        [&self.prefix, &self.text, &self.suffix]
+            .iter()
+            .map(|s| s.chars().count())
+            .sum()
+    }
+}
+
+/// One line of a section: what to type (or a label) on the left, what it
+/// does on the right.
+struct Row {
+    left_width: usize,
+    left: String,
+    description: Vec<Piece>,
+}
+
+impl Row {
+    fn new(plain_left: &str, styled_left: String, description: Vec<Piece>) -> Self {
+        Row {
+            left_width: plain_left.chars().count(),
+            left: styled_left,
+            description,
+        }
+    }
+}
+
+type Section = (String, Vec<Row>);
+
+fn command_sections(app: &Command) -> Vec<Section> {
+    let literal = *app.get_styles().get_literal();
+    grouped(rows(app))
+        .into_iter()
+        .map(|(heading, rows)| {
+            let rows = rows
+                .into_iter()
+                .map(|(name, about)| {
+                    Row::new(&name, format!("{literal}{name}{literal:#}"), pieces(&about))
+                })
+                .collect();
+            (heading.to_string(), rows)
+        })
+        .collect()
+}
+
+/// The root's own options under their `help_heading`s, in the order the
+/// headings first appear. `-h` and `-V` are clap's and carry no heading;
+/// they close the last section rather than sit alone in one.
+fn option_sections(app: &Command) -> Vec<Section> {
+    let palette = Palette::new(app.get_styles());
+    let mut sections: Vec<Section> = Vec::new();
+    for arg in app
+        .get_arguments()
+        .filter(|a| !a.is_hide_set() && !a.is_positional())
+    {
+        let heading = arg.get_help_heading().unwrap_or(OPTIONS);
+        let row = option_row(arg, &palette);
+        match sections.iter_mut().find(|(h, _)| h == heading) {
+            Some((_, rows)) => rows.push(row),
+            None => sections.push((heading.to_string(), vec![row])),
+        }
+    }
+
+    let mut builtin = vec![flag_row(Some('h'), "help", None, "Print help", &palette)];
+    if app.get_version().is_some() && !app.is_disable_version_flag_set() {
+        builtin.push(flag_row(
+            Some('V'),
+            "version",
+            None,
+            "Print version",
+            &palette,
+        ));
+    }
+    match sections.last_mut() {
+        Some((_, rows)) => rows.extend(builtin),
+        None => sections.push((OPTIONS.to_string(), builtin)),
+    }
+    sections
+}
+
+fn option_row(arg: &Arg, palette: &Palette) -> Row {
+    let value = arg.get_action().takes_values().then(|| {
+        arg.get_value_names()
+            .and_then(|names| names.first().map(ToString::to_string))
+            .unwrap_or_else(|| arg.get_id().as_str().to_uppercase())
+    });
+    let help = arg.get_help().map(ToString::to_string).unwrap_or_default();
+    let env = arg.get_env().map(|e| e.to_string_lossy().into_owned());
+    flag_row(
+        arg.get_short(),
+        arg.get_long().unwrap_or_default(),
+        value,
+        &help,
+        palette,
+    )
+    .with_env(env)
+}
+
+fn flag_row(
+    short: Option<char>,
+    long: &str,
+    value: Option<String>,
+    help: &str,
+    palette: &Palette,
+) -> Row {
+    let (lit, ph) = (palette.literal, palette.placeholder);
+    let (short_plain, short_styled) = match short {
+        Some(c) => (format!("-{c}, "), format!("{lit}-{c}{lit:#}, ")),
+        None => ("    ".to_string(), "    ".to_string()),
+    };
+    let (value_plain, value_styled) = match &value {
+        Some(v) => (format!(" <{v}>"), format!(" {ph}<{v}>{ph:#}")),
+        None => (String::new(), String::new()),
+    };
+    let plain = format!("{short_plain}--{long}{value_plain}");
+    let styled = format!("{short_styled}{lit}--{long}{lit:#}{value_styled}");
+    Row::new(&plain, styled, pieces(help))
+}
+
+impl Row {
+    /// Appends the arg's environment variable as a dimmed note. A help text
+    /// that names one by hand — `--timeout` and `--output` read theirs
+    /// leniently rather than through clap — has its note dimmed the same way.
+    fn with_env(mut self, env: Option<String>) -> Self {
+        if let Some(name) = env {
+            self.description
+                .push(Piece::new(&format!("[env: {name}]"), Kind::Note));
+        }
+        self
+    }
+}
+
+/// Splits help text into pieces: words, `code` spans kept whole and shown
+/// as literals rather than with their backticks, and a trailing `[env: …]`
+/// note kept whole and dimmed.
+fn pieces(text: &str) -> Vec<Piece> {
+    let (body, note) = match text.rfind(" [env: ") {
+        Some(at) if text.ends_with(']') => (&text[..at], Some(&text[at + 1..])),
+        _ => (text, None),
+    };
+
+    let mut out: Vec<Piece> = Vec::new();
+    // Text touching a code span with no space between — "(" before it, ","
+    // after it — belongs to the span, not to a word of its own.
+    let mut prefix = String::new();
+    for (i, part) in body.split('`').enumerate() {
+        if i % 2 == 1 {
+            let mut piece = Piece::new(part, Kind::Literal);
+            piece.prefix = std::mem::take(&mut prefix);
+            out.push(piece);
+            continue;
+        }
+        let mut words: Vec<&str> = part.split_whitespace().collect();
+        if !part.starts_with(char::is_whitespace) && !words.is_empty() {
+            if let Some(prev) = out.last_mut().filter(|p| p.kind == Kind::Literal) {
+                prev.suffix = words.remove(0).to_string();
+            }
+        }
+        if !part.ends_with(char::is_whitespace) && i + 1 < body.split('`').count() {
+            prefix = words.pop().unwrap_or_default().to_string();
+        }
+        out.extend(words.into_iter().map(Piece::plain));
+    }
+    out.extend(note.map(|n| Piece::new(n, Kind::Note)));
+    out
+}
+
+fn render(sections: &[Section], width: usize, palette: &Palette) -> String {
+    let column = 2
+        + sections
+            .iter()
+            .flat_map(|(_, rows)| rows.iter().map(|r| r.left_width))
+            .max()
+            .unwrap_or(0)
+        + 2;
+    let room = width.saturating_sub(column).max(20);
+    let header = palette.header;
+
+    let mut page = String::new();
+    for (heading, rows) in sections {
+        page.push_str(&format!("{header}{heading}:{header:#}\n"));
+        for row in rows {
+            page.push_str("  ");
+            page.push_str(&row.left);
+            let mut lines = wrap(&row.description, room).into_iter();
+            if let Some(first) = lines.next() {
+                page.push_str(&" ".repeat(column - 2 - row.left_width));
+                page.push_str(&styled_line(&first, palette));
+            }
+            for line in lines {
+                page.push('\n');
+                page.push_str(&" ".repeat(column));
+                page.push_str(&styled_line(&line, palette));
+            }
+            page.push('\n');
+        }
+        page.push('\n');
+    }
+    let lit = palette.literal;
+    let note = palette.note;
+    page.push_str(&format!(
+        "{note}Run{note:#} {lit}mapbox <command> --help{lit:#} {note}for a command's own options.{note:#}"
+    ));
+    page
+}
+
+/// Greedy word wrap of `pieces` into lines no wider than `room`. A piece
+/// wider than `room` gets a line of its own rather than being split.
+fn wrap(pieces: &[Piece], room: usize) -> Vec<Vec<&Piece>> {
+    let mut lines: Vec<Vec<&Piece>> = Vec::new();
+    let mut current: Vec<&Piece> = Vec::new();
+    let mut used = 0;
+    for piece in pieces {
+        let len = piece.width();
+        let needed = if current.is_empty() {
+            len
+        } else {
+            used + 1 + len
+        };
+        if !current.is_empty() && needed > room {
+            lines.push(std::mem::take(&mut current));
+            used = len;
+        } else {
+            used = needed;
+        }
+        current.push(piece);
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+fn styled_line(line: &[&Piece], palette: &Palette) -> String {
+    let words: Vec<String> = line
+        .iter()
+        .map(|piece| {
+            let style = match piece.kind {
+                Kind::Plain => return format!("{}{}{}", piece.prefix, piece.text, piece.suffix),
+                Kind::Literal => palette.literal,
+                Kind::Note => palette.note,
+            };
+            format!(
+                "{}{style}{}{style:#}{}",
+                piece.prefix, piece.text, piece.suffix
+            )
+        })
+        .collect();
+    words.join(" ")
+}
+
+/// The terminal's width, as clap would read it, capped at [`MAX_WIDTH`].
+fn page_width() -> usize {
+    let detected = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|c| c.parse::<usize>().ok())
+        .filter(|c| *c > 0)
+        .or_else(|| terminal_size::terminal_size().map(|(w, _)| usize::from(w.0)));
+    detected.map_or(MAX_WIDTH, |w| w.min(MAX_WIDTH))
 }
 
 /// `(name, description)` for each command the help lists. clap adds its
@@ -239,6 +569,43 @@ mod tests {
             })
             .collect();
         assert!(missing.is_empty(), "{}", missing.join("\n"));
+    }
+
+    fn shown(text: &str) -> Vec<String> {
+        pieces(text)
+            .iter()
+            .map(|p| format!("{}{}{}", p.prefix, p.text, p.suffix))
+            .collect()
+    }
+
+    /// A code span loses its backticks but keeps the punctuation that
+    /// touches it, with no space added on either side.
+    #[test]
+    fn a_code_span_keeps_the_punctuation_around_it() {
+        assert_eq!(
+            shown("Run the Tilesets CLI (`tilesets`, installed separately)"),
+            [
+                "Run",
+                "the",
+                "Tilesets",
+                "CLI",
+                "(tilesets,",
+                "installed",
+                "separately)"
+            ]
+        );
+        assert_eq!(
+            shown("Use `mapbox auth login` credentials"),
+            ["Use", "mapbox auth login", "credentials"]
+        );
+    }
+
+    #[test]
+    fn a_trailing_env_note_is_one_dimmed_piece() {
+        let pieces = pieces("Seconds per request [env: MAPBOX_TIMEOUT]");
+        let last = pieces.last().expect("pieces");
+        assert_eq!(last.text, "[env: MAPBOX_TIMEOUT]");
+        assert!(last.kind == Kind::Note);
     }
 
     #[test]

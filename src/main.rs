@@ -1,7 +1,6 @@
 use std::process::ExitCode;
 
 use anyhow::Result;
-use clap::builder::styling::Styles;
 use clap::builder::{
     FalseyValueParser, PossibleValuesParser, StringValueParser, StyledStr, TypedValueParser,
 };
@@ -54,23 +53,6 @@ use spec::ServiceSpec;
 /// run on their own, with nothing of this crate beside them, so this is the
 /// single source for the Rust half rather than for all three.
 const REPO_URL: &str = "https://github.com/mapbox/cli";
-
-/// Closes the top-level help. `tests/output_contract.rs` checks each URL is
-/// printed, not that it still resolves; that is checked by hand.
-const LEARN_MORE: &str = "
-  CLI docs        https://docs.mapbox.com/cli/
-  Agent setup     https://cli.mapbox.com/agent-setup/prompt.md
-  Agent Skills    https://github.com/mapbox/mapbox-agent-skills (install: mapbox agent-skills)
-  MCP servers     https://github.com/mapbox/mcp-server (install: mapbox mcp)
-  API docs        https://docs.mapbox.com/api/overview/";
-
-/// `LEARN_MORE` under a heading styled like clap's own `Usage:` and
-/// `Options:`. A plain-text heading reads as body text in a terminal; clap
-/// strips the style itself when color is off.
-fn learn_more() -> StyledStr {
-    let header = *Styles::default().get_header();
-    format!("{header}Learn more:{header:#}{LEARN_MORE}").into()
-}
 
 /// Opens the top-level help when an agent is driving the CLI. Agents explore
 /// by chaining `--help` calls, one command at a time; `--schema` answers the
@@ -432,11 +414,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
     let mut app = Command::new("mapbox")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Mapbox API CLI — interact with Mapbox APIs from the command line")
-        // An agent that only installed the CLI finds the rest of Mapbox's
-        // agent tooling here or nowhere: it reads `--help` when stuck, and
-        // the install-time pointers are easy to skip. `after_help` does not
-        // propagate, so subcommand help stays as it was.
-        .after_help(learn_more())
+        .styles(help_layout::styles())
         // clap's own 100-column cap is skipped when `COLUMNS` is set, as many
         // shells do; past 100 a description runs too far from its flag.
         .max_term_width(100)
@@ -582,7 +560,10 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 // and turn `export MAPBOX_OUTPUT=` into a usage error on every
                 // command. `Mode::from_matches` reads it leniently instead.
                 .global(true)
-                .help("text, json, or auto (text in a terminal, else JSON) [env: MAPBOX_OUTPUT]"),
+                .help(
+                    "text, json, or auto (the default: text in a terminal, JSON when piped) \
+                     [env: MAPBOX_OUTPUT]",
+                ),
         )
         .arg(
             Arg::new(schema::ARG)

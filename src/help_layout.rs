@@ -115,9 +115,10 @@ const MAX_WIDTH: usize = 100;
 /// text to 1.9:1 on Solarized Light, and clap's yellow and green for a
 /// mistyped value and its suggestion to 1.9:1 and 2.4:1 — below the 3:1
 /// that bold text needs. The foreground is the one color every theme makes
-/// readable, so headings, names to type and suggestions are bold in it, and
-/// the values to fill in (`<TOKEN>`, `<tilesets>`) are underlined — the man
-/// page convention, and just as independent of the theme.
+/// readable, so headings, names to type, the values to fill in (`<TOKEN>`,
+/// `<tilesets>`, told apart by their angle brackets) and suggestions are
+/// bold in it. Not underlined: clap gives the space before a value the
+/// value's style, which bold hides and an underline shows as a stray rule.
 /// The error label keeps clap's red, the one color that held 3:1 in every
 /// theme measured, and it never stands alone: it is bold and says "error".
 /// `theme_safe_colors_only` holds this.
@@ -127,7 +128,7 @@ pub fn styles() -> Styles {
         .header(bold)
         .usage(bold)
         .literal(bold)
-        .placeholder(Style::new().underline())
+        .placeholder(bold)
         .valid(bold)
         .invalid(bold)
         .error(AnsiColor::Red.on_default().bold())

@@ -26,9 +26,10 @@ that may never merge. They are not releases and are not listed here.
   Subcommand help uses clap's compact layout for `--help` as well as
   `-h`, with the command's full description at the top, and points to
   `mapbox --help` for the global options instead of repeating them; they
-  still work on every command. Styling is bold and underline in the
-  terminal's own foreground color only, so it reads the same on light and
-  dark themes; clap's yellow and green in usage errors are bold now too.
+  still work on every command. Names to type and values to fill in are
+  bold in the terminal's own foreground color, with no other color, so
+  help reads the same on light and dark themes; clap's yellow and green in
+  usage errors are bold now too.
   Help text only: no command, flag, exit code or result output changes.
 
 - Top-level `mapbox --help` / `mapbox help` changes. It ends with a

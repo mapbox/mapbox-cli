@@ -104,8 +104,26 @@ fn looks_like_a_flag(raw: &str) -> bool {
 /// The spec text is kept whole by `parse_spec` — `--schema` publishes it and
 /// a cut there lands inside identifiers and decimals. Help has a line to
 /// work with, so it shortens here, at the only place that wants it.
+///
+/// A sentence ends at a full stop followed by white space, or at the end.
+/// Cutting at any `.` stopped help inside `{owner}.{tileset}`, `-85.0511`
+/// and `e.g.`: "Tileset ID(s) in the format `username".
 pub fn first_sentence(text: &str) -> &str {
-    text.split('.').next().unwrap_or(text).trim()
+    let text = text.trim();
+    let end = text.char_indices().find(|&(at, c)| {
+        c == '.'
+            && text[at + 1..].starts_with(char::is_whitespace)
+            && !ends_with_abbreviation(&text[..=at])
+    });
+    match end {
+        Some((at, _)) => text[..at].trim_end(),
+        None => text.strip_suffix('.').unwrap_or(text),
+    }
+}
+
+/// Full stops that end an abbreviation rather than a sentence.
+fn ends_with_abbreviation(text: &str) -> bool {
+    ["e.g.", "i.e."].iter().any(|abbr| text.ends_with(abbr))
 }
 
 fn help_text(param: &spec::Parameter) -> String {
@@ -1775,12 +1793,21 @@ mod tests {
 
     /// Help still shows one sentence. This is the whole of what stops the
     /// description change from rewriting every command's help — `spec.rs` now
-    /// keeps the paragraph, and this is where it gets cut back.
+    /// keeps the paragraph, and this is where it gets cut back — and the
+    /// sentence ends at a full stop, not at a dot inside an id or a number.
     #[test]
     fn help_shortens_a_description_to_its_first_sentence() {
         assert_eq!(
             first_sentence("Tileset ID in the format `username.id`. Order matters."),
-            "Tileset ID in the format `username"
+            "Tileset ID in the format `username.id`"
+        );
+        assert_eq!(
+            first_sentence("Latitude in degrees (range -85.0511 to 85.0511)."),
+            "Latitude in degrees (range -85.0511 to 85.0511)"
+        );
+        assert_eq!(
+            first_sentence("Quality appended to format (e.g. png32). Optional."),
+            "Quality appended to format (e.g. png32)"
         );
         assert_eq!(first_sentence("  padded.  rest"), "padded");
         assert_eq!(first_sentence("no full stop here"), "no full stop here");

@@ -19,6 +19,11 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- An API parameter's help line no longer stops at the first dot inside an
+  id, a number or "e.g.": `tilesets get-tile` described `<tilesets>` as
+  "Tileset ID(s) in the format `username" and now shows the whole first
+  sentence. Help text only; `--schema` always had the full description.
+
 - **Breaking**: `--eta-type`, `--navigation-profile` and `--origin` removed
   from `mapbox search category`. The category endpoint does not currently
   return an ETA, so the flags were accepted but had no effect. A script

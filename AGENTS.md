@@ -113,6 +113,12 @@ saying what to do. **If a guard fails, the fix is almost never to add
 yourself to its list** — read the reason first. When it genuinely is, add the
 entry *and* the sentence explaining it.
 
+One table outside that file works the same way: `GROUPS` in
+`src/help_layout.rs` places every command in a top-level help group, and
+`every_command_has_a_place` fails when a new command has no place there or
+an entry outlives its command. A command it misses still shows, under
+"Other", but CI will not let that ship.
+
 ## What the tests can and cannot tell you
 
 `cargo test` answers to fake tokens and a fake server. It runs offline, on a

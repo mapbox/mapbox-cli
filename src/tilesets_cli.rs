@@ -178,7 +178,7 @@ pub fn warn_yes_ignored(matches: &ArgMatches) {
 
 pub fn command() -> Command {
     Command::new(COMMAND)
-        .about("Proxy commands to the Mapbox Tilesets CLI (`tilesets`, installed separately)")
+        .about("Run the Mapbox Tilesets CLI (`tilesets`, installed separately)")
         .long_about(format!(
             "Forward arguments to the Mapbox Tilesets CLI.\n\n\
              Everything after `{COMMAND}` is passed through to the `tilesets` binary \

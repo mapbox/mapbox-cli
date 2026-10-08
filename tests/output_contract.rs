@@ -475,6 +475,47 @@ fn without_an_agent_the_help_has_no_hint() {
     assert!(!stdout(&out).contains(AGENT_HINT), "{}", stdout(&out));
 }
 
+/// Top-level help lists commands under named groups rather than clap's one
+/// "Commands:" list, and the global options under their own headings. The
+/// table behind the groups is checked against the command tree in
+/// `src/help_layout.rs`; this checks what a reader actually sees.
+#[test]
+fn top_level_help_groups_commands_and_options() {
+    let text = stdout(&run(&["--help"]));
+
+    let headings = [
+        "Maps and data:",
+        "Search:",
+        "Account:",
+        "Coding agents:",
+        "CLI:",
+        "Authentication:",
+        "Output:",
+        "Behavior:",
+        "Learn more:",
+    ];
+    let mut last = 0;
+    for heading in headings {
+        let at = text
+            .find(&format!("\n{heading}\n"))
+            .unwrap_or_else(|| panic!("no {heading:?} heading: {text}"));
+        assert!(at > last, "{heading:?} is out of order: {text}");
+        last = at;
+    }
+    assert!(
+        !text.contains("\nCommands:\n"),
+        "clap's flat list is back: {text}"
+    );
+    assert!(
+        !text.contains("Other:"),
+        "a command fell through to Other: {text}"
+    );
+    assert!(
+        text.contains("  accounts         List access tokens and their scopes\n"),
+        "an API command should describe what it does, not its spec title: {text}"
+    );
+}
+
 /// An operation that can never succeed is not in the command surface, so it
 /// answers exactly as a mistyped name does — same code, same shape, same
 /// exit. Anything else would tell a caller which scopes exist while still

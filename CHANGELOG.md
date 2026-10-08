@@ -19,6 +19,13 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- Top-level `mapbox --help` lists commands in groups (Maps and data,
+  Search, Account, Coding agents, CLI), each with a line saying what it
+  does rather than which API it wraps. Global options appear under
+  Authentication, Output and Behavior, in subcommand help too, with
+  uppercase placeholders (`--token <TOKEN>`). Help text only: no command,
+  flag, exit code or result output changes.
+
 - Top-level `mapbox --help` / `mapbox help` changes. It ends with a
   "Learn more" section linking the CLI docs, the agent-setup prompt,
   Mapbox Agent Skills, the Mapbox MCP server and the API docs. When a

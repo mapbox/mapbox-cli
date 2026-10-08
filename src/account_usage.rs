@@ -73,7 +73,7 @@ fn operation() -> &'static Operation {
 
 pub fn command() -> Command {
     Command::new(COMMAND)
-        .about("Show account/token usage by product and day (Statistics API)")
+        .about("Show account and token usage by product and day")
         .long_about(format!(
             "Show usage per Mapbox product, by day, for the account or one token.\n\n\
              Calls the Statistics API; the token needs the `statistics:read` scope. \

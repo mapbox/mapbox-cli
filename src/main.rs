@@ -25,6 +25,7 @@ mod deprecation;
 mod doctor;
 mod executor;
 mod generate_skills;
+mod help_layout;
 mod history;
 mod http;
 mod link;
@@ -77,6 +78,12 @@ fn learn_more() -> StyledStr {
 const AGENT_HELP_HINT: &str = "\
 Agents: `mapbox --schema` describes every command, its arguments and the request it makes
 as one JSON document. Use it instead of chaining --help calls.";
+
+/// Help headings for the global options, which otherwise share one
+/// "Options:" list with every command's own.
+const AUTH_OPTIONS: &str = "Authentication";
+const OUTPUT_OPTIONS: &str = "Output";
+const BEHAVIOR_OPTIONS: &str = "Behavior";
 
 /// Rejects a value the spec says is a number, while still yielding a
 /// `String`.
@@ -430,6 +437,9 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
         // the install-time pointers are easy to skip. `after_help` does not
         // propagate, so subcommand help stays as it was.
         .after_help(learn_more())
+        // clap's own 100-column cap is skipped when `COLUMNS` is set, as many
+        // shells do; past 100 a description runs too far from its flag.
+        .max_term_width(100)
         // See `build_service_command`: without this, `mapbox -o json` is a
         // successful parse of no command at all, and pairing it with
         // `arg_required_else_help` made a bare `mapbox` show full help or a
@@ -442,6 +452,8 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .short('t')
                 .env(auth::CLAP_TOKEN_ENV)
                 .hide_env_values(true)
+                .value_name("TOKEN")
+                .help_heading(AUTH_OPTIONS)
                 .global(true)
                 .help("Mapbox access token")
                 .required(false),
@@ -451,6 +463,8 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .long("username")
                 .short('u')
                 .env("MAPBOX_USERNAME")
+                .value_name("USERNAME")
+                .help_heading(AUTH_OPTIONS)
                 .global(true)
                 .help("Mapbox username")
                 .required(false),
@@ -458,19 +472,19 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
         .arg(
             Arg::new("profile")
                 .long("profile")
+                .value_name("PROFILE")
+                .help_heading(AUTH_OPTIONS)
                 .global(true)
-                .help("Named credential profile to use (default: \"default\")")
+                .help("Credential profile to use (default: \"default\")")
                 .required(false),
         )
         .arg(
             Arg::new("use-login")
                 .long("use-login")
                 .action(ArgAction::SetTrue)
+                .help_heading(AUTH_OPTIONS)
                 .global(true)
-                .help(
-                    "Use credentials from `mapbox auth login`, ignoring any \
-                     MAPBOX_ACCESS_TOKEN in the environment",
-                ),
+                .help("Use `mapbox auth login` credentials, ignoring MAPBOX_ACCESS_TOKEN"),
         )
         .arg(
             Arg::new("debug")
@@ -480,8 +494,9 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 // See `--yes` below: without this, `MAPBOX_DEBUG=1` is a usage
                 // error on every command rather than a debug flag.
                 .value_parser(FalseyValueParser::new())
+                .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help("Print request URLs to stderr for debugging"),
+                .help("Print request URLs to stderr"),
         )
         .arg(
             Arg::new(confirm::ARG)
@@ -502,7 +517,8 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .global(true)
                 // No manual env note: unlike `--output`, this arg really
                 // does declare `.env()`, so clap appends one itself.
-                .help("Assume yes: never ask before a destructive command"),
+                .help_heading(BEHAVIOR_OPTIONS)
+                .help("Don't ask before destructive commands"),
         )
         .arg(
             Arg::new(output::banner::ARG)
@@ -513,8 +529,9 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 // Same trap as `--yes`: `MAPBOX_QUIET=1` must not be a usage
                 // error on every command.
                 .value_parser(FalseyValueParser::new())
+                .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help("Don't print the name-and-version banner, or the note after a download, to stderr"),
+                .help("Hide the version banner and download notes"),
         )
         .arg(
             Arg::new(http::TIMEOUT_ARG)
@@ -534,11 +551,9 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 // default.
                 // A value typed here is a different case and stays strict —
                 // it names one flag on one command, and clap says so.
+                .help_heading(BEHAVIOR_OPTIONS)
                 .global(true)
-                .help(
-                    "Seconds to wait for one request, connection included. \
-                     Defaults to 60, or 900 for an upload [env: MAPBOX_TIMEOUT]",
-                ),
+                .help("Seconds per request; 60 by default, 900 for uploads [env: MAPBOX_TIMEOUT]"),
         )
         .arg(
             // The arg's id is not `id`: two style operations take a path
@@ -547,8 +562,10 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
             // so the flag can still read as `--id`.
             Arg::new(output::FILTER_ARG)
                 .long("id")
+                .value_name("ID")
+                .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help("Show only the row with this id, from a command that returns a list"),
+                .help("Show only the row with this id from a list"),
         )
         .arg(
             Arg::new(output::ARG)
@@ -556,24 +573,24 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .short('o')
                 .value_parser([output::AUTO, output::TEXT, output::JSON])
                 .default_value(output::AUTO)
+                .value_name("FORMAT")
+                // The help names the three values itself, with what `auto`
+                // means; clap's own list would repeat them.
+                .hide_possible_values(true)
+                .help_heading(OUTPUT_OPTIONS)
                 // Deliberately not `.env()`: clap would validate the variable
                 // and turn `export MAPBOX_OUTPUT=` into a usage error on every
                 // command. `Mode::from_matches` reads it leniently instead.
                 .global(true)
-                .help(
-                    "Output format. `auto` reads stdout: a terminal gets text, \
-                     a pipe or redirect gets JSON [env: MAPBOX_OUTPUT]",
-                ),
+                .help("text, json, or auto (text in a terminal, else JSON) [env: MAPBOX_OUTPUT]"),
         )
         .arg(
             Arg::new(schema::ARG)
                 .long(schema::ARG)
                 .action(ArgAction::SetTrue)
+                .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help(
-                    "Describe the command as JSON instead of running it: its arguments, \
-                     their types, and the request it would make",
-                ),
+                .help("Describe the command as JSON instead of running it"),
         )
         // clap renders an env-backed arg as `[env: NAME=VALUE]`, so an
         // unset variable read as `[env: MAPBOX_USERNAME=]`, and a set one
@@ -811,6 +828,9 @@ fn cli() -> u8 {
     if agent_detect::detect_agent().is_some() {
         app = app.before_help(AGENT_HELP_HINT);
     }
+    // Last, once the tree is complete: the grouped command list and the
+    // options section are rendered from it.
+    app = help_layout::apply(app);
     let argv = tilesets_cli::escape_passthrough_args(&app, raw_argv.clone());
     // Parsing consumes the tree, and `--schema` still has to read it
     // afterwards — so the parse gets the copy and `app` stays whole.

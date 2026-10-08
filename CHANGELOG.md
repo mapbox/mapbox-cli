@@ -19,6 +19,10 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `--help` wraps to the terminal width (100 columns when piped), and
+  env-backed options name their variable as `[env: NAME]` without its
+  current value. Help text only; no flag or output changes.
+
 - `mapbox --help` and `mapbox help` end with a "Learn more" section
   linking the CLI docs, the agent-setup prompt, Mapbox Agent Skills, the
   Mapbox MCP server and the API docs. Subcommand help is unchanged.

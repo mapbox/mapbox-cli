@@ -530,7 +530,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .global(true)
                 .help(
                     "Seconds to wait for one request, connection included. \
-                     Defaults to 60, or 900 for an upload [env: MAPBOX_TIMEOUT=]",
+                     Defaults to 60, or 900 for an upload [env: MAPBOX_TIMEOUT]",
                 ),
         )
         .arg(
@@ -555,7 +555,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .global(true)
                 .help(
                     "Output format. `auto` reads stdout: a terminal gets text, \
-                     a pipe or redirect gets JSON [env: MAPBOX_OUTPUT=]",
+                     a pipe or redirect gets JSON [env: MAPBOX_OUTPUT]",
                 ),
         )
         .arg(
@@ -567,7 +567,12 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                     "Describe the command as JSON instead of running it: its arguments, \
                      their types, and the request it would make",
                 ),
-        );
+        )
+        // clap renders an env-backed arg as `[env: NAME=VALUE]`, so an
+        // unset variable read as `[env: MAPBOX_USERNAME=]`, and a set one
+        // put its value in the help. Name the variable only, as `--token`
+        // always has.
+        .mut_args(|arg| arg.hide_env_values(true));
 
     // A service every one of whose operations is withheld would be a group
     // `--help` lists and `subcommand_required(true)` then refuses. None is

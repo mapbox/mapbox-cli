@@ -1,6 +1,6 @@
 openapi: "3.0.0"
 # `parse_spec` turns `info.description` below into this service's clap
-# `long_about`, so it also reaches `mapbox map-matching --help`, `--schema`
+# `long_about`, so it also reaches `mapbox map-match --help`, `--schema`
 # and `generate-skills` output. Keep it to API prose only — the provenance
 # below is for whoever edits this file, not for a CLI user:
 #
@@ -85,7 +85,9 @@ paths:
           description: >-
             Segment-level metadata to add to each leg, comma-separated.
             Requires `--overview full`. Options are `distance`, `duration`,
-            `speed`, `congestion`, `congestion_numeric`, `maxspeed`.
+            `speed`, `congestion`, `congestion_numeric` (both
+            `mapbox/driving-traffic` only), `maxspeed` (`mapbox/driving`
+            and `mapbox/driving-traffic` only).
           schema:
             type: string
           example: "duration,distance"
@@ -204,11 +206,12 @@ paths:
           required: false
           description: >-
             Zero-based indices into `coordinates` marking which ones get
-            their own arrival instruction — must include `0` and the last
-            index. Requires `--steps`.
+            their own arrival instruction, semicolon-separated — must
+            include `0` and the last index. Most useful with `--steps`,
+            which it does not require.
           schema:
             type: string
-          example: "0,2"
+          example: "0;2"
         # Prose rather than an `enum`, for the reason given on `annotations`
         # above.
         - name: "ignore"
@@ -225,7 +228,8 @@ paths:
           required: false
           description: >-
             Return an OpenLR reference (base64) per matched leg, alongside
-            the ordinary geometry.
+            the ordinary geometry. `mapbox/driving` and
+            `mapbox/driving-traffic` only.
           schema:
             type: boolean
         - name: "openlr_spec"
@@ -251,8 +255,10 @@ paths:
           in: query
           required: false
           description: >-
-            Departure time, ISO 8601 — for `mapbox/driving-traffic`, which
-            live traffic conditions to route against.
+            Departure time from the first coordinate, one of
+            `YYYY-MM-DDThh:mm`, `YYYY-MM-DDThh:mm:ssZ` or
+            `YYYY-MM-DDThh:mm:ss±hh:mm` — not open ISO 8601, the API
+            rejects other valid ISO 8601 shapes.
           schema:
             type: string
       responses:

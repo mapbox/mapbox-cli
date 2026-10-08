@@ -251,7 +251,7 @@ mapbox styles <operation>
 mapbox tilesets <operation>
 ```
 
-`mapbox directions`, `mapbox isochrone`, and `mapbox map-matching` are the
+`mapbox directions`, `mapbox isochrone`, and `mapbox map-match` are the
 exceptions: each API has a single operation, so there's a bare command
 with no subcommand at all, the same shape `mapbox usage` already has, see
 [docs/commands.md](./docs/commands.md) for their own parameters.

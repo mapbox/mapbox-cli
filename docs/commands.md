@@ -97,7 +97,7 @@ nests, and is typed `mapbox styles draft get`.
 
 **[Isochrone](#isochrone)** — [isochrone](#mapbox-isochrone)
 
-**[Map Matching](#map-matching)** — [map-matching](#mapbox-map-matching)
+**[Map Match](#map-match)** — [map-match](#mapbox-map-match)
 
 **[Search](#search)** — [search.forward](#mapbox-search-forward) ·
 [search.reverse](#mapbox-search-reverse) ·
@@ -1639,7 +1639,7 @@ Trimmed to one of the two features (the response has one per
 `--contours-minutes` value) and the polygon's coordinates, for length.
 
 ---
-## Map Matching
+## Map Match
 
 Snaps a noisy GPS trace to the road network and returns the route it most
 likely followed, for driving (with or without live traffic), walking, or
@@ -1651,7 +1651,7 @@ express alongside GET for the same operation — the API's own POST is for a
 trace too long for a URL (~8100 bytes), a real gap rather than a design
 choice.
 
-### `mapbox map-matching`
+### `mapbox map-match`
 
 One or more matched routes — more than one where the trace is ambiguous
 enough to split — each carrying a `confidence` the API assigns itself, plus
@@ -1674,7 +1674,7 @@ OpenLR-encoded string of up to 50 points (pair with `--openlr-spec`/
 
 | Parameter | Effect |
 | --- | --- |
-| `--annotations <fields>` | Segment-level metadata per leg, comma-separated (`distance`, `duration`, `speed`, `congestion`, `congestion_numeric`, `maxspeed`). Requires `--overview full`. |
+| `--annotations <fields>` | Segment-level metadata per leg, comma-separated (`distance`, `duration`, `speed`, `congestion`, `congestion_numeric` (both `mapbox/driving-traffic` only), `maxspeed` (`mapbox/driving` and `mapbox/driving-traffic` only)). Requires `--overview full`. |
 | `--approaches <unrestricted\|curb;...>` | Which side of the road to approach each waypoint from. Requires `--steps`. |
 | `--geometries <geojson\|polyline\|polyline6>` | Route geometry format. Defaults to `polyline`. |
 | `--overview <full\|simplified\|false>` | Geometry detail level. Defaults to `simplified`. |
@@ -1688,18 +1688,18 @@ OpenLR-encoded string of up to 50 points (pair with `--openlr-spec`/
 | `--tidy` | Remove clusters and resample the trace before matching — for a trace recorded at an inconsistent sample rate. |
 | `--timestamps <unix;...>` | When the trace was recorded, per coordinate, ascending — rather than assumed from even spacing. |
 | `--waypoint-names <names;...>` | A name per waypoint for its arrival instruction. Requires `--steps`. |
-| `--waypoints <indices>` | Which coordinates get their own arrival instruction — must include `0` and the last index. Requires `--steps`. |
+| `--waypoints <indices;...>` | Which coordinates get their own arrival instruction, semicolon-separated — must include `0` and the last index. Most useful with `--steps`, which it does not require. |
 | `--ignore <types>` | Restrictions to ignore, comma-separated (`access`, `oneways`, `restrictions`). `mapbox/driving` only. |
-| `--linear-references` | Return an OpenLR reference (base64) per matched leg, alongside the ordinary geometry. |
+| `--linear-references` | Return an OpenLR reference (base64) per matched leg, alongside the ordinary geometry. `mapbox/driving` and `mapbox/driving-traffic` only. |
 | `--openlr-spec <tomtom\|here>` | Which OpenLR spec `coordinates` is encoded with, if it's an OpenLR string. Defaults to `tomtom`. |
 | `--openlr-format tomtom` | The OpenLR binary format `coordinates` is encoded in, if it's an OpenLR string. |
-| `--depart-at <ISO 8601>` | For `mapbox/driving-traffic`, which live traffic conditions to route against. |
+| `--depart-at <time>` | Departure time from the first coordinate, one of `YYYY-MM-DDThh:mm`, `YYYY-MM-DDThh:mm:ssZ` or `YYYY-MM-DDThh:mm:ss±hh:mm` — not open ISO 8601, the API rejects other valid ISO 8601 shapes. |
 
 #### Examples
 
 ```sh
-mapbox map-matching mapbox/driving "-122.42,37.78;-122.421,37.781;-122.422,37.782"
-mapbox map-matching mapbox/driving "-122.42,37.78;-122.421,37.781;-122.422,37.782" \
+mapbox map-match mapbox/driving "-122.42,37.78;-122.421,37.781;-122.422,37.782"
+mapbox map-match mapbox/driving "-122.42,37.78;-122.421,37.781;-122.422,37.782" \
   --steps --geometries geojson
 ```
 

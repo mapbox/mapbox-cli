@@ -25,7 +25,7 @@ that may never merge. They are not releases and are not listed here.
   that passes them now fails with an unknown-argument error; drop the
   flags. `mapbox search forward` keeps them. (#76)
 
-- `mapbox map-matching`, snapping a noisy GPS trace to the road network and
+- `mapbox map-match`, snapping a noisy GPS trace to the road network and
   returning the route it most likely followed, for driving (with or
   without live traffic), walking, or cycling. No subcommand: like `mapbox
   directions` below, this API has one operation, so there's nothing a

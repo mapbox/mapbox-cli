@@ -132,7 +132,7 @@ const BODY_CONTENT_TYPE_OVERRIDES: &[(&str, &str, &str)] = &[("styles", "starFil
 const ARG_NAME_OVERRIDES: &[(&str, &str, &str)] = &[
     ("directions", "profile", "routing-profile"),
     ("isochrone", "profile", "routing-profile"),
-    ("map-matching", "profile", "routing-profile"),
+    ("map-match", "profile", "routing-profile"),
 ];
 
 /// The `arg_name` a parameter should present as, when its spec name collides
@@ -171,7 +171,7 @@ fn arg_name_override(service_name: &str, param_name: &str) -> Option<&'static st
 /// `generate-skills`, this file's own `command()` above — reads a
 /// [`FLATTENED_SERVICES`] service correctly for free, because they all go
 /// through `command()` rather than reconstructing the string themselves.
-pub const FLATTENED_SERVICES: &[&str] = &["directions", "isochrone", "map-matching"];
+pub const FLATTENED_SERVICES: &[&str] = &["directions", "isochrone", "map-match"];
 
 /// (service, path parameter name) pairs whose value is trusted to reach the
 /// URL unescaped, because every legitimate value already contains a
@@ -194,7 +194,7 @@ pub const FLATTENED_SERVICES: &[&str] = &["directions", "isochrone", "map-matchi
 pub const UNESCAPED_PATH_PARAMS: &[(&str, &str)] = &[
     ("directions", "profile"),
     ("isochrone", "profile"),
-    ("map-matching", "profile"),
+    ("map-match", "profile"),
 ];
 
 /// The media types an operation's request body may be sent as.
@@ -743,8 +743,8 @@ pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
         yaml: include_str!("../custom-openapi/isochrone/openapi/isochrone.yaml"),
     },
     SpecEntry {
-        name: "map-matching",
-        yaml: include_str!("../custom-openapi/map-matching/openapi/map-matching.yaml"),
+        name: "map-match",
+        yaml: include_str!("../custom-openapi/map-match/openapi/map-match.yaml"),
     },
 ];
 
@@ -2306,12 +2306,12 @@ paths:
 
     /// Same regression, for the third spec that ran into it.
     #[test]
-    fn the_map_matching_profile_parameter_does_not_collide_with_the_global_flag() {
+    fn the_map_match_profile_parameter_does_not_collide_with_the_global_flag() {
         let spec = parse_spec(
-            "map-matching",
-            include_str!("../custom-openapi/map-matching/openapi/map-matching.yaml"),
+            "map-match",
+            include_str!("../custom-openapi/map-match/openapi/map-match.yaml"),
         )
-        .expect("map-matching.yaml parses");
+        .expect("map-match.yaml parses");
 
         let matched = spec
             .operations
@@ -2337,16 +2337,16 @@ paths:
             "profile must accept any value, not just the four documented ones"
         );
         assert!(
-            UNESCAPED_PATH_PARAMS.contains(&("map-matching", "profile")),
+            UNESCAPED_PATH_PARAMS.contains(&("map-match", "profile")),
             "profile's literal `/` must still reach the URL unescaped, \
              now that it can't rely on being an enum to prove that"
         );
 
-        // `map-matching` has exactly one operation and is in
+        // `map-match` has exactly one operation and is in
         // `FLATTENED_SERVICES` — `command()` must say so, dropping
         // `command_path` from the string entirely, even though
         // `command_path` itself stays `["match"]` for internal lookups.
-        assert_eq!(matched.command(), "map-matching");
+        assert_eq!(matched.command(), "map-match");
     }
 
     #[test]
@@ -2360,7 +2360,7 @@ paths:
             Some("routing-profile")
         );
         assert_eq!(
-            arg_name_override("map-matching", "profile"),
+            arg_name_override("map-match", "profile"),
             Some("routing-profile")
         );
         assert_eq!(arg_name_override("directions", "coordinates"), None);

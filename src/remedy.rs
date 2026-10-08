@@ -90,7 +90,7 @@ const SERVICE_DOCS: &[(&str, &str)] = &[
         "https://docs.mapbox.com/api/navigation/isochrone/",
     ),
     (
-        "map-matching",
+        "map-match",
         "https://docs.mapbox.com/api/navigation/map-matching/",
     ),
     ("search", "https://docs.mapbox.com/api/search/search-box/"),

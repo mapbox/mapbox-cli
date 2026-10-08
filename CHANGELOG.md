@@ -19,17 +19,14 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
-- `--help` wraps to the terminal width (100 columns when piped), and
-  env-backed options name their variable as `[env: NAME]` without its
-  current value. Help text only; no flag or output changes.
-
-- `mapbox --help` and `mapbox help` end with a "Learn more" section
-  linking the CLI docs, the agent-setup prompt, Mapbox Agent Skills, the
-  Mapbox MCP server and the API docs. Subcommand help is unchanged.
-
-- When a coding agent runs `mapbox --help` (detected the same way as for
-  the `User-Agent`), the help opens with a two-line hint pointing at
-  `mapbox --schema`. Help for people, and for subcommands, is unchanged.
+- Top-level `mapbox --help` / `mapbox help` changes. It ends with a
+  "Learn more" section linking the CLI docs, the agent-setup prompt,
+  Mapbox Agent Skills, the Mapbox MCP server and the API docs. When a
+  coding agent runs it (detected the same way as for the `User-Agent`),
+  it opens with a two-line hint pointing at `mapbox --schema`. Help also
+  wraps to the terminal width (100 columns when piped), and env-backed
+  options read `[env: NAME]` without the variable's value. Help text
+  only: no flag, exit code or result output changes.
 
 - **Breaking**: `--eta-type`, `--navigation-profile` and `--origin` removed
   from `mapbox search category`. The category endpoint does not currently

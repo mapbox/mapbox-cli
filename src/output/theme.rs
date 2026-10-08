@@ -5,34 +5,145 @@
 //! themes, ANSI cyan fell to 2.1:1 on iTerm2's light background and dimmed
 //! text to 1.9:1 on Solarized Light — below the 3:1 bold text needs.
 //!
-//! So this palette is fixed RGB, the approach Cloudflare's `cf` CLI takes,
-//! at mid luminance — the band where a color reads on black and on white
-//! alike. Text colors sit at about 0.21: 5.2:1 on black, 4.1:1 on white,
-//! and no worse than 3.5:1 on any theme measured. The accent, only ever
-//! bold, sits a little higher (see [`ACCENT`]). The colors differ in hue
-//! rather than lightness. `every_color_reads_on_black_and_on_white` holds
-//! each to its floor, so a new color has to meet one too.
+//! So the palette is fixed RGB, the approach Cloudflare's `cf` CLI takes —
+//! three of them, for the background the colors land on. Where the terminal
+//! answers an OSC 11 query for its background color, colors are chosen for
+//! a dark or a light one and clear 4.5:1 on the common themes of that kind.
+//! Where it does not (tmux, a slow link, a terminal without the query), the
+//! fallback sits at mid luminance, the band where a color reads on black
+//! and on white alike: about 5.2:1 and 4.1:1 for text, no worse than 3.5:1
+//! on any theme measured. In every palette the accent is only ever bold, so
+//! it needs 3:1 rather than the 4:1 text does, and spends the difference on
+//! being bright. `every_color_clears_its_floor` holds each color to that.
 //!
-//! RGB needs a terminal that renders it. Where one is not known to, the
-//! palette falls back to what any terminal shows the same way: the accent
+//! RGB needs a terminal that renders it. Where one is not known to, there is
+//! no palette at all, only what any terminal shows the same way: the accent
 //! and the error color become bold, and muted text becomes plain.
 //!
 //! Whether to color at all is [`super::style::enabled`]'s answer, and this
 //! module only says what with.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+use std::time::Duration;
+
 use clap::builder::styling::{RgbColor, Style, Styles};
 
-/// Mapbox blue (`#4264FB`), lightened to 0.26 luminance. Only ever bold, so
-/// it needs 3:1 rather than 4:1, and spends the difference on dark themes:
-/// it is the brightest blue of that hue still at 3:1 on every theme
-/// measured (Solarized Light, 3.1:1), and 6.2:1 on black. At the 0.21 the
-/// rest of the palette sits at, headings looked darker than the reader's
-/// own text on a dark theme.
-const ACCENT: RgbColor = RgbColor(0x67, 0x83, 0xfc);
-/// Secondary text — notes, hints, the banner's version — set back from the
-/// result without the faintness `dim` has on some themes.
-const MUTED: RgbColor = RgbColor(0x7f, 0x7f, 0x7f);
-const ERROR: RgbColor = RgbColor(0xe1, 0x46, 0x46);
+/// What the terminal draws on, as far as it says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Background {
+    Dark,
+    Light,
+    Unknown,
+}
+
+/// How color is rendered: the palette for a background, or bold alone where
+/// 24-bit color is not known to render.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Look {
+    Rgb(Background),
+    Bold,
+}
+
+/// The three palettes share one accent hue, a teal (`#60B8C5` on a dark
+/// background), at the lightness each background needs.
+struct Palette {
+    /// Headings, the banner's name, the names in a tip. Only ever bold.
+    accent: RgbColor,
+    /// Notes, hints, the banner's version — set back from the result
+    /// without the faintness `dim` has on some themes.
+    muted: RgbColor,
+    error: RgbColor,
+}
+
+/// On a dark background: the accent at full strength, 6.2:1 or better on
+/// the dark themes measured, and text colors at 4.75:1 or better.
+const DARK: Palette = Palette {
+    accent: RgbColor(0x60, 0xb8, 0xc5),
+    muted: RgbColor(0x95, 0x95, 0x95),
+    error: RgbColor(0xe8, 0x71, 0x71),
+};
+
+/// On a light background: the accent's hue darkened to 0.14 luminance,
+/// 5.1:1 or better on the light themes measured, and text colors at 4.8:1
+/// or better.
+const LIGHT: Palette = Palette {
+    accent: RgbColor(0x2d, 0x72, 0x7c),
+    muted: RgbColor(0x6d, 0x6d, 0x6d),
+    error: RgbColor(0xbe, 0x1f, 0x1f),
+};
+
+/// Background unknown: mid luminance. The accent's hue at 0.30, the
+/// brightest still at 3:1 on white — 6.9:1 on black, and 2.8:1 on
+/// Solarized Light, the one theme measured it falls short on, chosen over a
+/// dimmer accent everywhere else. Text colors sit at 0.21.
+const EITHER: Palette = Palette {
+    accent: RgbColor(0x40, 0xa1, 0xb0),
+    muted: RgbColor(0x7f, 0x7f, 0x7f),
+    error: RgbColor(0xe1, 0x46, 0x46),
+};
+
+fn palette(background: Background) -> &'static Palette {
+    match background {
+        Background::Dark => &DARK,
+        Background::Light => &LIGHT,
+        Background::Unknown => &EITHER,
+    }
+}
+
+/// How long to wait for the terminal to report its background. A terminal
+/// without the query answers the one sent after it straight away, so this
+/// only bounds a slow link; running out costs the fallback palette, not the
+/// command.
+const QUERY_TIMEOUT: Duration = Duration::from_millis(100);
+
+/// The look for this run, settled once.
+pub fn current() -> Look {
+    static LOOK: OnceLock<Look> = OnceLock::new();
+    *LOOK.get_or_init(|| {
+        if truecolor() {
+            Look::Rgb(background())
+        } else {
+            Look::Bold
+        }
+    })
+}
+
+static QUERY_ALLOWED: AtomicBool = AtomicBool::new(false);
+
+/// Lets this run ask the terminal for its background, given whether there
+/// is a terminal to ask — `output::on_a_terminal`, since this module does
+/// not touch the streams itself. Only for help: see [`background`].
+pub fn allow_background_query(on_a_terminal: bool) {
+    QUERY_ALLOWED.store(on_a_terminal, Ordering::Relaxed);
+}
+
+/// Asks the terminal for its background color.
+///
+/// Only for a run that shows help and then exits. The answer arrives on the
+/// terminal's input, and whatever else is waiting there is read with it: a
+/// command that goes on to ask "Delete? [y/N]" lost the answer typed ahead
+/// to the query — `non_interactive`'s prompt test hung on exactly that. Help
+/// reads nothing after, so there is nothing to lose; every other run uses
+/// the `Unknown` palette.
+///
+/// Also only when there is a terminal to ask and color will be shown on it,
+/// so a pipe, `NO_COLOR` or `--no-color` never sends the query.
+fn background() -> Background {
+    if !QUERY_ALLOWED.load(Ordering::Relaxed) || !super::style::enabled(true) {
+        return Background::Unknown;
+    }
+    let mut options = terminal_colorsaurus::QueryOptions::default();
+    options.timeout = QUERY_TIMEOUT;
+    // The background alone, not `theme_mode`, which asks for the foreground
+    // too: the timeout is per read, and on a terminal that never answers two
+    // queries waited half a second.
+    match terminal_colorsaurus::background_color(options) {
+        Ok(color) if color.perceived_lightness() < 0.5 => Background::Dark,
+        Ok(_) => Background::Light,
+        Err(_) => Background::Unknown,
+    }
+}
 
 /// Whether the terminal is known to render 24-bit color.
 ///
@@ -66,31 +177,31 @@ fn supports_truecolor(
 /// The accent: headings, the banner's name, and the names in a tip a reader
 /// copies. Always bold.
 pub fn accent() -> Style {
-    accent_for(truecolor())
+    accent_in(current())
 }
 
 /// Secondary text.
 pub fn muted() -> Style {
-    muted_for(truecolor())
+    muted_in(current())
 }
 
-fn accent_for(truecolor: bool) -> Style {
-    colored(ACCENT, truecolor).bold()
+fn accent_in(look: Look) -> Style {
+    colored(look, |p| p.accent).bold()
 }
 
-fn muted_for(truecolor: bool) -> Style {
-    if truecolor {
-        Style::new().fg_color(Some(MUTED.into()))
-    } else {
-        Style::new()
+/// Bold like every other color here: a colored run of thin text reads as
+/// fainter than the same color bold, and the palette is set to be read.
+fn muted_in(look: Look) -> Style {
+    match look {
+        Look::Rgb(_) => colored(look, |p| p.muted).bold(),
+        Look::Bold => Style::new(),
     }
 }
 
-fn colored(color: RgbColor, truecolor: bool) -> Style {
-    if truecolor {
-        Style::new().fg_color(Some(color.into()))
-    } else {
-        Style::new()
+fn colored(look: Look, pick: fn(&Palette) -> RgbColor) -> Style {
+    match look {
+        Look::Rgb(background) => Style::new().fg_color(Some(pick(palette(background)).into())),
+        Look::Bold => Style::new(),
     }
 }
 
@@ -103,20 +214,20 @@ fn colored(color: RgbColor, truecolor: bool) -> Style {
 /// before a value the value's style, which bold hides and an underline
 /// shows as a stray rule.
 pub fn styles() -> Styles {
-    styles_for(truecolor())
+    styles_in(current())
 }
 
-pub fn styles_for(truecolor: bool) -> Styles {
+pub fn styles_in(look: Look) -> Styles {
     let bold = Style::new().bold();
     Styles::plain()
-        .header(accent_for(truecolor))
-        .usage(accent_for(truecolor))
+        .header(accent_in(look))
+        .usage(accent_in(look))
         .literal(bold)
         .placeholder(bold)
         .valid(bold)
         .invalid(bold)
-        .error(colored(ERROR, truecolor).bold())
-        .context(muted_for(truecolor))
+        .error(colored(look, |p| p.error).bold())
+        .context(muted_in(look))
         // `[possible values: on, off]`: the note muted, the values in it bold
         // like every other thing to type.
         .context_value(bold)
@@ -127,10 +238,23 @@ pub fn open(style: Style) -> String {
     style.render().to_string()
 }
 
-/// Every color, with the contrast it must clear on both black and white:
-/// 3:1 for one only ever bold, 4:1 for one used on plain text.
+/// Every look there is, for tests that render each.
 #[cfg(test)]
-pub(crate) const PALETTE: &[(RgbColor, f64)] = &[(ACCENT, 3.0), (MUTED, 4.0), (ERROR, 4.0)];
+pub(crate) const LOOKS: &[Look] = &[
+    Look::Rgb(Background::Dark),
+    Look::Rgb(Background::Light),
+    Look::Rgb(Background::Unknown),
+    Look::Bold,
+];
+
+/// Every color in every palette.
+#[cfg(test)]
+pub(crate) fn colors() -> Vec<RgbColor> {
+    [&DARK, &LIGHT, &EITHER]
+        .iter()
+        .flat_map(|p| [p.accent, p.muted, p.error])
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -152,20 +276,40 @@ mod tests {
         (a.max(b) + 0.05) / (a.min(b) + 0.05)
     }
 
-    /// The palette's one rule. 3:1 is what bold text needs, and the accent
-    /// is only ever bold; the colors used on plain text clear 4:1, which
-    /// leaves room for the themes whose backgrounds are neither black nor
-    /// white.
+    fn hex(code: u32) -> f64 {
+        luminance(RgbColor((code >> 16) as u8, (code >> 8) as u8, code as u8))
+    }
+
+    /// The palette's one rule: each color clears its floor on every
+    /// background it may land on — 3:1 for the accent, which is only ever
+    /// bold, and 4.5:1 (4:1 for the fallback, which has to serve both kinds)
+    /// for the colors used on plain text. The backgrounds are the common
+    /// themes measured: plain black and white, VS Code, Windows Terminal,
+    /// Solarized and Dracula.
     #[test]
-    fn every_color_reads_on_black_and_on_white() {
-        for &(color, floor) in PALETTE {
-            let l = luminance(color);
-            let on_black = contrast(l, 0.0);
-            let on_white = contrast(l, 1.0);
-            assert!(
-                on_black >= floor && on_white >= floor,
-                "{color:?} is {on_black:.1}:1 on black and {on_white:.1}:1 on white, under {floor}:1"
-            );
+    fn every_color_clears_its_floor() {
+        let dark = [0x000000, 0x1c1c1c, 0x1e1e1e, 0x0c0c0c, 0x002b36, 0x282a36].map(hex);
+        let light = [0xffffff, 0xfdf6e3, 0xf6f8fa].map(hex);
+        let either: Vec<f64> = [0.0, 1.0].to_vec();
+        for (name, palette, backgrounds, text_floor) in [
+            ("dark", &DARK, dark.to_vec(), 4.5),
+            ("light", &LIGHT, light.to_vec(), 4.5),
+            ("fallback", &EITHER, either, 4.0),
+        ] {
+            for (role, color, floor) in [
+                ("accent", palette.accent, 3.0),
+                ("muted", palette.muted, text_floor),
+                ("error", palette.error, text_floor),
+            ] {
+                for &background in &backgrounds {
+                    let ratio = contrast(luminance(color), background);
+                    assert!(
+                        ratio >= floor,
+                        "{name} {role} {color:?} is {ratio:.2}:1 on a background of \
+                         luminance {background:.3}, under {floor}:1"
+                    );
+                }
+            }
         }
     }
 
@@ -189,11 +333,11 @@ mod tests {
     /// theme's ANSI color.
     #[test]
     fn the_fallback_is_bold_and_plain() {
-        assert_eq!(accent_for(false), Style::new().bold());
-        assert_eq!(muted_for(false), Style::new());
+        assert_eq!(accent_in(Look::Bold), Style::new().bold());
+        assert_eq!(muted_in(Look::Bold), Style::new());
         assert_eq!(
-            accent_for(true),
-            Style::new().fg_color(Some(ACCENT.into())).bold()
+            accent_in(Look::Rgb(Background::Light)),
+            Style::new().fg_color(Some(LIGHT.accent.into())).bold()
         );
     }
 }

@@ -25,12 +25,15 @@ that may never merge. They are not releases and are not listed here.
   sentence. Help text only; `--schema` always had the full description.
 
 - Color reads on light and dark terminal themes alike. Tables, tips, the
-  banner and help notes use a small fixed palette (Mapbox blue, gray, red)
-  whose colors all clear 3.5:1 on common themes, instead of the
-  terminal's own bright blue and dim, which fell below 2:1 on some light
-  ones. A terminal not known to show 24-bit color gets bold and plain text
-  instead. New `--no-color` flag turns color off, as `NO_COLOR` does, and
-  `FORCE_COLOR=1` now keeps color in a pipe; either way off wins.
+  banner and help use a small fixed palette (teal, gray, red) instead of
+  the terminal's own bright blue and dim, which fell below 2:1 on some
+  light themes; every colored run of text is bold. Help asks the terminal
+  for its background and uses a palette made for a dark or a light one;
+  everything else, and help where the terminal doesn't answer, uses one
+  that reads on both. A terminal not known to show 24-bit color gets bold
+  and plain text instead. New `--no-color` flag turns color off, as
+  `NO_COLOR` does, and `FORCE_COLOR=1` now keeps color in a pipe; either
+  way off wins.
 
 - Top-level `mapbox --help` lists commands in groups (Maps and data,
   Search, Account, Coding agents, CLI), each with a line saying what it
@@ -39,7 +42,7 @@ that may never merge. They are not releases and are not listed here.
   Subcommand help uses clap's compact layout for `--help` as well as
   `-h`, with the command's full description at the top, and points to
   `mapbox --help` for the global options instead of repeating them; they
-  still work on every command. Headings are blue; names to type and values
+  still work on every command. Headings are teal; names to type and values
   to fill in are bold in the terminal's own foreground; notes are gray. clap's yellow and green in usage errors
   are bold now too.
   Help text only: no command, flag, exit code or result output changes.

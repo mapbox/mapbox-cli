@@ -459,6 +459,26 @@ fn page_width() -> usize {
     detected.map_or(MAX_WIDTH, |w| w.min(MAX_WIDTH))
 }
 
+/// Whether argv asks for help, read before clap parses it: `-h` or `--help`
+/// anywhere before `--`, or `help` as the first word that is not an option.
+/// The one kind of run allowed to ask the terminal for its background (see
+/// `output::theme::allow_background_query`). A miss costs only the fallback
+/// palette; a false match on a command that prompts would cost the answer
+/// typed ahead, which is why `help` counts only as the subcommand.
+pub fn help_requested(argv: &[std::ffi::OsString]) -> bool {
+    let mut first_word = true;
+    for arg in argv.iter().skip(1).filter_map(|arg| arg.to_str()) {
+        match arg {
+            "--" => return false,
+            "-h" | "--help" => return true,
+            "help" if first_word => return true,
+            _ if !arg.starts_with('-') => first_word = false,
+            _ => {}
+        }
+    }
+    false
+}
+
 /// The copy of the tree that parses, and so renders every subcommand's
 /// help: compact, and about the command itself.
 ///
@@ -663,13 +683,15 @@ mod tests {
         assert!(missing.is_empty(), "{}", missing.join("\n"));
     }
 
-    /// Help and clap's errors use bold and the palette's fixed colors, never
+    /// Help and clap's errors use bold and the palettes' fixed colors, never
     /// one of the sixteen a terminal theme decides — and without 24-bit
     /// color, no color at all. See `output::theme`.
     #[test]
     fn theme_safe_colors_only() {
-        for truecolor in [true, false] {
-            let app = app().styles(crate::output::theme::styles_for(truecolor));
+        use crate::output::theme::{styles_in, Look, LOOKS};
+        for &look in LOOKS {
+            let truecolor = look != Look::Bold;
+            let app = app().styles(styles_in(look));
             let parsing = for_parsing(apply(app));
             for argv in [
                 &["mapbox", "--help"][..],
@@ -687,18 +709,18 @@ mod tests {
                 let problems = unsafe_styles(&text, truecolor);
                 assert!(
                     problems.is_empty(),
-                    "{argv:?} (truecolor: {truecolor}) uses {problems:?}:\n{text}"
+                    "{argv:?} ({look:?}) uses {problems:?}:\n{text}"
                 );
             }
         }
     }
 
     /// The SGR parameters in `text` that are neither a reset, bold, nor —
-    /// with `truecolor` — a 24-bit color from the palette.
+    /// with `truecolor` — a 24-bit color from one of the palettes.
     fn unsafe_styles(text: &str, truecolor: bool) -> Vec<String> {
-        let palette: Vec<String> = crate::output::theme::PALETTE
+        let palette: Vec<String> = crate::output::theme::colors()
             .iter()
-            .map(|(c, _)| format!("{};{};{}", c.0, c.1, c.2))
+            .map(|c| format!("{};{};{}", c.0, c.1, c.2))
             .collect();
         let mut problems = Vec::new();
         for sequence in text.split("\x1b[").skip(1) {
@@ -732,6 +754,26 @@ mod tests {
         problems.sort();
         problems.dedup();
         problems
+    }
+
+    #[test]
+    fn help_is_recognized_only_where_it_asks_for_help() {
+        let asks = |args: &[&str]| {
+            let argv: Vec<std::ffi::OsString> = std::iter::once("mapbox")
+                .chain(args.iter().copied())
+                .map(Into::into)
+                .collect();
+            help_requested(&argv)
+        };
+        assert!(asks(&["--help"]));
+        assert!(asks(&["styles", "list", "-h"]));
+        assert!(asks(&["help", "styles"]));
+        assert!(asks(&["--no-color", "help"]));
+        // A style named "help" is a value, not a request: deleting it
+        // prompts, and the prompt must keep its answer.
+        assert!(!asks(&["styles", "delete", "help"]));
+        assert!(!asks(&["tilesets-cli", "--", "--help"]));
+        assert!(!asks(&["styles", "list"]));
     }
 
     fn shown(text: &str) -> Vec<String> {

@@ -103,6 +103,13 @@ dirs = "5"
 # are needed for `parse_to_serde_value`, which decodes straight into a
 # `serde_json::Value`.
 jsonc-parser = { version = "0.34.0", features = ["serde", "serde_json"] }
+# Asks the terminal for its background color (OSC 11), so help can use the
+# palette for a dark or a light one. It reads the answer off the terminal,
+# which takes raw mode and a timed read — `unsafe` this crate does not
+# have — and it sends a second query every terminal answers, so one without
+# OSC 11 is known at once instead of after the timeout. Asked only by a run
+# that shows help; see src/output/theme.rs.
+terminal-colorsaurus = "1"
 
 [dev-dependencies]
 # Integration tests build fake Mapbox tokens; same crate the CLI already uses.

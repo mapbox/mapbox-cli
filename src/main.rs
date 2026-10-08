@@ -837,6 +837,9 @@ fn cli() -> u8 {
     if output::style::requested_off(&raw_argv) {
         output::style::turn_off();
     }
+    if help_layout::help_requested(&raw_argv) {
+        output::theme::allow_background_query(output::on_a_terminal());
+    }
 
     let mut app = build_app(&specs);
     // Here rather than in `build_app`, which tests call directly and which

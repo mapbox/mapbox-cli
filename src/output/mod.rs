@@ -352,6 +352,12 @@ fn tip_lines(tips: &[String], color: bool) -> Vec<String> {
         .collect()
 }
 
+/// Whether either output stream is a terminal — something that can be asked
+/// for its background color (see `theme::allow_background_query`).
+pub fn on_a_terminal() -> bool {
+    std::io::stdout().is_terminal() || std::io::stderr().is_terminal()
+}
+
 /// Whether a result written to stdout may carry color. Only a terminal:
 /// `-o text > file` must leave a file with no escapes in it.
 pub fn result_in_color() -> bool {

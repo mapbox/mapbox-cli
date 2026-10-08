@@ -59,7 +59,8 @@ fn supports_truecolor(
         || windows_terminal
 }
 
-/// The accent: headings, and the names in a tip a reader copies.
+/// The accent: the banner's name, and the names in a tip a reader copies —
+/// small marks, not structure (see [`styles_for`]).
 pub fn accent() -> Style {
     accent_for(truecolor())
 }
@@ -91,11 +92,15 @@ fn colored(color: RgbColor, truecolor: bool) -> Style {
 
 /// clap's styles for help and usage errors.
 ///
-/// Headings in the accent; names to type, values to fill in and clap's
-/// suggestions bold in the terminal's own foreground — the color every
-/// theme makes most readable, for the part a reader has to get exactly
-/// right. Values are not underlined: clap gives the space before a value the
-/// value's style, which bold hides and an underline shows as a stray rule.
+/// Headings, names to type, values to fill in and clap's suggestions are
+/// bold in the terminal's own foreground; notes are muted. No accent: a
+/// fixed color has to sit at mid luminance to read on light themes, which
+/// on a dark one is darker than the reader's own text, so headings in it
+/// receded where they should lead — and clashed with whatever hue the
+/// reader's theme uses. Help takes its color from the theme; layout and
+/// bold give it structure. Values are not underlined: clap gives the space
+/// before a value the value's style, which bold hides and an underline
+/// shows as a stray rule.
 pub fn styles() -> Styles {
     styles_for(truecolor())
 }
@@ -103,14 +108,17 @@ pub fn styles() -> Styles {
 pub fn styles_for(truecolor: bool) -> Styles {
     let bold = Style::new().bold();
     Styles::plain()
-        .header(accent_for(truecolor))
-        .usage(accent_for(truecolor))
+        .header(bold)
+        .usage(bold)
         .literal(bold)
         .placeholder(bold)
         .valid(bold)
         .invalid(bold)
         .error(colored(ERROR, truecolor).bold())
         .context(muted_for(truecolor))
+        // `[possible values: on, off]`: the note muted, the values in it bold
+        // like every other thing to type.
+        .context_value(bold)
 }
 
 /// The escape that opens `style`, for the code that writes raw ANSI.

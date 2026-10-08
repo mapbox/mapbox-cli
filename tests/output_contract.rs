@@ -688,7 +688,7 @@ fn color_follows_no_color_then_force_color() {
         cmd.envs(vars.iter().copied());
         stdout(&cmd.arg("--help").output().expect("run mapbox"))
     };
-    const ACCENT: &str = "\x1b[38;2;82;114;251m";
+    const MUTED: &str = "\x1b[38;2;127;127;127m";
 
     assert!(!help(&[]).contains('\x1b'), "a pipe gets plain text");
 
@@ -702,8 +702,9 @@ fn color_follows_no_color_then_force_color() {
         "no 24-bit color where the terminal is not known to render it: {forced:?}"
     );
 
+    // Notes are the one color help uses; headings take the theme's own.
     let truecolor = help(&[("FORCE_COLOR", "1"), ("COLORTERM", "truecolor")]);
-    assert!(truecolor.contains(ACCENT), "{truecolor:?}");
+    assert!(truecolor.contains(MUTED), "{truecolor:?}");
 
     let both = help(&[("FORCE_COLOR", "1"), ("NO_COLOR", "1")]);
     assert!(!both.contains('\x1b'), "NO_COLOR wins: {both:?}");

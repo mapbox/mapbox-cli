@@ -462,7 +462,8 @@ fn page_width() -> usize {
 /// Whether argv asks for help, read before clap parses it: `-h` or `--help`
 /// anywhere before `--`, or `help` as the first word that is not an option.
 /// The one kind of run allowed to ask the terminal for its background (see
-/// `output::theme::allow_background_query`). A miss costs only the fallback
+/// `output::theme::allow_background_query`), and that opens with the banner
+/// before clap prints anything. A miss costs only the fallback
 /// palette; a false match on a command that prompts would cost the answer
 /// typed ahead, which is why `help` counts only as the subcommand.
 pub fn help_requested(argv: &[std::ffi::OsString]) -> bool {
@@ -477,29 +478,6 @@ pub fn help_requested(argv: &[std::ffi::OsString]) -> bool {
         }
     }
     false
-}
-
-/// Whether argv asks for the top-level page itself — `mapbox --help`,
-/// `mapbox -h` or `mapbox help` with no command named — the help that opens
-/// with the banner. Options before it don't count as words, though one that
-/// takes a value (`-o text --help`) is missed, which costs only the banner.
-pub fn top_level_help_requested(argv: &[std::ffi::OsString]) -> bool {
-    let args: Vec<&str> = argv
-        .iter()
-        .skip(1)
-        .filter_map(|arg| arg.to_str())
-        .take_while(|arg| *arg != "--")
-        .collect();
-    let words: Vec<&str> = args
-        .iter()
-        .copied()
-        .filter(|arg| !arg.starts_with('-'))
-        .collect();
-    match words.as_slice() {
-        [] => args.iter().any(|arg| matches!(*arg, "-h" | "--help")),
-        ["help"] => true,
-        _ => false,
-    }
 }
 
 /// The copy of the tree that parses, and so renders every subcommand's
@@ -797,24 +775,6 @@ mod tests {
         assert!(!asks(&["styles", "delete", "help"]));
         assert!(!asks(&["tilesets-cli", "--", "--help"]));
         assert!(!asks(&["styles", "list"]));
-    }
-
-    #[test]
-    fn only_the_top_level_page_counts_as_top_level_help() {
-        let asks = |args: &[&str]| {
-            let argv: Vec<std::ffi::OsString> = std::iter::once("mapbox")
-                .chain(args.iter().copied())
-                .map(Into::into)
-                .collect();
-            top_level_help_requested(&argv)
-        };
-        assert!(asks(&["--help"]));
-        assert!(asks(&["-h"]));
-        assert!(asks(&["help"]));
-        assert!(asks(&["--no-color", "--help"]));
-        assert!(!asks(&["styles", "--help"]));
-        assert!(!asks(&["help", "styles"]));
-        assert!(!asks(&[]));
     }
 
     fn shown(text: &str) -> Vec<String> {

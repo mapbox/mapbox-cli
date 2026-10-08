@@ -839,9 +839,7 @@ fn cli() -> u8 {
     }
     if help_layout::help_requested(&raw_argv) {
         output::theme::allow_background_query(output::on_a_terminal());
-    }
-    // Ahead of the parse, which is where clap prints help.
-    if help_layout::top_level_help_requested(&raw_argv) {
+        // Ahead of the parse, which is where clap prints help.
         output::banner::show_before_help(&raw_argv);
     }
 

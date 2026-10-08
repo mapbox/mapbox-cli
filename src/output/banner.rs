@@ -35,9 +35,10 @@ pub fn show(matches: &ArgMatches) {
     }
 }
 
-/// Prints the banner ahead of top-level help, as `cf --help` opens with its
-/// own: help is the page read most, and the version is often what the
-/// reader came for.
+/// Prints the banner ahead of help — any help, top-level or a command's, as
+/// `cf` does: help is the page read most, the version is often what the
+/// reader came for, and a command's help without it read as an omission
+/// next to the command's own run.
 ///
 /// clap writes help during the parse, before there are matches for `show`
 /// to read, so `-q`/`--quiet` and `MAPBOX_QUIET` are read here the way clap

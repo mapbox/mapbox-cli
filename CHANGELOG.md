@@ -19,6 +19,10 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- When a coding agent runs `mapbox --help` (detected the same way as for
+  the `User-Agent`), the help opens with a two-line hint pointing at
+  `mapbox --schema`. Help for people, and for subcommands, is unchanged.
+
 - **Breaking**: `--eta-type`, `--navigation-profile` and `--origin` removed
   from `mapbox search category`. The category endpoint does not currently
   return an ETA, so the flags were accepted but had no effect. A script

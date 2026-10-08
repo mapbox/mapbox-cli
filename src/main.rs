@@ -53,6 +53,13 @@ use spec::ServiceSpec;
 /// single source for the Rust half rather than for all three.
 const REPO_URL: &str = "https://github.com/mapbox/cli";
 
+/// Opens the top-level help when an agent is driving the CLI. Agents explore
+/// by chaining `--help` calls, one command at a time; `--schema` answers the
+/// same question for every command in one document.
+const AGENT_HELP_HINT: &str = "\
+Agents: `mapbox --schema` describes every command, its arguments and the request it makes
+as one JSON document. Use it instead of chaining --help calls.";
+
 /// Rejects a value the spec says is a number, while still yielding a
 /// `String`.
 ///
@@ -770,7 +777,12 @@ fn cli() -> u8 {
         }
     };
 
-    let app = build_app(&specs);
+    let mut app = build_app(&specs);
+    // Here rather than in `build_app`, which tests call directly and which
+    // should not depend on who happens to be running them.
+    if agent_detect::detect_agent().is_some() {
+        app = app.before_help(AGENT_HELP_HINT);
+    }
     let argv = tilesets_cli::escape_passthrough_args(&app, raw_argv.clone());
     // Parsing consumes the tree, and `--schema` still has to read it
     // afterwards — so the parse gets the copy and `app` stays whole.

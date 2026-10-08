@@ -363,6 +363,49 @@ fn help_is_never_wrapped() {
     assert!(text.contains("--output"), "--output should be documented");
 }
 
+const AGENT_HINT: &str = "Agents: `mapbox --schema`";
+
+/// An agent reading top-level help is pointed at `--schema` rather than left
+/// to chain `--help` calls. Only there: subcommand help stays as it was.
+#[test]
+fn an_agent_is_pointed_at_the_schema() {
+    let out = command()
+        .env("CLAUDECODE", "1")
+        .arg("--help")
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert!(stdout(&out).contains(AGENT_HINT), "{}", stdout(&out));
+
+    let sub = command()
+        .env("CLAUDECODE", "1")
+        .args(["styles", "--help"])
+        .output()
+        .expect("run mapbox");
+    assert!(!stdout(&sub).contains(AGENT_HINT), "{}", stdout(&sub));
+}
+
+/// A person gets the help they always did. The environment is cleared rather
+/// than having agent variables removed one by one: the suite itself often
+/// runs under an agent, and `agent_detect` knows more variables than this
+/// file should have to list.
+#[test]
+fn without_an_agent_the_help_has_no_hint() {
+    let home = sandbox_home();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    cmd.env_clear()
+        .env("HOME", &home)
+        .env("MAPBOX_CONFIG_DIR", home.join(".mapbox"));
+    // Windows processes expect this one; nothing reads it as an agent.
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        cmd.env("SystemRoot", root);
+    }
+    let out = cmd.arg("--help").output().expect("run mapbox");
+
+    assert!(out.status.success());
+    assert!(!stdout(&out).contains(AGENT_HINT), "{}", stdout(&out));
+}
+
 /// An operation that can never succeed is not in the command surface, so it
 /// answers exactly as a mistyped name does — same code, same shape, same
 /// exit. Anything else would tell a caller which scopes exist while still

@@ -336,7 +336,7 @@ fn print_tips(tips: &[String]) {
 
 /// The lines [`print_tips`] writes, colored or not. The label is bold and the
 /// advice dimmed, so the tips read as secondary to the result above them.
-fn tip_lines(tips: &[String], color: bool) -> Vec<String> {
+pub(crate) fn tip_lines(tips: &[String], color: bool) -> Vec<String> {
     if let [tip] = tips {
         return vec![format!(
             "{} {}",

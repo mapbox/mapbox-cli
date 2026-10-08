@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::executor;
 use crate::http;
-use crate::output::{self, CliError, Mode};
+use crate::output::{self, style, CliError, Mode};
 use crate::remedy::Remedy;
 use crate::spec::{parse_spec, Operation};
 // `--help` points at the tracker rather than at one issue in it: issue
@@ -143,7 +143,12 @@ pub fn run(
     // `output::emit_value`'s generic renderer can't table this (nested
     // `daily`/`dimensions` per product), so `render_text` is a dedicated
     // summary; `-o json` still gets the response untouched.
-    let text = render_text(&json, matches.get_flag(DAILY_ARG), wanted_product.is_some());
+    let text = render_text(
+        &json,
+        matches.get_flag(DAILY_ARG),
+        wanted_product.is_some(),
+        output::result_in_color(),
+    );
     output::emit(mode, &text, json)
 }
 
@@ -244,7 +249,11 @@ fn display_name(name: &str) -> String {
 /// Person-readable summary of a Statistics API response: one line per
 /// product (sparkline of daily values), or, under `--daily`, its usage
 /// listed day by day. Falls back to pretty JSON if `data` is missing.
-fn render_text(json: &Value, daily: bool, already_filtered: bool) -> String {
+///
+/// `color` styles the same text: the title in the accent, the header bold,
+/// a sparkline's bars in the accent over a muted baseline, and the tips the
+/// way every command's are. Stripped of it, the text is unchanged.
+fn render_text(json: &Value, daily: bool, already_filtered: bool, color: bool) -> String {
     let Some(data) = json.get("data") else {
         return pretty(json);
     };
@@ -254,9 +263,10 @@ fn render_text(json: &Value, daily: bool, already_filtered: bool) -> String {
     let period = data.get("period");
     let start = period.and_then(|p| p.get("start")).and_then(Value::as_str);
     let end = period.and_then(|p| p.get("end")).and_then(Value::as_str);
+    let title = style::paint("Usage", &style::accent(), color);
     lines.push(match (start, end) {
-        (Some(start), Some(end)) => format!("Usage · {start} → {end}"),
-        _ => "Usage".to_string(),
+        (Some(start), Some(end)) => format!("{title} · {start} → {end}"),
+        _ => title,
     });
 
     if let Some(token_id) = data.get("token_id").and_then(Value::as_str) {
@@ -293,22 +303,27 @@ fn render_text(json: &Value, daily: bool, already_filtered: bool) -> String {
                 .map(|(name, ..)| display_name(name).chars().count())
                 .max()
                 .unwrap_or(0);
+            // At least the header's own width, or `TOTAL` overhangs the
+            // numbers under it and pushes the trend column out of line.
             let total_width = rows
                 .iter()
                 .map(|(_, total, _)| with_thousands(*total).len())
+                .chain((!daily).then_some("TOTAL".len()))
                 .max()
                 .unwrap_or(0);
 
             if !daily {
-                lines.push(format!(
+                let header = format!(
                     "{:<name_width$}  {:>total_width$}  DAILY TREND",
                     "PRODUCT", "TOTAL"
-                ));
+                );
+                lines.push(style::paint(&header, style::BOLD, color));
             }
-            // One blank line between rows, not after every one, for
-            // readability without doubling the table's height.
+            // A sparkline table is one row per product, so the bars stack
+            // into a chart; the `--daily` listing is a block per product,
+            // and those need a blank line between them to read as blocks.
             for (index, (name, total, entries)) in rows.into_iter().enumerate() {
-                if index > 0 {
+                if daily && index > 0 {
                     lines.push(String::new());
                 }
                 if daily {
@@ -329,7 +344,7 @@ fn render_text(json: &Value, daily: bool, already_filtered: bool) -> String {
                         "{:<name_width$}  {:>total_width$}  {}",
                         display_name(name),
                         with_thousands(total),
-                        sparkline(&values)
+                        styled_sparkline(&values, color)
                     ));
                 }
             }
@@ -337,14 +352,22 @@ fn render_text(json: &Value, daily: bool, already_filtered: bool) -> String {
         _ => lines.push("No usage in this period.".to_string()),
     }
 
+    // What the numbers are, rather than the numbers: one muted line.
+    let mut footer = Vec::new();
     if let Some(active_days) = data.get("activeDays").and_then(Value::as_array) {
-        lines.push(String::new());
-        lines.push(format!("Active days: {}", active_days.len()));
+        footer.push(match active_days.len() {
+            1 => "1 active day".to_string(),
+            n => format!("{n} active days"),
+        });
     }
-
     if let Some(generated_at) = json.get("generated_at").and_then(Value::as_str) {
+        footer.push(format!("generated {}", readable_timestamp(generated_at)));
+    }
+    if !footer.is_empty() {
+        let mut footer = footer.join(" · ");
+        footer[..1].make_ascii_uppercase();
         lines.push(String::new());
-        lines.push(format!("Generated {generated_at}"));
+        lines.push(style::paint(&footer, &style::muted(), color));
     }
 
     let mut tips = vec![if daily {
@@ -363,19 +386,26 @@ fn render_text(json: &Value, daily: bool, already_filtered: bool) -> String {
         }
     }
 
-    // The same shape every command's tips use: a lone tip reads `Tip: …`;
-    // two or more get a `Tips:` header with each one indented below it.
+    // Every command's tips, in their shape and style.
     lines.push(String::new());
-    if let [tip] = tips.as_slice() {
-        lines.push(format!("Tip: {tip}"));
-    } else {
-        lines.push("Tips:".to_string());
-        for tip in tips {
-            lines.push(format!("  {tip}"));
-        }
-    }
+    lines.extend(output::tip_lines(&tips, color));
 
     lines.join("\n")
+}
+
+/// `2026-10-08T14:30:12.166Z` as `2026-10-08 14:30 UTC`; anything else as
+/// it came.
+fn readable_timestamp(raw: &str) -> String {
+    let (date, time) = match raw.split_once('T') {
+        Some(parts) if raw.ends_with('Z') => parts,
+        _ => return raw.to_string(),
+    };
+    match time.get(..5) {
+        Some(minutes) if date.len() == 10 && minutes.as_bytes()[2] == b':' => {
+            format!("{date} {minutes} UTC")
+        }
+        _ => raw.to_string(),
+    }
 }
 
 /// `1234567` as `"1,234,567"`.
@@ -522,30 +552,61 @@ pub(crate) fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
-/// Block-element glyphs, low to high.
-const SPARK_LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+/// Block-element glyphs, low to high — the set `spark` and ratatui use, short
+/// of the full block. The lowest is reserved for a day with no usage. `█`
+/// fills its cell, so on stacked rows a busy day's bar met the baseline of
+/// the row above and the products ran together; `▇` leaves a gap.
+const SPARK_LEVELS: [char; 7] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇'];
 
-/// Sparkline scaled to the series' own min/max. A flat nonzero series uses
-/// the middle glyph rather than the bottom one, which is reserved for an
-/// actual zero-usage day.
-fn sparkline(values: &[i64]) -> String {
-    let (Some(&min), Some(&max)) = (values.iter().min(), values.iter().max()) else {
-        return String::new();
-    };
-
-    if min == max {
-        let level = if max > 0 { SPARK_LEVELS.len() / 2 } else { 0 };
-        return SPARK_LEVELS[level].to_string().repeat(values.len());
+/// Each value's glyph index, scaled from zero to the series' maximum as
+/// ratatui's sparkline scales, so a bar's height is proportional to the
+/// value rather than to its distance from the quietest day.
+///
+/// Two departures, both for reading without color: a day with any usage
+/// takes at least the second glyph, so it never looks like a day without —
+/// ratatui rounds a small value down to empty — and a flat nonzero series
+/// takes a low glyph rather than the top, reading as a steady thin band
+/// rather than as a wall across the chart.
+fn spark_levels(values: &[i64]) -> Vec<usize> {
+    let top = SPARK_LEVELS.len() - 1;
+    let max = values.iter().copied().max().unwrap_or(0);
+    if max <= 0 {
+        return vec![0; values.len()];
     }
-
+    let flat = values.iter().all(|&value| value == max);
     values
         .iter()
-        .map(|&value| {
-            let scaled = (value - min) as f64 / (max - min) as f64;
-            let index = (scaled * (SPARK_LEVELS.len() - 1) as f64).round() as usize;
-            SPARK_LEVELS[index.min(SPARK_LEVELS.len() - 1)]
+        .map(|&value| match value {
+            v if v <= 0 => 0,
+            _ if flat => 2,
+            v => 1 + ((v as f64 / max as f64) * (top - 1) as f64).round() as usize,
         })
         .collect()
+}
+
+/// The sparkline as plain text: one glyph per day, so every product's line
+/// is as wide as the period.
+fn sparkline(values: &[i64]) -> String {
+    spark_levels(values)
+        .into_iter()
+        .map(|level| SPARK_LEVELS[level])
+        .collect()
+}
+
+/// The sparkline in color: bars in the accent, the no-usage baseline muted.
+fn styled_sparkline(values: &[i64], color: bool) -> String {
+    if !color {
+        return sparkline(values);
+    }
+    let (accent, muted) = (style::accent(), style::muted());
+    let levels = spark_levels(values);
+    let mut out = String::new();
+    for run in levels.chunk_by(|a, b| (*a == 0) == (*b == 0)) {
+        let glyphs: String = run.iter().map(|&level| SPARK_LEVELS[level]).collect();
+        let paint = if run[0] == 0 { &muted } else { &accent };
+        out.push_str(&style::paint(&glyphs, paint, true));
+    }
+    out
 }
 
 fn pretty(json: &Value) -> String {
@@ -745,7 +806,7 @@ mod tests {
 
     #[test]
     fn the_summary_totals_each_products_daily_usage() {
-        let text = render_text(&documented_example(), false, false);
+        let text = render_text(&documented_example(), false, false, false);
         assert!(text.contains("Usage · 2024-01-01 → 2024-01-02"), "{text}");
         assert!(text.contains("Token: abc123"), "{text}");
         let row = text
@@ -753,13 +814,15 @@ mod tests {
             .find(|line| line.contains("Vector Tiles API"))
             .expect("the product has its own line");
         assert!(row.contains("200"), "{row}"); // 100 + 100, not just the first
-        assert!(text.contains("Active days: 2"), "{text}");
-        assert!(text.contains("2024-01-31T10:30:00Z"), "{text}");
+        assert!(
+            text.contains("2 active days · generated 2024-01-31 10:30 UTC"),
+            "{text}"
+        );
     }
 
     #[test]
     fn per_day_dates_and_numbers_stay_out_of_the_text_summary() {
-        let text = render_text(&documented_example(), false, false);
+        let text = render_text(&documented_example(), false, false, false);
         // Each date appears once, naming the period's boundaries — not
         // again per product, which is where a per-day breakdown would
         // have repeated it.
@@ -779,7 +842,7 @@ mod tests {
 
     #[test]
     fn daily_lists_each_day_instead_of_a_sparkline() {
-        let text = render_text(&documented_example(), true, false);
+        let text = render_text(&documented_example(), true, false, false);
         assert!(text.contains("Vector Tiles API — total 200"), "{text}");
         assert!(text.contains("2024-01-01"), "{text}");
         assert!(text.contains("2024-01-02"), "{text}");
@@ -796,7 +859,7 @@ mod tests {
 
     #[test]
     fn daily_lists_the_newest_day_first() {
-        let text = render_text(&documented_example(), true, false);
+        let text = render_text(&documented_example(), true, false, false);
         let newest = text
             .lines()
             .position(|line| line.trim_start().starts_with("2024-01-02"))
@@ -810,10 +873,10 @@ mod tests {
 
     #[test]
     fn a_hint_toward_daily_appears_only_without_it() {
-        let with_sparkline = render_text(&documented_example(), false, false);
+        let with_sparkline = render_text(&documented_example(), false, false, false);
         assert!(with_sparkline.contains("--daily"), "{with_sparkline}");
 
-        let with_daily = render_text(&documented_example(), true, false);
+        let with_daily = render_text(&documented_example(), true, false, false);
         assert!(!with_daily.contains("--daily"), "{with_daily}");
     }
 
@@ -828,13 +891,13 @@ mod tests {
             }
         });
 
-        let unfiltered = render_text(&json, false, false);
+        let unfiltered = render_text(&json, false, false, false);
         assert!(
             unfiltered.contains("--product \"Busy API\""),
             "{unfiltered}"
         );
 
-        let filtered = render_text(&json, false, true);
+        let filtered = render_text(&json, false, true, false);
         assert!(
             !filtered.contains("--product"),
             "a response already narrowed by --product should not suggest it again:\n{filtered}"
@@ -846,7 +909,7 @@ mod tests {
         let json = serde_json::json!({
             "data": { "products": { "Only API": { "daily": [{ "date": "2026-01-01", "usage": 1 }] } } }
         });
-        let text = render_text(&json, false, false);
+        let text = render_text(&json, false, false, false);
         assert!(
             !text.contains("--product"),
             "nothing left to narrow when there is already only one product:\n{text}"
@@ -879,7 +942,7 @@ mod tests {
 
     #[test]
     fn the_sparkline_table_has_a_column_header() {
-        let text = render_text(&documented_example(), false, false);
+        let text = render_text(&documented_example(), false, false, false);
         assert!(
             text.contains("PRODUCT") && text.contains("TOTAL") && text.contains("DAILY TREND"),
             "{text}"
@@ -888,7 +951,7 @@ mod tests {
 
     #[test]
     fn the_daily_listing_has_no_column_header() {
-        let text = render_text(&documented_example(), true, false);
+        let text = render_text(&documented_example(), true, false, false);
         assert!(!text.contains("DAILY TREND"), "{text}");
     }
 
@@ -904,18 +967,18 @@ mod tests {
             }
         });
         assert!(
-            render_text(&json, false, false).contains("1,234,567"),
+            render_text(&json, false, false, false).contains("1,234,567"),
             "sparkline mode"
         );
         assert!(
-            render_text(&json, true, false).contains("1,234,567"),
+            render_text(&json, true, false, false).contains("1,234,567"),
             "daily mode"
         );
     }
 
     #[test]
     fn tips_are_labeled_and_each_on_their_own_line() {
-        let text = render_text(&documented_example(), false, false);
+        let text = render_text(&documented_example(), false, false, false);
         let tips_at = text
             .lines()
             .position(|line| line == "Tips:")
@@ -937,7 +1000,7 @@ mod tests {
                 }
             }
         });
-        let text = render_text(&json, false, false);
+        let text = render_text(&json, false, false, false);
         let busy = text.find("Busy API").expect("Busy API is listed");
         let quiet = text.find("Quiet API").expect("Quiet API is listed");
         assert!(
@@ -947,7 +1010,7 @@ mod tests {
     }
 
     #[test]
-    fn product_rows_have_breathing_room_between_them_but_not_a_trailing_gap() {
+    fn product_rows_stack_into_a_chart_with_the_footer_after_a_gap() {
         // Not single letters: the header row's own words contain enough of
         // the alphabet to match a one-letter product name by accident.
         let json = serde_json::json!({
@@ -960,36 +1023,113 @@ mod tests {
             },
             "generated_at": "2026-01-02T00:00:00Z"
         });
-        let text = render_text(&json, false, false);
+        let text = render_text(&json, false, false, false);
         let lines: Vec<&str> = text.lines().collect();
 
         let product_line = |name: &str| lines.iter().position(|l| l.contains(name)).unwrap();
-        // Busiest first: Charlie (3), Bravo (2), Alpha (1).
+        // Busiest first: Charlie (3), Bravo (2), Alpha (1), one per line.
         assert_eq!(
-            product_line("Bravo Product") - product_line("Charlie Product"),
-            2,
+            product_line("Bravo Product"),
+            product_line("Charlie Product") + 1,
             "{text}"
         );
         assert_eq!(
-            product_line("Alpha Product") - product_line("Bravo Product"),
-            2,
+            product_line("Alpha Product"),
+            product_line("Bravo Product") + 1,
             "{text}"
         );
 
         let last_row = product_line("Alpha Product");
         assert!(lines[last_row + 1].is_empty(), "{text}");
-        assert!(lines[last_row + 2].starts_with("Generated"), "{text}");
+        assert_eq!(
+            lines[last_row + 2],
+            "Generated 2026-01-02 00:00 UTC",
+            "{text}"
+        );
+    }
+
+    /// `TOTAL` is wider than a small total; the numbers sit right-aligned
+    /// under it, and every sparkline starts where `DAILY TREND` does.
+    #[test]
+    fn the_columns_line_up_under_the_header() {
+        let json = serde_json::json!({
+            "data": { "products": {
+                "Busy API": { "daily": [{ "date": "2026-01-01", "usage": 407 }] },
+                "Quiet API": { "daily": [{ "date": "2026-01-01", "usage": 1 }] }
+            } }
+        });
+        let text = render_text(&json, false, false, false);
+        let header = text
+            .lines()
+            .find(|l| l.starts_with("PRODUCT"))
+            .expect("a header");
+        let total_end = header.find("TOTAL").expect("TOTAL") + "TOTAL".len();
+        let trend_at = header.find("DAILY TREND").expect("DAILY TREND");
+        for row in text.lines().filter(|l| l.contains(" API ")) {
+            let chars: Vec<char> = row.chars().collect();
+            assert!(
+                chars[total_end - 1].is_ascii_digit(),
+                "total not under TOTAL: {row:?}"
+            );
+            assert!(
+                SPARK_LEVELS.contains(&chars[trend_at]),
+                "trend not under its header: {row:?}"
+            );
+        }
+    }
+
+    /// Every product's sparkline is one glyph per day of the period, so the
+    /// lines are the same width however sparse a product's data — a day the
+    /// API left out is drawn as a day without usage.
+    #[test]
+    fn every_sparkline_is_as_wide_as_the_period() {
+        let json = serde_json::json!({
+            "data": {
+                "period": { "start": "2026-01-01", "end": "2026-01-05" },
+                "products": {
+                    "Busy API": { "daily": [
+                        { "date": "2026-01-01", "usage": 5 }, { "date": "2026-01-02", "usage": 1 },
+                        { "date": "2026-01-03", "usage": 9 }, { "date": "2026-01-04", "usage": 2 },
+                        { "date": "2026-01-05", "usage": 7 }
+                    ] },
+                    "Sparse API": { "daily": [{ "date": "2026-01-03", "usage": 1 }] }
+                }
+            }
+        });
+        let text = render_text(&json, false, false, false);
+        let widths: Vec<usize> = text
+            .lines()
+            .filter(|line| line.contains(" API "))
+            .map(|line| line.chars().filter(|c| SPARK_LEVELS.contains(c)).count())
+            .collect();
+        assert_eq!(widths, [5, 5], "{text}");
+    }
+
+    /// Color changes how the text looks, never what it says: the bars take
+    /// the accent and the no-usage baseline is muted.
+    #[test]
+    fn color_styles_the_bars_and_the_baseline_and_nothing_else() {
+        let plain = render_text(&documented_example(), false, false, false);
+        let colored = render_text(&documented_example(), false, false, true);
+        assert_eq!(style::strip(&colored), plain);
+
+        let bars = styled_sparkline(&[0, 3, 0], true);
+        let (accent, muted) = (style::accent(), style::muted());
+        assert!(bars.contains(&format!("{accent}▇")), "{bars:?}");
+        if !muted.is_empty() {
+            assert!(bars.starts_with(&format!("{muted}▁")), "{bars:?}");
+        }
     }
 
     #[test]
     fn no_products_reads_as_no_usage_rather_than_an_empty_table() {
         let json = serde_json::json!({ "data": { "products": {} } });
-        assert!(render_text(&json, false, false).contains("No usage in this period."));
+        assert!(render_text(&json, false, false, false).contains("No usage in this period."));
     }
 
     #[test]
     fn a_flat_nonzero_series_reads_as_steady_rather_than_idle() {
-        assert_eq!(sparkline(&[5, 5, 5]), "▅▅▅");
+        assert_eq!(sparkline(&[5, 5, 5]), "▃▃▃");
     }
 
     #[test]
@@ -997,11 +1137,33 @@ mod tests {
         assert_eq!(sparkline(&[0, 0, 0]), "▁▁▁");
     }
 
+    /// Scaled from zero, not from the quietest day: a busy day next to a
+    /// quiet one stays tall, and the quiet one, having had usage, never takes
+    /// the no-usage glyph.
+    #[test]
+    fn a_day_with_any_usage_never_looks_like_a_day_without() {
+        let chars: Vec<char> = sparkline(&[0, 1, 1000]).chars().collect();
+        assert_eq!(chars, ['▁', '▂', '▇']);
+    }
+
+    #[test]
+    fn readable_timestamp_shortens_only_what_it_recognizes() {
+        assert_eq!(
+            readable_timestamp("2026-10-08T14:30:12.166Z"),
+            "2026-10-08 14:30 UTC"
+        );
+        assert_eq!(
+            readable_timestamp("2026-10-08T14:30:00+02:00"),
+            "2026-10-08T14:30:00+02:00"
+        );
+        assert_eq!(readable_timestamp("yesterday"), "yesterday");
+    }
+
     #[test]
     fn the_extremes_of_a_series_take_the_extreme_glyphs() {
         let chars: Vec<char> = sparkline(&[0, 50, 100]).chars().collect();
         assert_eq!(chars[0], '▁');
-        assert_eq!(chars[2], '█');
+        assert_eq!(chars[2], '▇');
     }
 
     #[test]
@@ -1162,7 +1324,7 @@ mod tests {
                 }
             }
         });
-        let text = render_text(&json, false, false);
+        let text = render_text(&json, false, false, false);
         let line = text
             .lines()
             .find(|l| l.contains("Address Autofill"))
@@ -1174,7 +1336,7 @@ mod tests {
     #[test]
     fn a_response_with_no_data_field_falls_back_to_pretty_json() {
         let json = serde_json::json!({ "message": "not what was expected" });
-        let text = render_text(&json, false, false);
+        let text = render_text(&json, false, false, false);
         assert!(text.contains("not what was expected"), "{text}");
     }
 

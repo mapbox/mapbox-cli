@@ -4180,15 +4180,11 @@ every line `-o text` prints around the table, is exactly what came back.
 Usage · 2026-08-09 → 2026-09-08
 
 PRODUCT                TOTAL  DAILY TREND
-Directions API    67,840,000  ▁▄▇▆▆▅▅▇▇▇▇▆▅▅▄▇▇██▇▇▆▅▅▇▇██▇▇▆
+Directions API    67,840,000  ▄▅▇▆▆▆▆▇▇▇▇▆▆▆▅▇▇▇▇▇▇▆▆▆▇▇▇▇▇▇▆
+Matrix API        45,260,000  ▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃
+Vector Tiles API       6,300  ▁▁▁▁▁▁▇▁▁▁▁▁▁▄▁▁▁▄▁▁▄▁▁▁▁▁▁▁▁▁▁
 
-Matrix API        45,260,000  ▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅
-
-Vector Tiles API       6,300  ▆▁▆▁▁▁█▁▁▁▁▁▁█▁▁▁█▆▁█▄▁▁▁▁▄▁▁▁▁
-
-Active days: 31
-
-Generated 2026-09-08T09:49:10.827Z
+31 active days · generated 2026-09-08 09:49 UTC
 
 Tips:
   `-o json` for the exact per-day numbers and the per-browser/country/host breakdown.
@@ -4228,10 +4224,15 @@ JSON `-o json` prints. Each row is a product's total for the period plus a
 sparkline of its daily values — a padded one: a day the API's `daily` array
 leaves out (it omits a day rather than sending `usage: 0` for it) still gets
 its own zero-height glyph at the right position in the line, computed from
-`data.period`'s own start and end. Rows have a blank line between them —
-without it, a sparkline's solid glyphs sitting flush against the next
-row's read as cramped rather than dense, on an account with more than a
-couple of products. Exact per-day numbers and the per-browser/country/host
+`data.period`'s own start and end, so every product's line is the same
+width. Bars scale from zero to the product's busiest day, the way ratatui's
+sparkline scales, so a bar's height is proportional to its value; a day
+with any usage is never drawn as the zero glyph, and a product used the
+same amount every day draws as a low steady band (`Matrix API` above).
+Rows stack one per line, and the tallest bar stops at `▇` rather than `█`,
+which leaves a gap under the row above so the products don't run
+together. At a terminal the bars are in the accent color over a muted
+baseline. Exact per-day numbers and the per-browser/country/host
 breakdown are left to `-o json`; `--product` narrows the whole response,
 both columns, to one product's row. A 403 covers two different causes the
 API doesn't otherwise distinguish: the token missing `statistics:read` — a
@@ -4260,9 +4261,7 @@ Directions API — total 67,840,000
   2026-08-10  2,150,000
   2026-08-09  2,100,000
 
-Active days: 31
-
-Generated 2026-09-08T09:49:10.827Z
+31 active days · generated 2026-09-08 09:49 UTC
 
 Tips:
   `-o json` for the per-browser/country/host breakdown.

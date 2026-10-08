@@ -382,6 +382,12 @@ fn top_level_help_links_to_mapbox_resources() {
         let out = run(args);
         assert!(out.status.success(), "{args:?} exited non-zero");
         let text = stdout(&out);
+        // The heading carries clap's header style, which must not leak
+        // into a pipe as raw escape codes.
+        assert!(
+            !text.contains('\x1b'),
+            "{args:?} has escape codes: {text:?}"
+        );
         for link in LINKS {
             assert!(text.contains(link), "{args:?} is missing {link}: {text}");
         }

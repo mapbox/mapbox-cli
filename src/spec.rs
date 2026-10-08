@@ -172,8 +172,7 @@ fn arg_name_override(service_name: &str, param_name: &str) -> Option<&'static st
 /// `generate-skills`, this file's own `command()` above — reads a
 /// [`FLATTENED_SERVICES`] service correctly for free, because they all go
 /// through `command()` rather than reconstructing the string themselves.
-pub const FLATTENED_SERVICES: &[&str] =
-    &["directions", "isochrone", "map-match", "matrix"];
+pub const FLATTENED_SERVICES: &[&str] = &["directions", "isochrone", "map-match", "matrix"];
 
 /// (service, path parameter name) pairs whose value is trusted to reach the
 /// URL unescaped, because every legitimate value already contains a

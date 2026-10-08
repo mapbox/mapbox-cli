@@ -4228,7 +4228,8 @@ its own zero-height glyph at the right position in the line, computed from
 width. Bars scale from zero to the product's busiest day, the way ratatui's
 sparkline scales, so a bar's height is proportional to its value; a day
 with any usage is never drawn as the zero glyph, and a product used the
-same amount every day draws as a low steady band (`Matrix API` above).
+same amount on most days — tileset hosting, say, with a day missing —
+draws as a low steady band (`Matrix API` above) rather than a wall.
 Rows stack one per line, and the tallest bar stops at `▇` rather than `█`,
 which leaves a gap under the row above so the products don't run
 together. At a terminal the bars are in the accent color over a muted

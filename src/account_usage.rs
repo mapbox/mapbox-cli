@@ -564,16 +564,20 @@ const SPARK_LEVELS: [char; 7] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇'
 ///
 /// Two departures, both for reading without color: a day with any usage
 /// takes at least the second glyph, so it never looks like a day without —
-/// ratatui rounds a small value down to empty — and a flat nonzero series
-/// takes a low glyph rather than the top, reading as a steady thin band
-/// rather than as a wall across the chart.
+/// ratatui rounds a small value down to empty — and a steady series takes
+/// a low glyph rather than the top, reading as a thin band rather than as a
+/// wall across the chart. Steady is the same value on every day with usage,
+/// and usage on at least half the days: tileset hosting at 1 a day with one
+/// day missing is steady, while a single day's spike, the same value on the
+/// only day it has, is not.
 fn spark_levels(values: &[i64]) -> Vec<usize> {
     let top = SPARK_LEVELS.len() - 1;
     let max = values.iter().copied().max().unwrap_or(0);
     if max <= 0 {
         return vec![0; values.len()];
     }
-    let flat = values.iter().all(|&value| value == max);
+    let used: Vec<i64> = values.iter().copied().filter(|&value| value > 0).collect();
+    let flat = used.len() * 2 >= values.len() && used.iter().all(|&value| value == max);
     values
         .iter()
         .map(|&value| match value {
@@ -1130,6 +1134,14 @@ mod tests {
     #[test]
     fn a_flat_nonzero_series_reads_as_steady_rather_than_idle() {
         assert_eq!(sparkline(&[5, 5, 5]), "▃▃▃");
+    }
+
+    /// One day missing doesn't turn steady usage into a wall of top bars,
+    /// and one day's usage stays a spike rather than a band.
+    #[test]
+    fn steady_usage_with_a_gap_is_still_a_band_and_a_lone_day_is_a_spike() {
+        assert_eq!(sparkline(&[1, 1, 1, 0, 1]), "▃▃▃▁▃");
+        assert_eq!(sparkline(&[0, 0, 1, 0, 0]), "▁▁▇▁▁");
     }
 
     #[test]

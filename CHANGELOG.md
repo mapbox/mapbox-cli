@@ -22,9 +22,12 @@ that may never merge. They are not releases and are not listed here.
 - Top-level `mapbox --help` lists commands in groups (Maps and data,
   Search, Account, Coding agents, CLI), each with a line saying what it
   does rather than which API it wraps, and the global options under
-  Authentication, Output and Behavior. Every section shares one column,
-  wraps to the terminal, and in a terminal shows commands and flags in
-  cyan with `[env: …]` notes dimmed; subcommand help uses the same colors.
+  Authentication, Output and Behavior. Command sections share one
+  description column and option sections another, the page wraps to the
+  terminal, and in a terminal commands and flags show in cyan with
+  `[env: …]` notes dimmed. Subcommand help uses the same colors and
+  clap's compact layout for `--help` as well as `-h`, with the command's
+  full description at the top.
   Help text only: no command, flag, exit code or result output changes.
 
 - Top-level `mapbox --help` / `mapbox help` changes. It ends with a

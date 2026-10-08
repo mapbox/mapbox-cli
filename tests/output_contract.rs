@@ -524,11 +524,14 @@ fn top_level_help_groups_commands_and_options() {
     }
 }
 
-/// Every section shares one description column, wrapped lines continue on
-/// it, and nothing passes the terminal's width — the page is rendered here
-/// rather than by clap, so none of that comes for free.
+/// Command sections share one description column and option sections
+/// another, wrapped lines continue on their column, and nothing passes the
+/// terminal's width — the page is rendered here rather than by clap, so none
+/// of that comes for free.
 #[test]
 fn top_level_help_aligns_and_wraps_to_the_terminal() {
+    const OPTION_SECTIONS: &[&str] = &["Authentication:", "Output:", "Behavior:"];
+
     let out = command()
         .env("COLUMNS", "80")
         .env_remove("CLAUDECODE")
@@ -538,35 +541,99 @@ fn top_level_help_aligns_and_wraps_to_the_terminal() {
     let text = stdout(&out);
     let page = &text[text.find("Usage:").expect("a usage line")..];
 
+    // Where a row's description starts: past its name and the gap after it.
     let column = |line: &str| {
-        line.trim_start()
-            .find("  ")
-            .map(|gap| line.len() - line.trim_start().len() + gap)
-            .map(|end| end + line[end..].len() - line[end..].trim_start().len())
+        let indent = line.len() - line.trim_start().len();
+        let gap = indent + line.trim_start().find("  ")?;
+        Some(gap + line[gap..].len() - line[gap..].trim_start().len())
     };
-    let first = page
-        .lines()
-        .find(|line| line.starts_with("  styles "))
-        .and_then(column)
-        .expect("a styles row");
+    let row_column = |prefix: &str| {
+        page.lines()
+            .find(|line| line.starts_with(prefix))
+            .and_then(column)
+            .unwrap_or_else(|| panic!("no {prefix:?} row: {page}"))
+    };
+    let names = row_column("  styles ");
+    let options = row_column("  -t, --token ");
+    assert!(
+        names < options,
+        "commands should not wait on the longest option"
+    );
 
+    let mut expected = names;
     for line in page.lines() {
         assert!(line.chars().count() <= 80, "over 80 columns: {line:?}");
-        if line.starts_with("  ") && !line.trim().is_empty() {
+        if !line.starts_with(' ') && line.ends_with(':') {
+            expected = if OPTION_SECTIONS.contains(&line) {
+                options
+            } else {
+                names
+            };
+        } else if line.starts_with("  ") && !line.trim().is_empty() {
             // A wrapped line starts on the column; a row reaches it after
             // its name.
             let indent = line.len() - line.trim_start().len();
-            let at = if indent == first {
+            let at = if indent == expected {
                 Some(indent)
             } else {
                 column(line)
             };
-            assert_eq!(at, Some(first), "off the shared column: {line:?}");
+            assert_eq!(at, Some(expected), "off its section's column: {line:?}");
         }
     }
     assert!(
         !page.contains('`'),
-        "code spans should be styled, not shown with backticks: {page}"
+        "code spans should show without backticks: {page}"
+    );
+}
+
+/// clap's long layout — every description on a line of its own, a blank
+/// line between options, `[env: …]` as a paragraph — made a subcommand's
+/// `--help` mostly white space. It is now the compact layout, with the
+/// command's long description still at the top, whichever way help is
+/// asked for.
+#[test]
+fn subcommand_help_is_compact_and_keeps_its_description() {
+    for args in [
+        &["tilesets", "query", "--help"][..],
+        &["help", "tilesets", "query"][..],
+    ] {
+        let out = run(args);
+        assert!(out.status.success(), "{args:?} failed");
+        let text = stdout(&out);
+
+        assert!(
+            text.starts_with("Query one or more tilesets at a coordinate"),
+            "{args:?} lost its long description: {text}"
+        );
+        assert!(
+            text.lines()
+                .any(|line| line.contains("--token") && line.contains("[env: MAPBOX_ACCESS_TOKEN]")),
+            "{args:?} should keep the env note on the option's line: {text}"
+        );
+        // The long layout's mark: a blank line, then the note as a
+        // paragraph. A note wrapped onto the next line is fine.
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(
+            !lines
+                .windows(2)
+                .any(|pair| pair[0].trim().is_empty() && pair[1].trim_start().starts_with("[env:")),
+            "{args:?} set an env note apart as a paragraph: {text}"
+        );
+        assert!(!text.contains('`'), "{args:?} shows backticks: {text}");
+    }
+}
+
+/// The compact help is made on the copy of the tree that parses; `--schema`
+/// still publishes the spec's own text, markup included.
+#[test]
+fn the_schema_keeps_the_text_help_simplifies() {
+    let out = run(&["tilesets", "query", "--schema"]);
+    assert!(out.status.success());
+    assert!(
+        stdout(&out).contains("`{owner}.{tileset}`"),
+        "--schema should keep the spec's wording: {}",
+        stdout(&out)
     );
 }
 

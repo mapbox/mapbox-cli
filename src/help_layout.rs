@@ -132,6 +132,7 @@ pub fn apply(app: Command) -> Command {
             .iter()
             .map(|(label, url)| Row::new(label, label.to_string(), vec![Piece::plain(url)]))
             .collect(),
+        Block::Names,
     ));
 
     let page = render(&sections, page_width(), &Palette::new(app.get_styles()));
@@ -215,7 +216,18 @@ impl Row {
     }
 }
 
-type Section = (String, Vec<Row>);
+/// A heading, its rows, and which column its descriptions start on.
+type Section = (String, Vec<Row>, Block);
+
+/// Commands (and the link labels beside them) share one description column,
+/// options another. One column for everything let the longest option —
+/// `-u, --username <USERNAME>` — push every command's description a dozen
+/// columns away from its name.
+#[derive(Clone, Copy, PartialEq)]
+enum Block {
+    Names,
+    Options,
+}
 
 fn command_sections(app: &Command) -> Vec<Section> {
     let literal = *app.get_styles().get_literal();
@@ -228,7 +240,7 @@ fn command_sections(app: &Command) -> Vec<Section> {
                     Row::new(&name, format!("{literal}{name}{literal:#}"), pieces(&about))
                 })
                 .collect();
-            (heading.to_string(), rows)
+            (heading.to_string(), rows, Block::Names)
         })
         .collect()
 }
@@ -245,9 +257,9 @@ fn option_sections(app: &Command) -> Vec<Section> {
     {
         let heading = arg.get_help_heading().unwrap_or(OPTIONS);
         let row = option_row(arg, &palette);
-        match sections.iter_mut().find(|(h, _)| h == heading) {
-            Some((_, rows)) => rows.push(row),
-            None => sections.push((heading.to_string(), vec![row])),
+        match sections.iter_mut().find(|(h, _, _)| h == heading) {
+            Some((_, rows, _)) => rows.push(row),
+            None => sections.push((heading.to_string(), vec![row], Block::Options)),
         }
     }
 
@@ -262,8 +274,8 @@ fn option_sections(app: &Command) -> Vec<Section> {
         ));
     }
     match sections.last_mut() {
-        Some((_, rows)) => rows.extend(builtin),
-        None => sections.push((OPTIONS.to_string(), builtin)),
+        Some((_, rows, _)) => rows.extend(builtin),
+        None => sections.push((OPTIONS.to_string(), builtin, Block::Options)),
     }
     sections
 }
@@ -321,8 +333,8 @@ impl Row {
 }
 
 /// Splits help text into pieces: words, `code` spans kept whole and shown
-/// as literals rather than with their backticks, and a trailing `[env: …]`
-/// note kept whole and dimmed.
+/// without their backticks, and a trailing `[env: …]` note kept whole and
+/// dimmed.
 fn pieces(text: &str) -> Vec<Piece> {
     let (body, note) = match text.rfind(" [env: ") {
         Some(at) if text.ends_with(']') => (&text[..at], Some(&text[at + 1..])),
@@ -356,18 +368,21 @@ fn pieces(text: &str) -> Vec<Piece> {
 }
 
 fn render(sections: &[Section], width: usize, palette: &Palette) -> String {
-    let column = 2
-        + sections
+    let column = |block: Block| {
+        2 + sections
             .iter()
-            .flat_map(|(_, rows)| rows.iter().map(|r| r.left_width))
+            .filter(|(_, _, b)| *b == block)
+            .flat_map(|(_, rows, _)| rows.iter().map(|r| r.left_width))
             .max()
             .unwrap_or(0)
-        + 2;
-    let room = width.saturating_sub(column).max(20);
+            + 2
+    };
     let header = palette.header;
 
     let mut page = String::new();
-    for (heading, rows) in sections {
+    for (heading, rows, block) in sections {
+        let column = column(*block);
+        let room = width.saturating_sub(column).max(20);
         page.push_str(&format!("{header}{heading}:{header:#}\n"));
         for row in rows {
             page.push_str("  ");
@@ -425,9 +440,12 @@ fn styled_line(line: &[&Piece], palette: &Palette) -> String {
     let words: Vec<String> = line
         .iter()
         .map(|piece| {
+            // A code span is kept whole but not colored: in a description it
+            // is prose, and cyan belongs to the names on the left.
             let style = match piece.kind {
-                Kind::Plain => return format!("{}{}{}", piece.prefix, piece.text, piece.suffix),
-                Kind::Literal => palette.literal,
+                Kind::Plain | Kind::Literal => {
+                    return format!("{}{}{}", piece.prefix, piece.text, piece.suffix);
+                }
                 Kind::Note => palette.note,
             };
             format!(
@@ -447,6 +465,59 @@ fn page_width() -> usize {
         .filter(|c| *c > 0)
         .or_else(|| terminal_size::terminal_size().map(|(w, _)| usize::from(w.0)));
     detected.map_or(MAX_WIDTH, |w| w.min(MAX_WIDTH))
+}
+
+/// The copy of the tree that parses, and so renders every subcommand's
+/// help, in clap's compact layout.
+///
+/// clap switches `--help` to its long layout whenever a command has a
+/// `long_about`, and nearly every command here does: each option's
+/// description on a line of its own, a blank line between options, and
+/// `[env: …]` as a paragraph. That made a subcommand's help several screens
+/// of mostly white space. Here the long description moves to the top of the
+/// command's own page instead, which leaves clap nothing long to show.
+///
+/// Only the parsing copy: `--schema` and `generate-skills` read
+/// `long_about` from the tree `build_app` returned. Backticks go too — in a
+/// terminal they are noise, not markup.
+pub fn for_parsing(app: Command) -> Command {
+    app.mut_args(plain_arg_help).mut_subcommands(compact)
+}
+
+fn compact(cmd: Command) -> Command {
+    let long = cmd
+        .get_long_about()
+        .map(|text| without_backticks(&text.to_string()));
+    let about = cmd
+        .get_about()
+        .map(|text| without_backticks(&text.to_string()));
+    let mut cmd = cmd.mut_args(plain_arg_help).mut_subcommands(compact);
+    if let Some(about) = about {
+        cmd = cmd.about(about);
+    }
+    match long {
+        // `before_help` shows on the command's own page and not in its
+        // parent's list, where `about` stays the one-line summary.
+        Some(long) => cmd
+            .long_about(None::<&'static str>)
+            .before_help(long)
+            .help_template("{before-help}{usage-heading} {usage}\n\n{all-args}"),
+        None => cmd,
+    }
+}
+
+fn plain_arg_help(arg: Arg) -> Arg {
+    match arg
+        .get_help()
+        .map(|help| without_backticks(&help.to_string()))
+    {
+        Some(help) => arg.help(help),
+        None => arg,
+    }
+}
+
+fn without_backticks(text: &str) -> String {
+    text.replace('`', "")
 }
 
 /// `(name, description)` for each command the help lists. clap adds its

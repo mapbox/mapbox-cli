@@ -531,7 +531,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 // it names one flag on one command, and clap says so.
                 .help_heading(BEHAVIOR_OPTIONS)
                 .global(true)
-                .help("Seconds per request; 60 by default, 900 for uploads [env: MAPBOX_TIMEOUT]"),
+                .help("Seconds per request; 60, or 900 for uploads [env: MAPBOX_TIMEOUT]"),
         )
         .arg(
             // The arg's id is not `id`: two style operations take a path
@@ -815,7 +815,7 @@ fn cli() -> u8 {
     let argv = tilesets_cli::escape_passthrough_args(&app, raw_argv.clone());
     // Parsing consumes the tree, and `--schema` still has to read it
     // afterwards — so the parse gets the copy and `app` stays whole.
-    let matches = match app.clone().try_get_matches_from(argv.clone()) {
+    let matches = match help_layout::for_parsing(app.clone()).try_get_matches_from(argv.clone()) {
         Ok(matches) => matches,
         // The ordinary way `--schema` arrives: as a line clap has just
         // refused, because naming a command is not the same as supplying

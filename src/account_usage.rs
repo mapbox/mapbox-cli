@@ -340,8 +340,18 @@ fn render_text(json: &Value, daily: bool, already_filtered: bool, color: bool) -
                     }
                 } else {
                     let values: Vec<i64> = entries.iter().map(|(_, usage)| *usage).collect();
+                    // Each row is to its own scale, so its top bar means a
+                    // different number on every row: say which, the way
+                    // Tufte labels a sparkline, in small text after it.
+                    let peak = values.iter().copied().max().filter(|&max| max > 0);
+                    let label = peak
+                        .map(|max| {
+                            let text = format!("max {}", with_thousands(max));
+                            format!("  {}", style::paint(&text, &style::muted(), color))
+                        })
+                        .unwrap_or_default();
                     lines.push(format!(
-                        "{:<name_width$}  {:>total_width$}  {}",
+                        "{:<name_width$}  {:>total_width$}  {}{label}",
                         display_name(name),
                         with_thousands(total),
                         styled_sparkline(&values, color)
@@ -1044,6 +1054,24 @@ mod tests {
             "Generated 2026-01-02 00:00 UTC",
             "{text}"
         );
+    }
+
+    /// Each row's own scale is named after its sparkline: the value its top
+    /// bar stands for. An idle row has no peak to name.
+    #[test]
+    fn each_sparkline_names_the_peak_its_top_bar_stands_for() {
+        let json = serde_json::json!({
+            "data": { "products": {
+                "Busy API": { "daily": [
+                    { "date": "2026-01-01", "usage": 1500 }, { "date": "2026-01-02", "usage": 7 }
+                ] },
+                "Idle API": { "daily": [{ "date": "2026-01-01", "usage": 0 }] }
+            } }
+        });
+        let text = render_text(&json, false, false, false);
+        let row = |name: &str| text.lines().find(|l| l.contains(name)).expect("a row");
+        assert!(row("Busy API").ends_with("  max 1,500"), "{text}");
+        assert!(!row("Idle API").contains("max"), "{text}");
     }
 
     /// `TOTAL` is wider than a small total; the numbers sit right-aligned

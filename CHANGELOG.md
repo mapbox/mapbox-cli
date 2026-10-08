@@ -23,8 +23,7 @@ that may never merge. They are not releases and are not listed here.
   lines between, every sparkline as wide as the period, bars scaled from
   zero so their height is proportional to the value, and the tallest
   stopping short of the row above. A day with any usage never draws as a
-  day without, and a product used the same amount on most days draws as a
-  low band.
+  day without.
   At a terminal the title and bars are in the accent over a muted
   baseline, and the tips look like every other command's. The footer is
   one line (`31 active days · generated 2026-09-08 09:49 UTC`), and the

@@ -4181,7 +4181,7 @@ Usage · 2026-08-09 → 2026-09-08
 
 PRODUCT                TOTAL  DAILY TREND
 Directions API    67,840,000  ▄▅▇▆▆▆▆▇▇▇▇▆▆▆▅▇▇▇▇▇▇▆▆▆▇▇▇▇▇▇▆
-Matrix API        45,260,000  ▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃
+Matrix API        45,260,000  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇
 Vector Tiles API       6,300  ▁▁▁▁▁▁▇▁▁▁▁▁▁▄▁▁▁▄▁▁▄▁▁▁▁▁▁▁▁▁▁
 
 31 active days · generated 2026-09-08 09:49 UTC
@@ -4225,11 +4225,11 @@ sparkline of its daily values — a padded one: a day the API's `daily` array
 leaves out (it omits a day rather than sending `usage: 0` for it) still gets
 its own zero-height glyph at the right position in the line, computed from
 `data.period`'s own start and end, so every product's line is the same
-width. Bars scale from zero to the product's busiest day, the way ratatui's
-sparkline scales, so a bar's height is proportional to its value; a day
-with any usage is never drawn as the zero glyph, and a product used the
-same amount on most days — tileset hosting, say, with a day missing —
-draws as a low steady band (`Matrix API` above) rather than a wall.
+width. Bars scale from zero to the product's own busiest day, the way
+ratatui's sparkline scales, so a bar's height is proportional to its value
+and a product used the same amount every day is at the top every day
+(`Matrix API` above); a day with any usage is never drawn as the zero
+glyph.
 Rows stack one per line, and the tallest bar stops at `▇` rather than `█`,
 which leaves a gap under the row above so the products don't run
 together. At a terminal the bars are in the accent color over a muted

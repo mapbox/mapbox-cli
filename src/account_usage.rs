@@ -562,27 +562,21 @@ const SPARK_LEVELS: [char; 7] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇'
 /// ratatui's sparkline scales, so a bar's height is proportional to the
 /// value rather than to its distance from the quietest day.
 ///
-/// Two departures, both for reading without color: a day with any usage
-/// takes at least the second glyph, so it never looks like a day without —
-/// ratatui rounds a small value down to empty — and a steady series takes
-/// a low glyph rather than the top, reading as a thin band rather than as a
-/// wall across the chart. Steady is the same value on every day with usage,
-/// and usage on at least half the days: tileset hosting at 1 a day with one
-/// day missing is steady, while a single day's spike, the same value on the
-/// only day it has, is not.
+/// Each product is to its own scale, so a series with one value — tileset
+/// hosting at 1 a day — is at its busiest every day it has usage and draws
+/// at the top glyph, which `SPARK_LEVELS` already keeps short of the row
+/// above.
+///
+/// One departure, for reading without color: a day with any usage takes at
+/// least the second glyph, so it never looks like a day without — ratatui
+/// rounds a small value down to empty.
 fn spark_levels(values: &[i64]) -> Vec<usize> {
     let top = SPARK_LEVELS.len() - 1;
     let max = values.iter().copied().max().unwrap_or(0);
-    if max <= 0 {
-        return vec![0; values.len()];
-    }
-    let used: Vec<i64> = values.iter().copied().filter(|&value| value > 0).collect();
-    let flat = used.len() * 2 >= values.len() && used.iter().all(|&value| value == max);
     values
         .iter()
         .map(|&value| match value {
             v if v <= 0 => 0,
-            _ if flat => 2,
             v => 1 + ((v as f64 / max as f64) * (top - 1) as f64).round() as usize,
         })
         .collect()
@@ -1131,16 +1125,16 @@ mod tests {
         assert!(render_text(&json, false, false, false).contains("No usage in this period."));
     }
 
+    /// Its own scale: a series with one value is at its busiest every day.
     #[test]
-    fn a_flat_nonzero_series_reads_as_steady_rather_than_idle() {
-        assert_eq!(sparkline(&[5, 5, 5]), "▃▃▃");
+    fn a_flat_nonzero_series_is_at_its_top_every_day() {
+        assert_eq!(sparkline(&[5, 5, 5]), "▇▇▇");
     }
 
-    /// One day missing doesn't turn steady usage into a wall of top bars,
-    /// and one day's usage stays a spike rather than a band.
+    /// A day without usage stays on the baseline between days at the top.
     #[test]
-    fn steady_usage_with_a_gap_is_still_a_band_and_a_lone_day_is_a_spike() {
-        assert_eq!(sparkline(&[1, 1, 1, 0, 1]), "▃▃▃▁▃");
+    fn steady_usage_with_a_gap_shows_the_gap() {
+        assert_eq!(sparkline(&[1, 1, 1, 0, 1]), "▇▇▇▁▇");
         assert_eq!(sparkline(&[0, 0, 1, 0, 0]), "▁▁▇▁▁");
     }
 

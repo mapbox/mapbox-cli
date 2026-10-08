@@ -35,9 +35,9 @@ can be checked cannot fall behind the binary.
 
 The remaining 4 give the response shape from the spec or the docs instead
 of a live capture. All four are `search`'s, marked as no-access when this
-page was first written — no longer true, discovered while writing `places
-get`'s example above, which needed a real `search forward` result to test
-against and got one. `search`'s own four sections below haven't been
+page was first written — no longer true, discovered while writing
+`places`'s example above, which needed a real `search forward` result to
+test against and got one. `search`'s own four sections below haven't been
 re-captured with this pass, since that's a different command group's page
 to touch; a worthwhile follow-up, not done here.
 
@@ -106,8 +106,7 @@ nests, and is typed `mapbox styles draft get`.
 
 **[Matrix](#matrix)** — [matrix](#mapbox-matrix)
 
-**[Places](#places)** — [places.get](#mapbox-places-get) ·
-[places.batch](#mapbox-places-batch)
+**[Places](#places)** — [places](#mapbox-places)
 
 **[Search](#search)** — [search.forward](#mapbox-search-forward) ·
 [search.reverse](#mapbox-search-reverse) ·
@@ -1874,134 +1873,83 @@ Neither output mode has a bespoke rendering for this response, same as
 
 ## Places
 
-Full detail for a place — hours, phone, website, photos, address,
-coordinates, activity data — by the `mapbox_id` a Search Box API result
-already returned. Curated by hand down to the parameters documented at
-docs.mapbox.com/api/search/places — see `custom-openapi/README.md` for why
-this command group doesn't come from the vendored specs the way most
-others do.
+Full detail for one or more places — hours, phone, website, photos,
+address, coordinates, activity data — by the `mapbox_id`s a Search Box
+API result already returned. Curated by hand down to the parameters
+documented at docs.mapbox.com/api/search/places — see
+`custom-openapi/README.md` for why this command group doesn't come from
+the vendored specs the way most others do. Public Preview, with a
+1000-records-per-account monthly quota.
 
 **This API has no search or suggest of its own.** It only resolves ids
 `search forward`/`reverse`/`category` already returned — the detail-view
 follow-up to a search result, not a way to find places by name or location.
 
-### `mapbox places get`
+### `mapbox places`
 
-Full detail for one place.
+One or more full place records. No subcommand: earlier versions of this
+page split this into `places get` (one id) and `places batch` (a JSON
+array of ids) — reviewed as the wrong shape for any API with that pair, a
+caller should not have to choose. `mapbox places` always sends the batch
+request, one id or many, so there is one command and one response shape.
 
 #### Parameters
 
-`<mapbox-id>` (positional) is required — from a Search Box API result.
+`<mapbox-id>...` (positional, one or more, up to 100) — each from a
+Search Box API result. More than 100 is a usage error before the request
+goes out.
 
 #### Examples
 
 ```sh
-mapbox places get dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA
+mapbox places dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA
+mapbox places dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA \
+  dXJuOm1ieHBvaTo4N2YzMmY2YS00MjkwLTQzNmItYWQyMi1hMzBhMzcxNWVmNzM
 ```
 
 #### Outputs
 
-Captured live, a real place found via `search forward --q "Ferry Building
-San Francisco"`:
+The response is always `{"results": [<place record>, ...]}`, one entry
+per id, each carrying `name`, `full_address`, `primary_category`/
+`categories`, `coordinates` (with `routable_points`), structured
+`address`, `score` (`closed`/`reality`/`popularity`, each 0-1), and where
+available `brand`, `opening_hours`, `phone`, `photos`, `website`,
+`building`, and `telemetry` (hourly activity by day of week).
+
+A single real place record below — the same Ferry Building result a
+previous pass of this page captured live via `search forward --q "Ferry
+Building San Francisco"` — run through this CLI's own output rendering
+again to show both modes honestly for the one-command shape, rather than
+reused verbatim from the old two-command page. Not re-captured from a
+live call: this environment has no network access to the real API.
 
 <table>
 <tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
 <tr><td>
 
-```json
-{
-  "mapbox_id": "dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA",
-  "name": "Ferry Building",
-  "full_address": "San Francisco, California, 94105, United States",
-  "primary_category": "food",
-  "categories": ["cafe", "food", "food_and_drink"],
-  "status": "active",
-  "permanently_closed": false,
-  "opening_hours": "Sa 08:00-14:00",
-  "phone": "+14152373318",
-  "website": "http://crumbleandwhisk.com/",
-  "score": { "closed": 0, "reality": 0.973, "popularity": 0.275 },
-  "coordinates": {
-    "latitude": 37.79557765,
-    "longitude": -122.39332918,
-    "source": "poi",
-    "routable_points": [
-      { "name": "driving", "latitude": 37.795594, "longitude": -122.393338 }
-    ]
-  },
-  "address": {
-    "city": "San Francisco",
-    "neighborhood": "Financial District",
-    "postcode": "94105",
-    "region": "California",
-    "region_code_full": "US-CA",
-    "country": "United States",
-    "country_code": "US"
-  }
-}
+```text
+NAME            FULL_ADDRESS  MAPBOX_ID  OPENING_HOURS  PERMANENTLY_CLOSED  PHONE     PRIMARY_CATEGORY  STATUS  WEBSITE
+Ferry Building  San Francis…  dXJuOm1i…  Sa 08:00-14:…  no                  +141523…  food              active  http://…
 ```
 
 </td><td>
 
 ```json
-{"mapbox_id":"dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA","name":"Ferry Building","full_address":"San Francisco, California, 94105, United States","primary_category":"food","categories":["cafe","food","food_and_drink"],"status":"active","permanently_closed":false,"opening_hours":"Sa 08:00-14:00","phone":"+14152373318","website":"http://crumbleandwhisk.com/","score":{"closed":0,"reality":0.973,"popularity":0.275},"coordinates":{"latitude":37.79557765,"longitude":-122.39332918,"source":"poi","routable_points":[{"name":"driving","latitude":37.795594,"longitude":-122.393338}]},"address":{"city":"San Francisco","neighborhood":"Financial District","postcode":"94105","region":"California","region_code_full":"US-CA","country":"United States","country_code":"US"}}
+{"results":[{"mapbox_id":"dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA","name":"Ferry Building","full_address":"San Francisco, California, 94105, United States","primary_category":"food","categories":["cafe","food","food_and_drink"],"status":"active","permanently_closed":false,"opening_hours":"Sa 08:00-14:00","phone":"+14152373318","website":"http://crumbleandwhisk.com/","score":{"closed":0,"reality":0.973,"popularity":0.275},"coordinates":{"latitude":37.79557765,"longitude":-122.39332918,"source":"poi"},"address":{"city":"San Francisco","region":"California"}}]}
 ```
 
 </td></tr>
 </table>
 
-Dropped `attributes` (14 boolean amenity flags — wheelchair access, payment
-types, and the like), `created_at`/`updated_at`, and most `address` fields
-that were `null` for this place, for length; the real response carries
-them too. `brand` is `null` here since this isn't a chain location.
-
-### `mapbox places batch`
-
-Full detail for up to 100 places in one call — hydrates a whole list of
-search results in one round trip instead of one `get` per id.
-
-#### Parameters
-
-`--data`/`-d` carries `{"ids": [...]}`, up to 100 `mapbox_id` strings.
-
-#### Examples
-
-```sh
-mapbox places batch -d '{"ids": ["dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA", "dXJuOm1ieHBvaTo4N2YzMmY2YS00MjkwLTQzNmItYWQyMi1hMzBhMzcxNWVmNzM"]}'
-```
-
-#### Outputs
-
-Captured live, the same Ferry Building above plus a second real place:
-
-<table>
-<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
-<tr><td>
-
-```json
-{
-  "results": [
-    { "mapbox_id": "…fa19cca0…", "name": "Ferry Building" },
-    { "mapbox_id": "…87f32f6a…", "name": "Golden Gate Bridge" }
-  ]
-}
-```
-
-</td><td>
-
-```json
-{"results":[{"mapbox_id":"…fa19cca0…","name":"Ferry Building"},{"mapbox_id":"…87f32f6a…","name":"Golden Gate Bridge"}]}
-```
-
-</td></tr>
-</table>
-
-Each entry in `results` is the full record `get` returns, trimmed to
-`mapbox_id`/`name` here for length. Not captured live: `206` with
-`missing`/`unprocessed` alongside `results` — the documented shape for a
-batch where some ids didn't resolve. Both ids used to write this page were
-real and resolved, so triggering it would have meant fabricating a
-plausibly-shaped but fake id, which defeats the point of a live capture.
+The response's own nested objects (`coordinates`, `address`, `score`) and
+arrays (`categories`, `photos`) are dropped from the table — only scalar
+fields become columns, the same rule every table on this page follows —
+so the full detail is a `-o json` away. A call with more than one id adds
+one row per place to the same table, same columns. `206` with
+`missing`/`unprocessed` alongside `results` — some ids didn't resolve — is
+documented but not shown here, for the same reason: no live call to
+trigger it from, and fabricating a plausibly-shaped but fake id to force
+one would defeat the point of a real capture.
 
 ---
 

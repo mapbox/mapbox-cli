@@ -251,11 +251,11 @@ mapbox styles <operation>
 mapbox tilesets <operation>
 ```
 
-`mapbox directions`, `mapbox isochrone`, `mapbox map-match`, and
-`mapbox matrix` are the exceptions: each API has a single operation, so
-there's a bare command with no subcommand at all, the same shape
-`mapbox usage` already has, see [docs/commands.md](./docs/commands.md)
-for their own parameters.
+`mapbox directions`, `mapbox isochrone`, `mapbox map-match`, `mapbox
+matrix`, and `mapbox places` are the exceptions: each API has a single
+exposed operation, so there's a bare command with no subcommand at all,
+the same shape `mapbox usage` already has, see
+[docs/commands.md](./docs/commands.md) for their own parameters.
 
 A command group is not the same thing as a spec file: which one an operation
 belongs to is decided per operation. So `sprites` and `tilesets` are each

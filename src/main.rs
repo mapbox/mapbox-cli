@@ -283,7 +283,11 @@ fn build_operation_command(op: &spec::Operation) -> Command {
         // `--data` rather than `--file` — `starFile`'s whole body is the word
         // `true`.
         let text_body = body.text_content_type();
-        let takes_data = body.accepts_json() || text_body.is_some();
+        // A variadic positional builds the whole body on its own — see
+        // below — so `--data` would be a second, redundant way to say the
+        // same thing, with nothing else the body ever carries.
+        let takes_data =
+            (body.accepts_json() || text_body.is_some()) && op.variadic_body_array.is_none();
         if takes_data {
             cmd = cmd.arg(
                 Arg::new("data")
@@ -343,6 +347,21 @@ fn build_operation_command(op: &spec::Operation) -> Command {
             arg = arg.value_parser(PossibleValuesParser::new(&field.enum_values));
         }
         cmd = cmd.arg(arg);
+    }
+
+    if let Some(variadic) = &op.variadic_body_array {
+        let help = variadic
+            .description
+            .as_deref()
+            .map(first_sentence)
+            .unwrap_or_default()
+            .to_string();
+        cmd = cmd.arg(
+            Arg::new(variadic.arg_name.clone())
+                .required(true)
+                .num_args(1..=variadic.max)
+                .help(help),
+        );
     }
 
     // Only where it can mean something. A `GET` has no plan worth previewing,

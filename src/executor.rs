@@ -11,7 +11,8 @@ use crate::link;
 use crate::output::{self, CliError, Mode};
 use crate::remedy::{self, Remedy};
 use crate::spec::{
-    Operation, Parameter, RequestBody, ACCOUNT_PLACEHOLDERS, MULTIPART, UNESCAPED_PATH_PARAMS,
+    Operation, Parameter, RequestBody, VariadicBodyArray, ACCOUNT_PLACEHOLDERS, MULTIPART,
+    UNESCAPED_PATH_PARAMS,
 };
 
 /// The query parameter the access token travels in, and what stands in for
@@ -212,7 +213,8 @@ fn dispatch(
         .as_ref()
         .map(|argument| argument.body.as_ref());
     let merged_body = merge_body_fields(&op.body_fields, matches, data)?;
-    let data = merged_body.as_deref().or(data);
+    let variadic_body = variadic_body_array_json(&op.variadic_body_array, matches);
+    let data = variadic_body.as_deref().or(merged_body.as_deref()).or(data);
     let files: Vec<&str> = matches
         .try_get_many::<String>("file")
         .ok()
@@ -974,6 +976,25 @@ fn read_stdin() -> Result<String> {
             CliError::new("invalid_file", message).into()
         })?;
     Ok(body)
+}
+
+/// The JSON body a [`VariadicBodyArray`] positional builds on its own
+/// — `{"<field>": [<value>, ...]}` — or `None` when the operation has none,
+/// the ordinary `--data`/body-field-flags path applies instead. `--data` is
+/// never registered for such an operation (see `main.rs`), so there is
+/// nothing to merge with here, unlike [`merge_body_fields`].
+fn variadic_body_array_json(
+    variadic: &Option<VariadicBodyArray>,
+    matches: &ArgMatches,
+) -> Option<String> {
+    let variadic = variadic.as_ref()?;
+    let values: Vec<&str> = matches
+        .get_many::<String>(&variadic.arg_name)
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .collect();
+    Some(serde_json::json!({ variadic.field.clone(): values }).to_string())
 }
 
 /// `--data` with the body-field flags set on it, or `None` if nothing was

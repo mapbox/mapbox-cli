@@ -7,69 +7,41 @@ openapi: "3.0.0"
 # Hand-authored down to the parameters documented at
 # docs.mapbox.com/api/search/places. See `custom-openapi/README.md` for
 # how a file like this is wired in.
+#
+# One command, not two: the API has a single-id GET and a batch POST, and
+# an earlier version of this file exposed both as `places get`/`places
+# batch`. Reviewed as the wrong shape for any API with that pair — a
+# caller should not have to choose between "one id" and "a JSON array of
+# ids" written by hand. `batch` is the one that survives, renamed to the
+# bare `places` command via `FLATTENED_SERVICES`, taking one or more ids
+# as positional arguments (`VARIADIC_BODY_ARRAY` in `src/spec.rs`) and
+# always using the batch endpoint — even for a single id — so there is one
+# response shape and one code path. The GET operation this used to expose
+# as `places get` is gone from here entirely, not just hidden: nothing
+# reaches it.
 info:
   title: "Mapbox Places API"
   description: >-
-    Full detail for a place — hours, phone, website, photos, address,
-    coordinates, activity data — by the `mapbox_id` a Search Box API result
-    already returned. This API has no search or suggest of its own; it only
-    resolves ids something else found.
+    Full detail for one or more places — hours, phone, website, photos,
+    address, coordinates, activity data — by the `mapbox_id`s a Search Box
+    API result already returned. This API has no search or suggest of its
+    own; it only resolves ids something else found. Public Preview, with
+    a 1000-records-per-account monthly quota.
   version: "0.0.0"
 servers:
   - url: https://api.mapbox.com
     description: Places API
 paths:
-  /places/v1/details/retrieve/{mapbox_id}:
-    get:
-      operationId: get
-      summary: Full detail for one place.
-      description: >-
-        `mapbox_id` comes from a Search Box API result (`search forward`/
-        `reverse`/`category`) — this API does not look places up by name
-        or location itself.
-      parameters:
-        - name: "mapbox_id"
-          in: path
-          required: true
-          description: "The place's Mapbox ID, from a Search Box API result."
-          schema:
-            type: string
-            minLength: 1
-        - name: "access_token"
-          in: query
-          required: true
-          description: "Mapbox API Access Token"
-          schema:
-            type: string
-            minLength: 1
-      responses:
-        "200":
-          description: >-
-            A place record: `name`, `full_address`, `primary_category`/
-            `categories`, `coordinates` (with `routable_points`),
-            structured `address`, `score` (`closed`/`reality`/
-            `popularity`, each 0-1), and where available `brand`,
-            `opening_hours`, `phone`, `photos`, `website`, `building`, and
-            `telemetry` (hourly activity by day of week).
-        "401":
-          description: Unauthorized
-        "404":
-          description: Not Found — no place with that Mapbox ID.
-        "422":
-          description: Unprocessable Entity — `mapbox_id` isn't validly formed.
-        "429":
-          description: >-
-            Too Many Requests — the per-second rate limit, or the Public
-            Preview's monthly quota (1000 records/account), was exceeded.
-
   /places/v1/details/retrieve:
     post:
       operationId: batch
-      summary: Full detail for up to 100 places in one call.
+      summary: Full detail for one or more places.
       description: >-
-        Hydrates a whole list of Search Box API results in one round trip
-        instead of one `get` per id. `--data` carries `{"ids": [...]}` —
-        up to 100 `mapbox_id` strings.
+        Each `mapbox_id` comes from a Search Box API result (`search
+        forward`/`reverse`/`category`) — this API does not look places up
+        by name or location itself. Always sends a batch request, one id
+        or many, so a single id reads the same way, no `get`/`batch`
+        choice to make. Up to 100 ids in one call.
       parameters:
         - name: "access_token"
           in: query
@@ -84,24 +56,45 @@ paths:
           application/json:
             schema:
               type: object
+              required: ["ids"]
+              properties:
+                ids:
+                  type: array
+                  description: >-
+                    One or more Mapbox IDs, from a Search Box API result,
+                    up to 100.
+                  items:
+                    type: string
+                    minLength: 1
+                  minItems: 1
+                  maxItems: 100
       responses:
         "200":
           description: >-
-            Every id resolved: `{"results": [<place record>, ...]}`, same
-            shape as `get`'s own response, one entry per id.
+            Every id resolved: `{"results": [<place record>, ...]}`, one
+            entry per id — `name`, `full_address`, `primary_category`/
+            `categories`, `coordinates` (with `routable_points`),
+            structured `address`, `score` (`closed`/`reality`/
+            `popularity`, each 0-1), and where available `brand`,
+            `opening_hours`, `phone`, `photos`, `website`, `building`, and
+            `telemetry` (hourly activity by day of week).
         "206":
           description: >-
             Partial Content — some ids didn't resolve. Same body as 200,
             plus `missing` (ids with no such place) and/or `unprocessed`
-            (ids that couldn't be processed) alongside `results`.
+            (ids that couldn't be processed) alongside `results`. Treated
+            as success, the same as 200 — a caller still gets every id
+            that did resolve, and `missing`/`unprocessed` say which ones
+            didn't rather than failing the whole request over them.
         "400":
           description: >-
             Bad Request — `ids` isn't a non-empty array of at most 100
-            entries.
+            entries. The 100 limit is also enforced client-side, before
+            the request goes out.
         "401":
           description: Unauthorized
         "429":
           description: >-
-            Too Many Requests — the per-second rate limit (batch is
-            charged by id count) or the Public Preview's monthly quota was
-            exceeded.
+            Too Many Requests — the per-second rate limit (charged by id
+            count) or the Public Preview's monthly quota (1000
+            records/account) was exceeded.

@@ -19,6 +19,10 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `--help` wraps to the terminal width (100 columns when piped), and
+  env-backed options name their variable as `[env: NAME]` without its
+  current value. Help text only; no flag or output changes.
+
 - **Breaking**: `--eta-type`, `--navigation-profile` and `--origin` removed
   from `mapbox search category`. The category endpoint does not currently
   return an ETA, so the flags were accepted but had no effect. A script

@@ -59,7 +59,7 @@ todo = "deny"
 unimplemented = "deny"
 
 [dependencies]
-clap = { version = "4", features = ["derive", "env", "string"] }
+clap = { version = "4", features = ["derive", "env", "string", "wrap_help"] }
 # Renders `mapbox completion <shell>` from the same `Command` tree everything
 # else here is built from. Kept to the default features on purpose: the
 # dynamic-completion half is `unstable-dynamic`, and value completion is out

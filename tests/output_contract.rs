@@ -363,6 +363,36 @@ fn help_is_never_wrapped() {
     assert!(text.contains("--output"), "--output should be documented");
 }
 
+/// Help used to run each option onto one line however long, so an 80-column
+/// terminal folded descriptions back to column 0. clap now wraps to the
+/// terminal, or to 100 columns when there is none, as here.
+#[test]
+fn help_lines_fit_the_wrap_width() {
+    let text = stdout(&run(&["--help"]));
+    for line in text.lines() {
+        assert!(
+            line.chars().count() <= 100,
+            "line over 100 columns: {line:?}"
+        );
+    }
+}
+
+/// An env-backed option names its variable and nothing more: an unset one
+/// used to read `[env: MAPBOX_USERNAME=]`, and a set one printed its value.
+#[test]
+fn help_names_env_variables_without_their_values() {
+    let out = command()
+        .env("MAPBOX_USERNAME", "someone-in-particular")
+        .arg("--help")
+        .output()
+        .expect("run mapbox");
+    let text = stdout(&out);
+
+    assert!(text.contains("[env: MAPBOX_USERNAME]"), "{text}");
+    assert!(!text.contains("someone-in-particular"), "{text}");
+    assert!(!text.contains("=]"), "an env note still shows `=`: {text}");
+}
+
 /// An operation that can never succeed is not in the command surface, so it
 /// answers exactly as a mistyped name does — same code, same shape, same
 /// exit. Anything else would tell a caller which scopes exist while still

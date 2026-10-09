@@ -1,6 +1,6 @@
 # Implemented commands
 
-Every command the CLI ships: five auth commands, 39 API operations (35 across 9
+Every command the CLI ships, including five auth commands, 39 API operations (35 across 9
 command groups, plus `directions`, `isochrone`, `map-match` and `matrix`), the
 tilesets-cli proxy, `completion` and `generate-skills`. Each is
 shown in both of its renderings. Which one you get is decided by `--output`, whose default
@@ -11,8 +11,8 @@ gets the right one. See
 Account names, style ids and tokens in the examples are replaced; everything
 else is as the API sent it.
 
-**35 of the 39 were run against the live API and show what came back:** 25
-on 2026-09-01, `fonts list`, `fonts upload` and `fonts delete` on
+**35 of the 39 were run against the live API and show what came back:** 24
+on 2026-09-01, `styles download` by 2026-10-01, `fonts list`, `fonts upload` and `fonts delete` on
 2026-09-08, once `fonts:list`/`fonts:write` became registrable,
 `directions`, `isochrone` and `map-match` on 2026-09-23, `matrix`,
 `feedback list` and `feedback get` on 2026-09-24, and `feedback create` on
@@ -121,6 +121,7 @@ nests, and is typed `mapbox styles draft get`.
 [styles.get](#mapbox-styles-get) · [styles.create](#mapbox-styles-create) ·
 [styles.update](#mapbox-styles-update) ·
 [styles.delete](#mapbox-styles-delete) ·
+[styles.download](#mapbox-styles-download) ·
 [styles.draft.get](#mapbox-styles-draft-get) ·
 [styles.draft.update](#mapbox-styles-draft-update) ·
 [styles.draft.delete](#mapbox-styles-draft-delete)
@@ -674,8 +675,8 @@ properties directly. A conforming response never reaches that case:
 `geocoder` requires `name`/`feature_type` on every feature, `tilesets query`
 requires `tilequery.layer`.
 
-Two of the nine command groups can answer with bytes — `static` and
-`tilesets`. Those bypass `--output` in both modes:
+Three of the nine command groups can answer with bytes — `static`,
+`styles` (`download`) and `tilesets`. Those bypass `--output` in both modes:
 
 <table>
 <tr><th width="50%">Terminal — refuses</th><th width="50%">Redirected — raw bytes</th></tr>
@@ -1600,7 +1601,7 @@ mapbox isochrone mapbox/walking "-122.42,37.78" --contours-minutes 5,10 --polygo
 Captured live against `mapbox/walking`, two 5- and 10-minute contours as
 polygons. This response is a real GeoJSON `FeatureCollection`, unlike
 `mapbox directions`'s response, but isochrone isn't one of the three
-services (`search`, `geocoder`, `tilequery`) this CLI has a bespoke
+services (`search`, `geocoder`, `tilesets`) this CLI has a bespoke
 list-per-feature rendering for yet (`output/render.rs`'s `list_rendering` is an
 exact service allow-list, not a "looks like GeoJSON" test), so both output
 modes print the same JSON, `-o text` pretty-printed and `-o json` on one

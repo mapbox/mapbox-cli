@@ -19,7 +19,7 @@ use super::style;
 ///
 /// The names are `Operation::service`, which is the command group, not the
 /// spec file: `tilesets query` comes from the tilequery spec but answers as
-/// `tilesets`. An arm still named `tilequery` after #116 moved the command
+/// `tilesets`. An arm still named `tilequery` after the 0.2.0 rename moved the command
 /// silently dropped its list for every release since; see
 /// `every_listed_service_is_a_real_command_group`. `tilesets`'s other
 /// commands answer with tile bytes, which never reach here.
@@ -1785,7 +1785,7 @@ mod tests {
 
     /// The match is on a string, so a command group renamed or merged in the
     /// specs leaves its arm unreachable without a warning — the tests above
-    /// pass that string straight in and keep passing. #116 moved
+    /// pass that string straight in and keep passing. The 0.2.0 rename moved
     /// `tilequery get` to `tilesets query` exactly that way. Checking each
     /// name against the bundled specs is what ties the arm to a real command.
     #[test]

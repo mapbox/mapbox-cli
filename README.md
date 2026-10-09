@@ -453,12 +453,11 @@ and `--dry-run` show it alongside everything else on the request.
 
 ### The CLI's own requests
 
-Requests the CLI makes for itself rather than for your commands use a public
-token rather than your `--token`, `MAPBOX_ACCESS_TOKEN` or login. When you are
-logged in, that is your account's default public token: the CLI fetches it
-once, keeps it with your login, and fetches it again if you rotate it.
-Otherwise `MAPBOX_CLI_TOKEN` sets it, and takes precedence over any token
-built into the binary.
+Requests the CLI makes for itself rather than for your commands use your own
+token whenever you have one: `--token` or `MAPBOX_ACCESS_TOKEN`, then your
+account's default public token, which the CLI fetches with your login, keeps
+beside it, and fetches again if you rotate it. Only when you have none does
+it use the CLI's token: `MAPBOX_CLI_TOKEN`, or one built into the binary.
 
 ### Proxies
 

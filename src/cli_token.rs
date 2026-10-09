@@ -1,24 +1,28 @@
 //! Requests the CLI makes for itself rather than for the user, and the token
 //! they carry.
 //!
-//! A user's `--token` and `MAPBOX_ACCESS_TOKEN` are scoped to the command they
-//! were given for, and the OAuth token from `mapbox auth login` carries write
-//! scopes, so a background request sends none of them. It sends a public
-//! token, tried highest first:
+//! The user's own token always comes first. The CLI's token exists only as
+//! the fallback for someone who has none, so it is never sent while the user
+//! has one that works. Tried highest first:
 //!
-//! 1. The account's default public token, kept with the stored login. When
+//! 1. `--token` or `MAPBOX_ACCESS_TOKEN`, ranked the way a command ranks them
+//!    (see [`user_token`]).
+//! 2. The account's default public token, kept with the stored login. When
 //!    there is none yet, or the API rejects it because the user rotated or
 //!    deleted it, a new one is fetched with the login's OAuth token and saved.
-//!    That OAuth token is only read, never refreshed: a refresh takes the
-//!    credentials lock and spends a single-use refresh token, and a request
-//!    nobody is waiting for must not be the reason the next command's login
-//!    is gone. An expired login just skips this step.
-//! 2. `MAPBOX_CLI_TOKEN` at run time, for someone who is not logged in, such
-//!    as a developer pointing at staging with a staging token.
-//! 3. The token compiled in from `MAPBOX_CLI_BUNDLED_TOKEN` at build time, so
-//!    someone who never logged in still has one. A plain `cargo build` has
-//!    none. It is a different variable from the run-time one so that a token
-//!    exported in a dev shell is not baked into every local build.
+//!    Preferred over the OAuth token itself, which carries write scopes and
+//!    expires.
+//! 3. The login's OAuth token, when the default public token could not be had.
+//!    It is only read, never refreshed: a refresh takes the credentials lock
+//!    and spends a single-use refresh token, and a request nobody is waiting
+//!    for must not be the reason the next command's login is gone. An expired
+//!    login skips this step and the one above.
+//! 4. `MAPBOX_CLI_TOKEN` at run time, the CLI's token for someone with none
+//!    of their own, such as a developer pointing at staging.
+//! 5. The token compiled in from `MAPBOX_CLI_BUNDLED_TOKEN` at build time. A
+//!    plain `cargo build` has none. It is a different variable from the
+//!    run-time one so that a token exported in a dev shell is not baked into
+//!    every local build.
 //!
 //! A `401` moves on to the next token; any other answer is the caller's.
 //! Callers never see the token, so every one of them gets the same fallback
@@ -43,7 +47,20 @@ const EXPIRY_MARGIN_SECS: u64 = 60;
 /// Lists an account's tokens; `?default=true` narrows it to the default one.
 const TOKENS_ENDPOINT: &str = "https://api.mapbox.com/tokens/v2";
 
-/// Sends `request` with the CLI's token attached as `access_token`, trying the
+/// The token the user gave this run, ranked as a command ranks it: with
+/// `--use-login` only a typed `--token` counts, otherwise `MAPBOX_ACCESS_TOKEN`
+/// does too. Resolved by the caller, which has the arguments, and handed to
+/// [`send`].
+#[allow(dead_code)]
+pub(crate) fn user_token(matches: &clap::ArgMatches) -> Option<String> {
+    if matches.get_flag("use-login") {
+        auth::typed_token(matches)
+    } else {
+        matches.get_one::<String>("token").cloned()
+    }
+}
+
+/// Sends `request` with a token attached as `access_token`, trying the
 /// next token whenever the API answers `401`.
 ///
 /// `request` is called once per attempt, since a sent request cannot be
@@ -53,6 +70,7 @@ const TOKENS_ENDPOINT: &str = "https://api.mapbox.com/tokens/v2";
 // The first caller is telemetry delivery, which lands separately.
 #[allow(dead_code)]
 pub(crate) fn send(
+    user_token: Option<&str>,
     profile: Option<&str>,
     request: impl Fn() -> RequestBuilder,
 ) -> Option<Response> {
@@ -61,6 +79,7 @@ pub(crate) fn send(
     let creds = auth::load_credentials_readonly(profile);
     let override_token = std::env::var("MAPBOX_CLI_TOKEN").ok();
     let sources = Sources {
+        user: user_token,
         stored: creds
             .as_ref()
             .and_then(|c| c.default_public_token.as_deref()),
@@ -85,13 +104,14 @@ pub(crate) fn send(
 }
 
 struct Sources<'a> {
+    user: Option<&'a str>,
     stored: Option<&'a str>,
     login: Option<Login>,
     override_token: Option<&'a str>,
     bundled: Option<&'a str>,
 }
 
-/// A stored OAuth login that is still good for long enough to fetch with.
+/// A stored OAuth login that is still good for long enough to use.
 #[derive(Debug, PartialEq, Eq)]
 struct Login {
     access_token: String,
@@ -122,8 +142,8 @@ impl Login {
 /// The order and the fallback, with fetching and sending passed in so each
 /// path can be tested without the network or the disk.
 ///
-/// The fetch runs only once the stored token is missing or rejected, and a
-/// token that was already rejected is not tried again. A failed send stops
+/// The fetch runs only once every token above it is missing or rejected, and
+/// a token that was already rejected is not tried again. A failed send stops
 /// here: no other token fixes a request that never arrived.
 fn resolve<R>(
     sources: Sources<'_>,
@@ -132,8 +152,10 @@ fn resolve<R>(
     rejected: impl Fn(&R) -> bool,
 ) -> Option<R> {
     enum Stage {
+        User,
         Stored,
         Fetched,
+        Login,
         Override,
         Bundled,
     }
@@ -141,14 +163,18 @@ fn resolve<R>(
     let mut tried: Vec<String> = Vec::new();
     let mut last = None;
     for stage in [
+        Stage::User,
         Stage::Stored,
         Stage::Fetched,
+        Stage::Login,
         Stage::Override,
         Stage::Bundled,
     ] {
         let token = match stage {
+            Stage::User => usable(sources.user).map(str::to_owned),
             Stage::Stored => usable(sources.stored).map(str::to_owned),
             Stage::Fetched => sources.login.as_ref().and_then(&mut fetch),
+            Stage::Login => sources.login.as_ref().map(|l| l.access_token.clone()),
             Stage::Override => usable(sources.override_token).map(str::to_owned),
             Stage::Bundled => usable(sources.bundled).map(str::to_owned),
         };
@@ -270,6 +296,7 @@ mod tests {
         bundled: Option<&'a str>,
     ) -> Sources<'a> {
         Sources {
+            user: None,
             stored,
             login,
             override_token,
@@ -335,14 +362,59 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_fetch_falls_through_to_the_override() {
+    fn a_failed_fetch_falls_back_to_the_oauth_token() {
+        let (answer, sent, _) = run(
+            sources(Some("pk.revoked"), Some(login()), Some("pk.override"), None),
+            None,
+            &["sk.oauth"],
+        );
+        assert_eq!(answer, Some(200));
+        assert_eq!(sent, ["pk.revoked", "sk.oauth"]);
+    }
+
+    #[test]
+    fn the_clis_token_is_sent_only_once_every_user_token_is_rejected() {
         let (answer, sent, _) = run(
             sources(Some("pk.revoked"), Some(login()), Some("pk.override"), None),
             None,
             &["pk.override"],
         );
         assert_eq!(answer, Some(200));
-        assert_eq!(sent, ["pk.revoked", "pk.override"]);
+        assert_eq!(sent, ["pk.revoked", "sk.oauth", "pk.override"]);
+    }
+
+    #[test]
+    fn a_users_own_token_comes_first() {
+        let (answer, sent, fetches) = run(
+            Sources {
+                user: Some("pk.typed"),
+                ..sources(
+                    Some("pk.stored"),
+                    Some(login()),
+                    Some("pk.override"),
+                    Some("pk.bundled"),
+                )
+            },
+            Some("pk.fresh"),
+            &["pk.typed", "pk.stored"],
+        );
+        assert_eq!(answer, Some(200));
+        assert_eq!(sent, ["pk.typed"]);
+        assert_eq!(fetches, 0);
+    }
+
+    #[test]
+    fn a_rejected_user_token_falls_through_to_the_login() {
+        let (answer, sent, _) = run(
+            Sources {
+                user: Some("pk.typed"),
+                ..sources(Some("pk.stored"), Some(login()), None, None)
+            },
+            None,
+            &["pk.stored"],
+        );
+        assert_eq!(answer, Some(200));
+        assert_eq!(sent, ["pk.typed", "pk.stored"]);
     }
 
     #[test]
@@ -355,7 +427,7 @@ mod tests {
             &["pk.bundled"],
         );
         assert_eq!(answer, Some(200));
-        assert_eq!(sent, ["pk.same", "pk.bundled"]);
+        assert_eq!(sent, ["pk.same", "sk.oauth", "pk.bundled"]);
     }
 
     #[test]
@@ -463,6 +535,44 @@ mod tests {
             let c = creds(oauth_token(r#"{"u":"someone"}"#), Some(account));
             assert_eq!(Login::from_credentials(&c, NOW), None, "{account:?}");
         }
+    }
+
+    fn user_token_for(args: &[&str]) -> Option<String> {
+        let matches = crate::build_app(&[])
+            .try_get_matches_from(args)
+            .expect("arguments parse");
+        user_token(&matches)
+    }
+
+    // The `MAPBOX_ACCESS_TOKEN` half is not covered here: setting it would
+    // race every other test in this process that reads the environment.
+    #[test]
+    fn a_typed_token_is_the_users_with_or_without_use_login() {
+        for args in [
+            &["mapbox", "--token", "pk.typed", "auth", "whoami"][..],
+            &[
+                "mapbox",
+                "--use-login",
+                "--token",
+                "pk.typed",
+                "auth",
+                "whoami",
+            ][..],
+        ] {
+            assert_eq!(
+                user_token_for(args).as_deref(),
+                Some("pk.typed"),
+                "{args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn use_login_without_a_typed_token_leaves_the_user_none() {
+        assert_eq!(
+            user_token_for(&["mapbox", "--use-login", "auth", "whoami"]),
+            None
+        );
     }
 
     /// A loopback server answering one request; returns the request head it

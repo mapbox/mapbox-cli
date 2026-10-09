@@ -94,26 +94,6 @@ const BODY_FIELD_FLAGS: &[(&str, &str, &[BodyField])] = &[(
     ],
 )];
 
-/// A service with exactly one exposed operation, typed with no subcommand
-/// at all — `mapbox places <args>`, not `mapbox places batch <args>`.
-///
-/// Every other multi-operation service needs `<service> <operation>` to say
-/// which of several things to do; a one-operation service has nothing to
-/// disambiguate, and naming the single operation anyway is a word the
-/// caller has to know and type for no information it carries. `mapbox
-/// usage` already has this shape, hand-written outside the generic
-/// pipeline because it predates this table.
-///
-/// `build_service_command` and `run`'s dispatch in `main.rs` are the two
-/// places this changes anything: attaching the operation directly onto the
-/// service-level `Command` instead of as a subcommand, and skipping the
-/// subcommand walk that would otherwise expect one. Every other reader of a
-/// command's identity — `--schema`, `docs/commands.md`,
-/// `generate-skills`, this file's own `command()` above — reads a
-/// `FLATTENED_SERVICES` service correctly for free, because they all go
-/// through `command()` rather than reconstructing the string themselves.
-pub const FLATTENED_SERVICES: &[&str] = &["places"];
-
 /// (service, operationId, body field name, CLI positional name, max count)
 /// for an operation whose JSON body takes a single array field, exposed as
 /// one or more positional arguments collected into it instead of `--data`.
@@ -173,7 +153,7 @@ fn variadic_body_array_parameter(
         field: field.to_string(),
         arg_name: arg_name.to_string(),
         max,
-        description: description.map(|text| format!("{text} Up to {max}.")),
+        description,
     })
 }
 
@@ -258,7 +238,8 @@ fn arg_name_override(service_name: &str, param_name: &str) -> Option<&'static st
 /// `generate-skills`, this file's own `command()` above — reads a
 /// [`FLATTENED_SERVICES`] service correctly for free, because they all go
 /// through `command()` rather than reconstructing the string themselves.
-pub const FLATTENED_SERVICES: &[&str] = &["directions", "isochrone", "map-match", "matrix"];
+pub const FLATTENED_SERVICES: &[&str] =
+    &["directions", "isochrone", "map-match", "matrix", "places"];
 
 /// (service, path parameter name) pairs whose value is trusted to reach the
 /// URL unescaped, because every legitimate value already contains a
@@ -2037,10 +2018,7 @@ requestBody:
         assert_eq!(variadic.field, "ids");
         assert_eq!(variadic.arg_name, "mapbox-id");
         assert_eq!(variadic.max, 100);
-        assert_eq!(
-            variadic.description.as_deref(),
-            Some("One or more ids. Up to 100.")
-        );
+        assert_eq!(variadic.description.as_deref(), Some("One or more ids."));
 
         assert!(variadic_body_array_parameter(&op, &op, "names", "name", 100).is_err());
         assert!(variadic_body_array_parameter(&op, &op, "missing", "x", 100).is_err());

@@ -365,25 +365,28 @@ fn dispatch(
 
     match as_text {
         Some(text) => match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(json) => match matches.get_one::<String>(output::FILTER_ARG) {
-                Some(wanted) => output::emit_value(
-                    mode,
-                    &output::pick_row(&json, wanted)
-                        .map_err(|err| with_page_context(err, next_page.as_ref()))?,
-                    None,
-                    Some(&op.service),
-                    // The wanted row is already in hand, so no need for a
-                    // pagination tip about the other rows.
-                    None,
-                )?,
-                None => output::emit_value(
-                    mode,
-                    &json,
-                    detail_hint(op).as_deref(),
-                    Some(&op.service),
-                    next_page.as_ref().map(NextPage::tip).as_deref(),
-                )?,
-            },
+            Ok(json) => {
+                no_place_resolved(op, &json)?;
+                match matches.get_one::<String>(output::FILTER_ARG) {
+                    Some(wanted) => output::emit_value(
+                        mode,
+                        &output::pick_row(&json, wanted)
+                            .map_err(|err| with_page_context(err, next_page.as_ref()))?,
+                        None,
+                        Some(&op.service),
+                        // The wanted row is already in hand, so no need for a
+                        // pagination tip about the other rows.
+                        None,
+                    )?,
+                    None => output::emit_value(
+                        mode,
+                        &json,
+                        detail_hint(op).as_deref(),
+                        Some(&op.service),
+                        next_page.as_ref().map(NextPage::tip).as_deref(),
+                    )?,
+                }
+            }
             Err(_) => output::emit_text_body(mode, &text)?,
         },
         // Bytes bypass the output contract entirely. A PNG can't be
@@ -1224,6 +1227,40 @@ fn part_media_type(path: &str) -> &'static str {
     }
 }
 
+/// `mapbox places`'s 200/206 is "success" at the HTTP level even when not
+/// one id resolved — `results` empty, every id in `missing`/`unprocessed`.
+/// The old `places get` answered that case with a 404; exiting 0 here with
+/// nothing on stderr would be a silent regression from that, since a script
+/// or agent checking the exit code would read "fetched zero records" the
+/// same as "fetched the one record asked for". Partial success (some ids
+/// resolved, some didn't) still exits 0 — the caller got something real.
+fn no_place_resolved(op: &Operation, json: &serde_json::Value) -> Result<()> {
+    if op.service != "places" {
+        return Ok(());
+    }
+    let Some(results) = json["results"].as_array() else {
+        return Ok(());
+    };
+    if !results.is_empty() {
+        return Ok(());
+    }
+    let unresolved: Vec<&str> = ["missing", "unprocessed"]
+        .into_iter()
+        .filter_map(|key| json[key].as_array())
+        .flatten()
+        .filter_map(|id| id.as_str())
+        .collect();
+    if !unresolved.is_empty() {
+        output::progress(&format!("No id resolved: {}", unresolved.join(", ")));
+    }
+    Err(CliError::new(
+        "no_results",
+        "No id resolved. See the ids above, or re-check them against a Search Box result."
+            .to_string(),
+    )
+    .into())
+}
+
 /// What to say when a successful response carries no body.
 ///
 /// The HTTP method is all we have to go on: generated commands share one
@@ -1552,10 +1589,10 @@ mod tests {
     use super::{
         binary_notice, binary_notice_enabled, describe_body, empty_success_line,
         extra_query_from_env, file_name_of, is_binary_content_type, merge_body_fields,
-        part_media_type, path_segment, path_segment_for, payload_of, query_pairs, redacted_url,
-        request_id, resolve_body_source, resolve_data, shell_value, substitute_path_param,
-        with_page_context, BodySource, NextPage, ResponseHeaders, ACCESS_TOKEN, EXTRA_QUERY_ENV,
-        REQUEST_ID_HEADERS,
+        no_place_resolved, part_media_type, path_segment, path_segment_for, payload_of,
+        query_pairs, redacted_url, request_id, resolve_body_source, resolve_data, shell_value,
+        substitute_path_param, with_page_context, BodySource, NextPage, ResponseHeaders,
+        ACCESS_TOKEN, EXTRA_QUERY_ENV, REQUEST_ID_HEADERS,
     };
     use std::borrow::Cow;
 
@@ -2781,5 +2818,54 @@ mod tests {
         let safe =
             path_segment_for("styles", &style_id, "../../tokens/v2/victim").expect("encoded");
         assert_eq!(safe, "..%2F..%2Ftokens%2Fv2%2Fvictim");
+    }
+
+    fn places_operation() -> crate::spec::Operation {
+        crate::spec::effective_services()
+            .expect("the bundled specs parse")
+            .into_iter()
+            .find(|svc| svc.name == "places")
+            .expect("places is a real service")
+            .operations
+            .into_iter()
+            .next()
+            .expect("places has its one operation")
+    }
+
+    /// Some ids missing is a real, partial success — the caller gets every
+    /// id that did resolve, so this must not refuse.
+    #[test]
+    fn a_partial_batch_with_some_results_is_not_refused() {
+        let op = places_operation();
+        let json = serde_json::json!({"results": [{"mapbox_id": "a"}], "missing": ["b"]});
+        assert!(no_place_resolved(&op, &json).is_ok());
+    }
+
+    /// Every id missing is the old `places get`'s 404 in different clothes —
+    /// exiting 0 here would be a silent regression from that.
+    #[test]
+    fn a_batch_with_no_results_at_all_is_refused() {
+        let op = places_operation();
+        let json = serde_json::json!({"results": [], "missing": ["a", "b"]});
+        let err = refusal(no_place_resolved(&op, &json).unwrap_err());
+        assert_eq!(err.code, "no_results");
+    }
+
+    /// Not just places' own shape of "nothing resolved" — a response this
+    /// check doesn't recognize at all must not be mistaken for one.
+    #[test]
+    fn a_response_with_no_results_field_is_not_refused() {
+        let op = places_operation();
+        assert!(no_place_resolved(&op, &serde_json::json!({"ok": true})).is_ok());
+    }
+
+    /// The whole check is places-specific: another service's response
+    /// might coincidentally have an empty `results` array and mean nothing
+    /// by it.
+    #[test]
+    fn another_service_with_an_empty_results_array_is_not_refused() {
+        let mut op = places_operation();
+        op.service = "search".to_string();
+        assert!(no_place_resolved(&op, &serde_json::json!({"results": []})).is_ok());
     }
 }

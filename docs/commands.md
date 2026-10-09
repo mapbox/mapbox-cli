@@ -462,11 +462,11 @@ No stored profiles. Run `mapbox auth login` to create one.
 
 ## API command groups
 
-35 operations across 9 command groups, plus four single-operation commands
-with no group: `directions`, `isochrone`, `map-match` and `matrix`. Seven
-groups are generated from the OpenAPI specs vendored in `openapi/`; `search`,
-`feedback` and the four single commands are the exceptions — hand-authored
-specs versioned in this repo's own `custom-openapi/`, see
+35 operations across 9 command groups, plus five single-operation commands
+with no group: `directions`, `isochrone`, `map-match`, `matrix` and `places`.
+Seven groups are generated from the OpenAPI specs vendored in `openapi/`;
+`search`, `feedback` and the five single commands are the exceptions —
+hand-authored specs versioned in this repo's own `custom-openapi/`, see
 `custom-openapi/README.md`.
 
 **A command group is not a spec file.** Which command group an operation belongs to is
@@ -490,7 +490,7 @@ moved to `tilesets` or `static`.
 | [`styles`](#styles) | **9** |
 | [`tilesets`](#tilesets) | **3** |
 
-The [Contents](#contents) list above names every one of the 39.
+The [Contents](#contents) list above names every one of the 40.
 
 **Everything else the Mapbox specs describe is not here at all.** Not
 hidden, not shipped as a command that refuses: absent from the spec content
@@ -598,8 +598,8 @@ Three things worth knowing about the read forms:
 
 A command that changes something takes `--dry-run`, which prints the request
 it would send, on stdout, and sends nothing. Which commands those are is not
-a list anyone keeps: it is every `POST`, `PUT`, `PATCH` and `DELETE` — 13 of
-the 39 operations — plus `auth login`, `auth logout`, `auth refresh` and
+a list anyone keeps: it is every `POST`, `PUT`, `PATCH` and `DELETE` — 14 of
+the 40 operations — plus `auth login`, `auth logout`, `auth refresh` and
 `generate-skills`. A read-only `GET` does not take it, so `mapbox styles
 list --dry-run` is a usage error rather than a no-op. It rehearses
 rather than describes: `--data` is parsed and every `--file` is read, so a
@@ -1887,11 +1887,10 @@ follow-up to a search result, not a way to find places by name or location.
 
 ### `mapbox places`
 
-One or more full place records. No subcommand: earlier versions of this
-page split this into `places get` (one id) and `places batch` (a JSON
-array of ids) — reviewed as the wrong shape for any API with that pair, a
-caller should not have to choose. `mapbox places` always sends the batch
-request, one id or many, so there is one command and one response shape.
+One or more full place records. No subcommand: the API has a single-id
+GET and a batch POST of the same thing, and `mapbox places` always sends
+the batch request, one id or many, so there is one command and one
+response shape whether given a single id or several.
 
 #### Parameters
 
@@ -1904,7 +1903,7 @@ goes out.
 ```sh
 mapbox places dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA
 mapbox places dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA \
-  dXJuOm1ieHBvaTo4N2YzMmY2YS00MjkwLTQzNmItYWQyMi1hMzBhMzcxNWVmNzM
+  dXJuOm1ieHBvaTo1NTM4ZTE2OC0yMDM1LTRjODItODBkOC01NjY2YWM0MzhkYmE
 ```
 
 #### Outputs
@@ -1916,40 +1915,90 @@ per id, each carrying `name`, `full_address`, `primary_category`/
 available `brand`, `opening_hours`, `phone`, `photos`, `website`,
 `building`, and `telemetry` (hourly activity by day of week).
 
-A single real place record below — the same Ferry Building result a
-previous pass of this page captured live via `search forward --q "Ferry
-Building San Francisco"` — run through this CLI's own output rendering
-again to show both modes honestly for the one-command shape, rather than
-reused verbatim from the old two-command page. Not re-captured from a
-live call: this environment has no network access to the real API.
+Captured live, a real place found via `search forward --q "Ferry Building
+San Francisco"`:
 
 <table>
 <tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
 <tr><td>
 
 ```text
-NAME            FULL_ADDRESS  MAPBOX_ID  OPENING_HOURS  PERMANENTLY_CLOSED  PHONE     PRIMARY_CATEGORY  STATUS  WEBSITE
-Ferry Building  San Francis…  dXJuOm1i…  Sa 08:00-14:…  no                  +141523…  food              active  http://…
+NAME            BRAND  CREATED_AT  FULL_ADDRESS  MAPBOX_ID  OPENING_HOURS  PERMANENTLY_CLOSED  PHONE     PRIMARY_CATEGORY  STATUS  UPDATED_AT  WEBSITE
+Ferry Building  -      2026-07-0…  San Francis…  dXJuOm1i…  Sa 08:00-14:…  no                  +141523…  food              active  2026-10-0…  http://…
 ```
 
 </td><td>
 
 ```json
-{"results":[{"mapbox_id":"dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA","name":"Ferry Building","full_address":"San Francisco, California, 94105, United States","primary_category":"food","categories":["cafe","food","food_and_drink"],"status":"active","permanently_closed":false,"opening_hours":"Sa 08:00-14:00","phone":"+14152373318","website":"http://crumbleandwhisk.com/","score":{"closed":0,"reality":0.973,"popularity":0.275},"coordinates":{"latitude":37.79557765,"longitude":-122.39332918,"source":"poi"},"address":{"city":"San Francisco","region":"California"}}]}
+{"results":[{"address":{"city":"San Francisco","neighborhood":"Financial District","postcode":"94105","region":"California","region_code_full":"US-CA","country":"United States","country_code":"US"},"attributes":{"accommodation_wheelchair_accessible_entrance":true,"offering_coffee":true,"offering_dessert":true,"offering_lunch":true,"service_dine_in":true,"service_takeout":true},"brand":null,"categories":["cafe","food","food_and_drink"],"coordinates":{"latitude":37.79557765,"longitude":-122.39332918,"source":"poi","routable_points":[{"name":"driving","latitude":37.79559358806043,"longitude":-122.39333830635825}]},"created_at":"2026-07-02T02:56:22.965","full_address":"San Francisco, California, 94105, United States","mapbox_id":"dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA","name":"Ferry Building","opening_hours":"Sa 08:00-14:00","permanently_closed":false,"phone":"+14152373318","primary_category":"food","score":{"closed":0,"reality":0.973,"popularity":0.275},"status":"active","updated_at":"2026-10-06T04:01:42.871","website":"http://crumbleandwhisk.com/"}]}
 ```
 
 </td></tr>
 </table>
 
-The response's own nested objects (`coordinates`, `address`, `score`) and
-arrays (`categories`, `photos`) are dropped from the table — only scalar
-fields become columns, the same rule every table on this page follows —
-so the full detail is a `-o json` away. A call with more than one id adds
-one row per place to the same table, same columns. `206` with
-`missing`/`unprocessed` alongside `results` — some ids didn't resolve — is
-documented but not shown here, for the same reason: no live call to
-trigger it from, and fabricating a plausibly-shaped but fake id to force
-one would defeat the point of a real capture.
+Dropped most of `attributes` (14+ boolean amenity flags — wheelchair
+access, payment types, and the like) for length; the real response
+carries them all. `brand` is `null` here since this isn't a chain
+location.
+
+A second id adds a second row to the same table — captured live by
+pairing the Ferry Building id above with a real Starbucks location
+(`search forward --q "Starbucks" --proximity …`):
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```text
+NAME            BRAND     FULL_ADDRESS  MAPBOX_ID  OPENING_HOURS  PHONE     PRIMARY_CATEGORY  WEBSITE
+Ferry Building  -         San Francis…  dXJuOm1i…  Sa 08:00-14:…  +141523…  food              http://…
+Starbucks       Starbuc…  7 Drumm Str…  dXJuOm1i…  Mo 05:30-13:…  +134138…  teahouse          https:/…
+```
+
+</td><td>
+
+```json
+{"results":[{"mapbox_id":"dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA","name":"Ferry Building","brand":null,"full_address":"San Francisco, California, 94105, United States","primary_category":"food","status":"active","opening_hours":"Sa 08:00-14:00","phone":"+14152373318","website":"http://crumbleandwhisk.com/"},{"mapbox_id":"dXJuOm1ieHBvaTo1NTM4ZTE2OC0yMDM1LTRjODItODBkOC01NjY2YWM0MzhkYmE","name":"Starbucks","brand":"Starbucks","full_address":"7 Drumm Street, San Francisco, California 94111, United States","primary_category":"teahouse","status":"active","opening_hours":"Mo 05:30-13:00; Tu 05:30-13:00; We 05:30-13:00; Th 05:30-13:00; Fr 05:30-13:00","phone":"+13413880001","website":"https://www.starbucks.com/store-locator/store/1013857/"}]}
+```
+
+</td></tr>
+</table>
+
+The response's own nested objects (`coordinates`, `address`, `score`,
+`attributes`) and arrays (`categories`, `photos`) are dropped from the
+table — only scalar fields become columns, the same rule every table on
+this page follows — so the full detail is a `-o json` away. `CREATED_AT`,
+`PERMANENTLY_CLOSED`, `STATUS` and `UPDATED_AT` drop out of the two-row
+table above for a different reason: every row shares the same value for
+each (this dataset's own coincidence, not something the API promises),
+and a column that doesn't vary across rows is dropped as uninformative —
+the same "varying" rule the rest of this page's tables follow.
+
+`206` with `missing` and/or `unprocessed` alongside `results` — some ids
+didn't resolve — is still exit 0: the caller got every id that did
+resolve. Captured live by pairing the Ferry Building id above with a
+well-formed id that doesn't exist:
+
+```json
+{"missing":["dXJuOm1ieHBvaTo2NTNkZjMzMS0zNTA2LTQ1MGEtYjg2Yi0wODY0ZmQ2NDRiYzA"],"results":[{"mapbox_id":"dXJuOm1ieHBvaTpmYTE5Y2NhMC0yZmQ3LTQwMzgtYTEzNy02MzFmNGEwZDI5ODA","name":"Ferry Building","full_address":"San Francisco, California, 94105, United States","primary_category":"food","status":"active","opening_hours":"Sa 08:00-14:00","phone":"+14152373318","website":"http://crumbleandwhisk.com/"}]}
+```
+
+Two keys at the top level here, not one, so `-o text` skips the usual
+one-key-object-to-table unwrap and falls back to pretty-printed JSON —
+the same response, read either way.
+
+When *no* id resolves at all, the CLI exits non-zero instead of reporting
+success with an empty `results` — the old `places get` answered that case
+with a 404, and a silent exit 0 here would be a regression from that. The
+ids that didn't resolve are printed to stderr:
+
+```console
+$ mapbox places dXJuOm1ieHBvaTo2NTNkZjMzMS0zNTA2LTQ1MGEtYjg2Yi0wODY0ZmQ2NDRiYzA
+No id resolved: dXJuOm1ieHBvaTo2NTNkZjMzMS0zNTA2LTQ1MGEtYjg2Yi0wODY0ZmQ2NDRiYzA
+Error: No id resolved. See the ids above, or re-check them against a Search Box result.
+$ echo $?
+1
+```
 
 ---
 

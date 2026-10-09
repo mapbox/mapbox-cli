@@ -16,6 +16,7 @@ mod agent_skills;
 #[cfg(test)]
 mod api_command_surface;
 mod auth;
+mod cli_token;
 mod completion;
 mod config;
 mod confirm;

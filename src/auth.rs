@@ -479,8 +479,9 @@ fn credentials_path_readonly(profile: Option<&str>) -> Option<PathBuf> {
 /// directory as a side effect of reading it — see
 /// [`credentials_path_readonly`]. What [`profiles`] reads each stored
 /// profile through, since listing what exists must not be the reason a
-/// directory starts to exist or its permissions change.
-fn load_credentials_readonly(profile: Option<&str>) -> Option<Credentials> {
+/// directory starts to exist or its permissions change, and what
+/// [`crate::cli_token`] reads the login through for the same reason.
+pub(crate) fn load_credentials_readonly(profile: Option<&str>) -> Option<Credentials> {
     let data = std::fs::read_to_string(credentials_path_readonly(profile)?).ok()?;
     serde_json::from_str(&data).ok()
 }

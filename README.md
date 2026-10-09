@@ -451,6 +451,12 @@ process sends, in the same `k1=v1&k2=v2` shape as a URL's own query string —
 for an API parameter this CLI's specs don't declare a flag for. `--debug`
 and `--dry-run` show it alongside everything else on the request.
 
+### The CLI's own requests
+
+`MAPBOX_CLI_TOKEN` sets the token the CLI uses for requests it makes on its
+own behalf, not for your commands. It overrides your login and the built-in
+token.
+
 ### Proxies
 
 `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` are all honored, so

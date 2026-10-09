@@ -47,8 +47,8 @@ that may never merge. They are not releases and are not listed here.
   way off wins.
 
 - Top-level `mapbox --help` lists commands in groups (Maps and data,
-  Search, Account, Coding agents, CLI), each with a line saying what it
-  does rather than which API it wraps, and the global options under
+  Search, Navigation, Account, Coding agents, CLI), each with a line saying
+  what it does rather than which API it wraps, and the global options under
   Authentication, Output and Behavior, wrapped to the terminal. At a
   terminal, help — top-level or a command's — opens with the
   `mapbox · v<version>` banner, as a command run does.

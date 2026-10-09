@@ -484,6 +484,7 @@ fn top_level_help_groups_commands_and_options() {
     let headings = [
         "Maps and data:",
         "Search:",
+        "Navigation:",
         "Account:",
         "Coding agents:",
         "CLI:",

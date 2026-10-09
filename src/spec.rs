@@ -225,6 +225,10 @@ pub struct RequestBody {
     /// since the API matches on this field name exactly; guessing it wrong
     /// would fail the request with no clear error.
     pub multipart_field: Option<String>,
+    /// Top-level field names the JSON body's schema declares. Telemetry
+    /// records a `--data` body's keys only when they are on this list, so a
+    /// name the user made up never leaves the machine.
+    pub json_fields: Vec<String>,
 }
 
 pub const MULTIPART: &str = "multipart/form-data";
@@ -1155,6 +1159,7 @@ fn parse_request_body(op: &Value, full_spec: &Value) -> Option<RequestBody> {
                 required,
                 content_types: vec![],
                 multipart_field: None,
+                json_fields: vec![],
             })
         }
     };
@@ -1170,10 +1175,17 @@ fn parse_request_body(op: &Value, full_spec: &Value) -> Option<RequestBody> {
         .find(|(key, _)| key.as_str().map(essence).as_deref() == Some(MULTIPART))
         .and_then(|(_, media_type)| multipart_file_field(&media_type["schema"], full_spec));
 
+    let json_fields = content
+        .iter()
+        .find(|(key, _)| key.as_str().is_some_and(is_json))
+        .map(|(_, media_type)| declared_fields(&media_type["schema"], full_spec))
+        .unwrap_or_default();
+
     Some(RequestBody {
         required,
         content_types,
         multipart_field,
+        json_fields,
     })
 }
 
@@ -1234,6 +1246,44 @@ fn body_field_parameters(
             })
         })
         .collect()
+}
+
+/// The property names an object schema declares, through `$ref` and the
+/// `allOf`/`oneOf`/`anyOf` it is composed of. `additionalProperties` adds
+/// nothing: what it allows is whatever the caller chose to call a field.
+fn declared_fields(schema: &Value, full_spec: &Value) -> Vec<String> {
+    let mut fields = vec![];
+    collect_declared_fields(schema, full_spec, 0, &mut fields);
+    fields.sort();
+    fields.dedup();
+    fields
+}
+
+fn collect_declared_fields(schema: &Value, full_spec: &Value, depth: u8, fields: &mut Vec<String>) {
+    // A `$ref` cycle would otherwise recurse forever.
+    if depth > 8 {
+        return;
+    }
+    let schema = match schema["$ref"].as_str() {
+        Some(reference) => match resolve_ref(full_spec, reference) {
+            Some(resolved) => resolved,
+            None => return,
+        },
+        None => schema,
+    };
+    if let Some(properties) = schema["properties"].as_mapping() {
+        fields.extend(
+            properties
+                .keys()
+                .filter_map(|key| key.as_str())
+                .map(str::to_string),
+        );
+    }
+    for key in ["allOf", "oneOf", "anyOf"] {
+        for part in schema[key].as_sequence().into_iter().flatten() {
+            collect_declared_fields(part, full_spec, depth + 1, fields);
+        }
+    }
 }
 
 /// The multipart property that carries the uploaded files.
@@ -1900,6 +1950,54 @@ paths:
             .as_ref()
             .expect("body");
         assert_eq!(body.multipart_field.as_deref(), Some("attachments"));
+    }
+
+    /// Telemetry sends a `--data` body's keys only from this list, so it
+    /// must follow `$ref` and composition, and never admit what
+    /// `additionalProperties` allows.
+    #[test]
+    fn a_json_body_lists_the_fields_its_schema_declares() {
+        let svc = service(
+            r#"
+openapi: 3.0.0
+info: { title: T }
+components:
+  schemas:
+    Base:
+      type: object
+      properties: { version: { type: number }, name: { type: string } }
+paths:
+  /json:
+    post:
+      operationId: createThing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/Base'
+                - type: object
+                  properties: { layers: { type: array } }
+                  additionalProperties: true
+  /open:
+    post:
+      operationId: openThing
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+"#,
+        );
+        let fields = |id| {
+            operation(&svc, id)
+                .body
+                .as_ref()
+                .expect("body")
+                .json_fields
+                .clone()
+        };
+        assert_eq!(fields("create-thing"), ["layers", "name", "version"]);
+        assert!(fields("open-thing").is_empty());
     }
 
     /// A `requestBody` that declares no content still means the operation

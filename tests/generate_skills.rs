@@ -34,6 +34,9 @@ fn scratch(name: &str) -> PathBuf {
 fn command(name: &str) -> Command {
     let home = scratch(&format!("{name}-home"));
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    // Telemetry is not under test here, and would post to Mapbox.
+    cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN");
     cmd.env_remove("MAPBOX_ACCESS_TOKEN")
         .env_remove("MapboxAccessToken")
         .env_remove("MAPBOX_USERNAME")

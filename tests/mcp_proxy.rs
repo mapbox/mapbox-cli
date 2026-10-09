@@ -83,6 +83,9 @@ fn isolate_every_client(cmd: &mut Command) -> &mut Command {
 /// Runs `mapbox mcp <args>` with `MAPBOX_CLAUDE_CLI` pointed at the stub.
 fn run(stub: &Path, marker: &Path, get_exit: &str, add_exit: &str, args: &[&str]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    // Telemetry is not under test here, and would post to Mapbox.
+    cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN");
     isolate_every_client(&mut cmd);
     cmd.arg("mcp")
         .args(args)
@@ -245,6 +248,9 @@ fn a_client_not_on_path_is_skipped_and_named() {
     // Every client's binary override points at nothing at all, so
     // auto-detection finds none of them reachable.
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    // Telemetry is not under test here, and would post to Mapbox.
+    cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN");
     isolate_every_client(&mut cmd);
     let output = cmd
         .args(["mcp", "install"])
@@ -336,6 +342,9 @@ fn run_codex(
     args: &[&str],
 ) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    // Telemetry is not under test here, and would post to Mapbox.
+    cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN");
     isolate_every_client(&mut cmd);
     cmd.arg("mcp")
         .args(args)
@@ -478,6 +487,9 @@ fn run_vscode(
     args: &[&str],
 ) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    // Telemetry is not under test here, and would post to Mapbox.
+    cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN");
     isolate_every_client(&mut cmd);
     cmd.arg("mcp")
         .args(args)
@@ -701,6 +713,9 @@ fn cursor_reads_its_own_settings_json_shape() {
     .expect("seed settings.json");
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    // Telemetry is not under test here, and would post to Mapbox.
+    cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN");
     isolate_every_client(&mut cmd);
     let output = cmd
         .arg("mcp")

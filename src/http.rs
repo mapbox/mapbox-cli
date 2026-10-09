@@ -292,7 +292,7 @@ pub fn send(
 
 /// What went wrong with a request that got no response. Not `err`'s own
 /// `Display`, which appends the URL — token and all.
-fn failure(err: &reqwest::Error) -> String {
+pub(crate) fn failure(err: &reqwest::Error) -> String {
     let kind = if err.is_timeout() {
         "timed out"
     } else if err.is_connect() {

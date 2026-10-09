@@ -21,7 +21,8 @@ use clap::{ArgMatches, Command};
 
 use crate::spec::ServiceSpec;
 use crate::{
-    auth, completion, confirm, executor, http, output, run_history, run_log, tilesets_cli,
+    auth, completion, confirm, executor, http, output, run_history, run_log, telemetry_event,
+    tilesets_cli,
 };
 
 const TILESETS: &str = tilesets_cli::COMMAND;
@@ -125,6 +126,8 @@ pub(crate) struct Record {
     /// clap's name for why it refused the command line.
     pub usage_error: Option<String>,
     pub args: Vec<Arg>,
+    /// Top-level fields the operation's spec declares for a JSON body.
+    pub body_fields: Vec<String>,
     pub options: Option<Options>,
     pub token: Option<Token>,
     pub requests: Vec<Request>,
@@ -147,6 +150,7 @@ static RECORD: Mutex<Record> = Mutex::new(Record {
     tilesets_word: None,
     usage_error: None,
     args: Vec::new(),
+    body_fields: Vec::new(),
     options: None,
     token: None,
     requests: Vec::new(),
@@ -222,10 +226,12 @@ pub fn set_parsed(
         })
         .flatten();
     let mut args = vec![];
+    let mut fields = vec![];
     if path.first().map(String::as_str) != Some(TILESETS) {
         let numeric = numeric_args(specs, &path);
         args.extend(given_args(leaf_command, leaf_matches, &numeric, false));
         args.extend(given_args(app, matches, &[], true));
+        fields = body_fields(specs, &path);
     }
     let options = options(matches, leaf_matches);
     with_record(|record| {
@@ -233,6 +239,7 @@ pub fn set_parsed(
         record.invocation = Some(invocation);
         record.tilesets_word = tilesets_word;
         record.args = args;
+        record.body_fields = fields;
         record.options = Some(options);
     });
 }
@@ -353,9 +360,10 @@ fn finish_locked(record: &mut Record, exit_code: Option<u32>) {
         run_log::write(record, at);
     }
     run_log::expire_with_history();
+    telemetry_event::deliver(record);
 }
 
-fn uuid_v4(mut bytes: [u8; 16]) -> String {
+pub(crate) fn uuid_v4(mut bytes: [u8; 16]) -> String {
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
@@ -404,7 +412,7 @@ fn command_from_argv(app: &Command, argv: &[OsString]) -> Vec<String> {
 /// Subcommand names from `words`, in order, for as long as each word names
 /// a subcommand of the one before. Flags and their values are skipped; the
 /// first word that is neither ends the walk.
-fn tree_path(app: &Command, words: impl IntoIterator<Item = String>) -> Vec<String> {
+pub(crate) fn tree_path(app: &Command, words: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut path = vec![];
     let mut command = app;
     for word in words {
@@ -478,6 +486,22 @@ fn numeric_args(specs: &[ServiceSpec], path: &[String]) -> Vec<String> {
         .filter(|param| param.numeric.is_some())
         .map(|param| param.arg_name.clone())
         .collect()
+}
+
+/// The top-level fields the spec declares for the JSON body of the
+/// operation at `path`.
+fn body_fields(specs: &[ServiceSpec], path: &[String]) -> Vec<String> {
+    let Some((service, rest)) = path.split_first() else {
+        return vec![];
+    };
+    specs
+        .iter()
+        .filter(|spec| &spec.name == service)
+        .flat_map(|spec| &spec.operations)
+        .find(|op| op.command_path == rest)
+        .and_then(|op| op.body.as_ref())
+        .map(|body| body.json_fields.clone())
+        .unwrap_or_default()
 }
 
 /// `command`'s arguments that were given on the command line or through

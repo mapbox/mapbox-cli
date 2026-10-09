@@ -69,6 +69,8 @@ fn sandbox_home() -> PathBuf {
 fn schema() -> Value {
     let home = sandbox_home();
     let out = Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .env_remove("MAPBOX_ACCESS_TOKEN")
         .env_remove("MapboxAccessToken")
         .env_remove("MAPBOX_USERNAME")

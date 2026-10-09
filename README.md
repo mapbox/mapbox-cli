@@ -285,6 +285,18 @@ Every request sends `User-Agent: mapbox-cli/<version>` and nothing else
 about you or your machine. `MAPBOX_CLI_NO_TELEMETRY=1` keeps even future
 markers out of that header.
 
+Each run also sends one event to Mapbox: the command's name, its options
+(a value only when it comes from a fixed list, otherwise just its length or
+size, and for a JSON body only the field names the API defines), how it
+ended, and how long it took — never a token, a file path or free text you
+typed. It carries a random ID that is replaced on the first run a day after
+it was created. It is sent in the background, so a command never waits for
+it, and dropped if it can't be delivered. It is sent with your own token
+(`--token`, `MAPBOX_ACCESS_TOKEN` or your login) when you have one, and with
+a token built into the CLI otherwise. A build from source has no built-in
+token, so with no token of your own the event is dropped.
+`MAPBOX_CLI_NO_TELEMETRY=1` turns it off.
+
 ### Diagnostics and settings
 
 ```sh
@@ -450,6 +462,14 @@ whole shell.
 process sends, in the same `k1=v1&k2=v2` shape as a URL's own query string —
 for an API parameter this CLI's specs don't declare a flag for. `--debug`
 and `--dry-run` show it alongside everything else on the request.
+
+### The CLI's own requests
+
+Requests the CLI makes for itself rather than for your commands use your own
+token whenever you have one: `--token` or `MAPBOX_ACCESS_TOKEN`, then your
+login. Only when you have none does it use the CLI's token:
+`MAPBOX_CLI_TOKEN`, or one built into the binary. The CLI's token is only
+used for what `src/cli_token.rs` lists for it, today just telemetry.
 
 ### Proxies
 

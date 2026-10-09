@@ -129,6 +129,9 @@ fn accept_within(
 /// test waiting for a connection that was never going to come.
 fn mapbox() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    // Telemetry is not under test here, and would post to Mapbox.
+    cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN");
     cmd.args(["styles", "list", "--username", "someone", "-o", "json"])
         .env_remove("HTTP_PROXY")
         .env_remove("HTTPS_PROXY")

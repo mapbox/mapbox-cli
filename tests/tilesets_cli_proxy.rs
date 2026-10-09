@@ -58,6 +58,8 @@ fn sandbox_home() -> PathBuf {
 /// it, and `HOME` is redirected so a stored login cannot either.
 fn run(stub: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .args(args)
         .env("MAPBOX_TILESETS_CLI", stub)
         .env_remove("MAPBOX_ACCESS_TOKEN")
@@ -271,6 +273,8 @@ fn the_tilesets_name_does_not_reach_the_proxy() {
 fn an_environment_token_is_passed_through_untouched() {
     let stub = stub_for("env-token");
     let output = Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .args(["tilesets-cli", "list", "someone"])
         .env("MAPBOX_TILESETS_CLI", &stub)
         .env("MAPBOX_ACCESS_TOKEN", "pk.from-the-environment")
@@ -290,6 +294,8 @@ fn use_login_prefers_the_stored_token_over_the_environment() {
     let home = home_with_login("use-login", Some("stored-account"));
 
     let output = Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .args(["--use-login", "tilesets-cli", "list", "stored-account"])
         .env("MAPBOX_TILESETS_CLI", &stub)
         .env("MAPBOX_ACCESS_TOKEN", "pk.from-the-environment")
@@ -314,6 +320,8 @@ fn without_use_login_the_environment_still_wins() {
 
     let env_token = fake_token("pk", "someone-else");
     let output = Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .args(["tilesets-cli", "list", "stored-account"])
         .env("MAPBOX_TILESETS_CLI", &stub)
         .env("MAPBOX_ACCESS_TOKEN", &env_token)
@@ -341,6 +349,8 @@ fn use_login_without_a_login_is_an_error() {
     let home = home_with_login("use-login-empty", None);
 
     let output = Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .args(["--use-login", "tilesets-cli", "list", "someone"])
         .env("MAPBOX_TILESETS_CLI", &stub)
         .env("MAPBOX_ACCESS_TOKEN", "pk.from-the-environment")
@@ -372,6 +382,8 @@ fn the_config_dir_override_is_where_a_login_is_read_from() {
     write_login(&store, "stored-account");
 
     let output = Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .args(["--use-login", "tilesets-cli", "list", "stored-account"])
         .env("MAPBOX_TILESETS_CLI", &stub)
         .env("MAPBOX_ACCESS_TOKEN", "pk.from-the-environment")
@@ -401,6 +413,8 @@ fn an_environment_token_for_another_account_is_called_out() {
     let home = home_with_login("shadowed-login", Some("me"));
 
     let output = Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .args(["tilesets-cli", "list", "me"])
         .env("MAPBOX_TILESETS_CLI", &stub)
         // Parseable, unlike the `pk.from-the-environment` the precedence
@@ -423,6 +437,8 @@ fn an_environment_token_for_another_account_is_called_out() {
 #[test]
 fn a_missing_binary_prints_install_guidance() {
     let output = Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .args([TOKEN[0], TOKEN[1], "tilesets-cli", "list", "someone"])
         .env_remove("MAPBOX_TILESETS_CLI")
         .env("PATH", "")
@@ -438,6 +454,8 @@ fn a_missing_binary_prints_install_guidance() {
 #[test]
 fn a_broken_override_blames_the_env_var() {
     let output = Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .args([TOKEN[0], TOKEN[1], "tilesets-cli", "list", "someone"])
         .env("MAPBOX_TILESETS_CLI", "/nonexistent/tilesets")
         .output()
@@ -480,6 +498,8 @@ fn yes_is_reported_as_not_reaching_the_child() {
 fn the_environment_variable_is_not_warned_about() {
     let stub = stub_for("yes-env-quiet");
     let out = Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .args(["tilesets-cli", "list", "someone"])
         .env("MAPBOX_TILESETS_CLI", &stub)
         .env("MAPBOX_YES", "1")
@@ -525,6 +545,8 @@ fn a_forwarded_token_is_not_printed_by_debug() {
 
     let stub = stub_for("debug-redaction");
     let out = Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .args(["tilesets-cli", "--token", FAKE_TOKEN, "list", "someone"])
         .env("MAPBOX_TILESETS_CLI", &stub)
         .env("MAPBOX_DEBUG", "1")

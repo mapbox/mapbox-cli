@@ -16,11 +16,13 @@ mod agent_skills;
 #[cfg(test)]
 mod api_command_surface;
 mod auth;
+mod cli_token;
 mod completion;
 mod config;
 mod confirm;
 mod dated_jsonl;
 mod deprecation;
+mod detach;
 mod doctor;
 mod executor;
 mod generate_skills;
@@ -38,6 +40,8 @@ mod schema;
 mod skill_dest;
 mod spec;
 mod telemetry;
+mod telemetry_event;
+mod telemetry_sink;
 mod tilesets_cli;
 mod uninstall;
 mod update_check;
@@ -797,6 +801,7 @@ fn no_stored_credentials(profile: Option<&str>) -> anyhow::Error {
 /// Answers `--schema`, from either of the two places it can be noticed.
 fn emit_schema(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches) -> u8 {
     run_record::set_parsed(app, specs, matches, run_record::Invocation::Schema);
+    telemetry_sink::remember_user_token(cli_token::user_token(matches));
     let mode = Mode::from_matches(matches);
     match schema::emit(mode, app, specs, matches) {
         Ok(()) => 0,
@@ -809,11 +814,11 @@ fn emit_schema(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches) -> u8
 
 /// The process, either of the two things it can be.
 ///
-/// Almost always a command. The exception is the update-check refresher,
-/// which this binary re-executes as a detached child of itself — it parses no
-/// command line, loads no specs and prints nothing, so it is answered before
-/// any of that happens. See `update_check` for why it is a mode rather than a
-/// hidden subcommand.
+/// Almost always a command. The exceptions are the update-check refresher
+/// and the telemetry sender, which this binary re-executes as detached
+/// children of itself — they parse no command line, load no specs and print
+/// nothing, so they are answered before any of that happens. See
+/// `update_check` for why each is a mode rather than a hidden subcommand.
 ///
 /// The notice is the last thing that happens, and deliberately outside
 /// `cli()`: it belongs to every way out, `--version` and a usage error
@@ -823,6 +828,9 @@ fn emit_schema(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches) -> u8
 fn main() -> ExitCode {
     if update_check::is_refresh_child() {
         return update_check::run_refresh_child();
+    }
+    if telemetry_sink::is_send_child() {
+        return telemetry_sink::run_send_child();
     }
 
     run_record::start(&std::env::args_os().collect::<Vec<_>>());
@@ -902,6 +910,7 @@ fn cli() -> u8 {
     }
 
     run_record::set_parsed(&app, &specs, &matches, run_record::Invocation::Execute);
+    telemetry_sink::remember_user_token(cli_token::user_token(&matches));
     output::banner::show(&matches);
     let mode = Mode::from_matches(&matches);
     match run(&app, &specs, &matches, mode) {
@@ -1453,6 +1462,16 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             if let Some(token) = &token {
                 run_record::set_resolved_token(matches, use_login, token);
             }
+            // After the record above, which knows only the user's own
+            // sources. `--use-login` already returned when it found nothing.
+            let token = token.or_else(|| {
+                let token = cli_token::for_command(op)?;
+                output::progress(
+                    "No token of your own, so this request uses the CLI's token. \
+                     Run `mapbox auth login` to use yours.",
+                );
+                Some(token)
+            });
             let username: Option<String> = matches
                 .get_one::<String>("username")
                 .cloned()

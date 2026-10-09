@@ -282,8 +282,9 @@ deeper where that reads better, as in `mapbox styles draft get`.
 parameters and sample output.
 
 Every API request a command makes sends `User-Agent: mapbox-cli/<version>`
-and nothing else about you or your machine. `MAPBOX_CLI_NO_TELEMETRY=1`
-keeps even future markers out of that header.
+and nothing else about you or your machine. `MAPBOX_CLI_NO_TELEMETRY=1` or
+`mapbox config set telemetry off` keeps even future markers out of that
+header.
 
 Each run also sends one event to Mapbox:
 
@@ -572,7 +573,7 @@ kept narrow:
 | What it sends | A `GET` for the channel's `latest/manifest.json`, with no token, no account, no command, and nothing about you or your machine beyond `User-Agent: mapbox-cli/<version>` |
 | When | At most once a day, and only when stderr is a terminal, so CI and piped runs never check and never print |
 | Where | A detached background process. Your command never waits on it: offline, the timing is unchanged and nothing is printed |
-| Off | `MAPBOX_NO_UPDATE_CHECK=1`, or `MAPBOX_CLI_NO_TELEMETRY=1`, which silences this too, for the shell session it's set in |
+| Off | `MAPBOX_NO_UPDATE_CHECK=1`, or `MAPBOX_CLI_NO_TELEMETRY=1`, which silences this too, for the shell session it's set in; `mapbox config set telemetry off` silences it for good |
 
 `~/.mapbox/update-check.json` (or `$MAPBOX_CONFIG_DIR`) holds the answer
 between runs. A build that names no release channel never checks at all, and
@@ -601,7 +602,7 @@ mapbox history show be40d711    # or one run, by any prefix of its id
 are not recorded. `mapbox config set history off` turns history off for
 good, and `MAPBOX_HISTORY=0` for one shell; with it off, nothing is written
 and no directory is created, but what was already recorded stays until you
-delete `~/.mapbox/history`. `MAPBOX_CLI_NO_TELEMETRY` does not affect it.
+delete `~/.mapbox/history`. Neither telemetry opt-out affects it.
 
 ### Diagnostic logs
 
@@ -667,6 +668,12 @@ our CLIs by setting
 
 ```sh
 MAPBOX_CLI_NO_TELEMETRY=1
+```
+
+or, to turn it off in every shell,
+
+```sh
+mapbox config set telemetry off
 ```
 
 For additional information on our data processing activities and your

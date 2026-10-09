@@ -41,6 +41,8 @@
 use std::path::Path;
 
 fn main() {
+    check_bundled_token();
+
     let manifest = Path::new("../internal/openapi-command-config/PINNED_SOURCE");
 
     // The vendored specs and their provenance are ordinary build inputs now,
@@ -89,6 +91,20 @@ fn main() {
     }
 
     warn_if_stale(committed_at);
+}
+
+/// `src/cli_token.rs` compiles `MAPBOX_CLI_BUNDLED_TOKEN` into the binary,
+/// where `strings` can read it. Only a public `pk.` token may go there, so
+/// anything else fails the build rather than shipping a secret.
+fn check_bundled_token() {
+    println!("cargo:rerun-if-env-changed=MAPBOX_CLI_BUNDLED_TOKEN");
+    let Ok(token) = std::env::var("MAPBOX_CLI_BUNDLED_TOKEN") else {
+        return;
+    };
+    let token = token.trim();
+    if !token.is_empty() && !token.starts_with("pk.") {
+        panic!("MAPBOX_CLI_BUNDLED_TOKEN must be a public pk. token");
+    }
 }
 
 /// New API surface lands in `openapi-specs` at something closer to a monthly

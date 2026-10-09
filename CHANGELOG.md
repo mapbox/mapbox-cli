@@ -19,6 +19,11 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `tilesets query` renders as a numbered list under `-o text` again, as
+  documented. It had printed pretty JSON since 0.2.0, when the command moved
+  from `tilequery get` and the renderer kept matching the old name.
+  `-o json` is unchanged.
+
 - `mapbox usage` reads as a chart: one row per product with no blank
   lines between, every sparkline as wide as the period, bars scaled from
   zero so their height is proportional to the value, and the tallest
@@ -47,8 +52,8 @@ that may never merge. They are not releases and are not listed here.
   way off wins.
 
 - Top-level `mapbox --help` lists commands in groups (Maps and data,
-  Search, Account, Coding agents, CLI), each with a line saying what it
-  does rather than which API it wraps, and the global options under
+  Search, Navigation, Account, Coding agents, CLI), each with a line saying
+  what it does rather than which API it wraps, and the global options under
   Authentication, Output and Behavior, wrapped to the terminal. At a
   terminal, help — top-level or a command's — opens with the
   `mapbox · v<version>` banner, as a command run does.
@@ -230,7 +235,7 @@ that may never merge. They are not releases and are not listed here.
   terminal or for `mapbox completion`. `--quiet`/`-q` or `MAPBOX_QUIET=1`
   hides it. Table headers, the labels of key/value lists (`auth whoami`,
   `doctor`, `config list`, a single object's fields), the result lists of
-  `geocoder`, `search` and `tilequery`, and tips are styled at a terminal
+  `geocoder`, `search` and `tilesets query`, and tips are styled at a terminal
   too, and a result written to a file or pipe never is; `NO_COLOR` turns
   color off everywhere.
 

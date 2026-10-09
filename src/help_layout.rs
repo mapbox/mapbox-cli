@@ -8,13 +8,12 @@
 //! - **Maps and data**: create or fetch map content — styles, sprites,
 //!   fonts, tiles, static images.
 //! - **Search**: find places and addresses, and report problems with them.
+//! - **Navigation**: routes, travel times and reachable areas, and snapping
+//!   GPS traces to roads.
 //! - **Account**: credentials, tokens and usage — who you are and what you
 //!   have used.
 //! - **Coding agents**: wire Mapbox into a coding agent.
 //! - **CLI**: manage the CLI itself.
-//!
-//! Routing APIs (Directions, Matrix, Isochrone, Map Matching, Optimization)
-//! are expected to land as a "Navigation" group of their own.
 //!
 //! clap has no notion of command groups, and aligns each option heading on
 //! its own column, so this renders the whole top-level page itself — one
@@ -37,6 +36,10 @@ const GROUPS: &[(&str, &[&str])] = &[
         &["styles", "sprites", "fonts", "tilesets", "static"],
     ),
     ("Search", &["search", "geocoder", "feedback"]),
+    (
+        "Navigation",
+        &["directions", "matrix", "isochrone", "map-match"],
+    ),
     ("Account", &["auth", "accounts", "usage"]),
     ("Coding agents", &["mcp", "agent-skills", "generate-skills"]),
     (
@@ -73,6 +76,16 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     ("geocoder", "Forward, reverse and batch geocoding"),
     ("feedback", "Submit and list feedback about Mapbox data"),
+    ("directions", "Route between waypoints"),
+    (
+        "matrix",
+        "Travel times and distances between every pair of points",
+    ),
+    (
+        "isochrone",
+        "Areas reachable from a point within a time or distance",
+    ),
+    ("map-match", "Snap a GPS trace to the road network"),
     ("accounts", "List access tokens and their scopes"),
     (
         "generate-skills",

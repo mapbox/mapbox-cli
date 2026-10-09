@@ -59,7 +59,11 @@ todo = "deny"
 unimplemented = "deny"
 
 [dependencies]
-clap = { version = "4", features = ["derive", "env", "string"] }
+clap = { version = "4", features = ["derive", "env", "string", "wrap_help"] }
+# Already in the graph through clap's `wrap_help`. Used directly by the
+# top-level help, which src/help_layout.rs renders itself and so has to wrap
+# to the terminal itself.
+terminal_size = "0.4"
 # Renders `mapbox completion <shell>` from the same `Command` tree everything
 # else here is built from. Kept to the default features on purpose: the
 # dynamic-completion half is `unstable-dynamic`, and value completion is out
@@ -99,6 +103,13 @@ dirs = "5"
 # are needed for `parse_to_serde_value`, which decodes straight into a
 # `serde_json::Value`.
 jsonc-parser = { version = "0.34.0", features = ["serde", "serde_json"] }
+# Asks the terminal for its background color (OSC 11), so help can use the
+# palette for a dark or a light one. It reads the answer off the terminal,
+# which takes raw mode and a timed read — `unsafe` this crate does not
+# have — and it sends a second query every terminal answers, so one without
+# OSC 11 is known at once instead of after the timeout. Asked only by a run
+# that shows help; see src/output/theme.rs.
+terminal-colorsaurus = "1"
 
 [dev-dependencies]
 # Integration tests build fake Mapbox tokens; same crate the CLI already uses.

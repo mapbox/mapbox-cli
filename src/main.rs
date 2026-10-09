@@ -24,6 +24,7 @@ mod deprecation;
 mod doctor;
 mod executor;
 mod generate_skills;
+mod help_layout;
 mod history;
 mod http;
 mod link;
@@ -52,6 +53,19 @@ use spec::ServiceSpec;
 /// run on their own, with nothing of this crate beside them, so this is the
 /// single source for the Rust half rather than for all three.
 const REPO_URL: &str = "https://github.com/mapbox/cli";
+
+/// Opens the top-level help when an agent is driving the CLI. Agents explore
+/// by chaining `--help` calls, one command at a time; `--schema` answers the
+/// same question for every command in one document.
+const AGENT_HELP_HINT: &str = "\
+Agents: `mapbox --schema` describes every command, its arguments and the request it makes
+as one JSON document. Use it instead of chaining --help calls.";
+
+/// Help headings for the global options, which otherwise share one
+/// "Options:" list with every command's own.
+const AUTH_OPTIONS: &str = "Authentication";
+const OUTPUT_OPTIONS: &str = "Output";
+const BEHAVIOR_OPTIONS: &str = "Behavior";
 
 /// Rejects a value the spec says is a number, while still yielding a
 /// `String`.
@@ -104,8 +118,26 @@ fn looks_like_a_flag(raw: &str) -> bool {
 /// The spec text is kept whole by `parse_spec` — `--schema` publishes it and
 /// a cut there lands inside identifiers and decimals. Help has a line to
 /// work with, so it shortens here, at the only place that wants it.
+///
+/// A sentence ends at a full stop followed by white space, or at the end.
+/// Cutting at any `.` stopped help inside `{owner}.{tileset}`, `-85.0511`
+/// and `e.g.`: "Tileset ID(s) in the format `username".
 pub fn first_sentence(text: &str) -> &str {
-    text.split('.').next().unwrap_or(text).trim()
+    let text = text.trim();
+    let end = text.char_indices().find(|&(at, c)| {
+        c == '.'
+            && text[at + 1..].starts_with(char::is_whitespace)
+            && !ends_with_abbreviation(&text[..=at])
+    });
+    match end {
+        Some((at, _)) => text[..at].trim_end(),
+        None => text.strip_suffix('.').unwrap_or(text),
+    }
+}
+
+/// Full stops that end an abbreviation rather than a sentence.
+fn ends_with_abbreviation(text: &str) -> bool {
+    ["e.g.", "i.e."].iter().any(|abbr| text.ends_with(abbr))
 }
 
 fn help_text(param: &spec::Parameter) -> String {
@@ -423,6 +455,11 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
     let mut app = Command::new("mapbox")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Mapbox API CLI — interact with Mapbox APIs from the command line")
+        .styles(output::theme::styles())
+        .color(output::style::color_choice())
+        // clap's own 100-column cap is skipped when `COLUMNS` is set, as many
+        // shells do; past 100 a description runs too far from its flag.
+        .max_term_width(100)
         // See `build_service_command`: without this, `mapbox -o json` is a
         // successful parse of no command at all, and pairing it with
         // `arg_required_else_help` made a bare `mapbox` show full help or a
@@ -435,6 +472,8 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .short('t')
                 .env(auth::CLAP_TOKEN_ENV)
                 .hide_env_values(true)
+                .value_name("TOKEN")
+                .help_heading(AUTH_OPTIONS)
                 .global(true)
                 .help("Mapbox access token")
                 .required(false),
@@ -444,6 +483,8 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .long("username")
                 .short('u')
                 .env("MAPBOX_USERNAME")
+                .value_name("USERNAME")
+                .help_heading(AUTH_OPTIONS)
                 .global(true)
                 .help("Mapbox username")
                 .required(false),
@@ -451,19 +492,19 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
         .arg(
             Arg::new("profile")
                 .long("profile")
+                .value_name("PROFILE")
+                .help_heading(AUTH_OPTIONS)
                 .global(true)
-                .help("Named credential profile to use (default: \"default\")")
+                .help("Credential profile to use (default: \"default\")")
                 .required(false),
         )
         .arg(
             Arg::new("use-login")
                 .long("use-login")
                 .action(ArgAction::SetTrue)
+                .help_heading(AUTH_OPTIONS)
                 .global(true)
-                .help(
-                    "Use credentials from `mapbox auth login`, ignoring any \
-                     MAPBOX_ACCESS_TOKEN in the environment",
-                ),
+                .help("Use `mapbox auth login` credentials, ignoring MAPBOX_ACCESS_TOKEN"),
         )
         .arg(
             Arg::new("debug")
@@ -473,8 +514,9 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 // See `--yes` below: without this, `MAPBOX_DEBUG=1` is a usage
                 // error on every command rather than a debug flag.
                 .value_parser(FalseyValueParser::new())
+                .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help("Print request URLs to stderr for debugging"),
+                .help("Print request URLs to stderr"),
         )
         .arg(
             Arg::new(confirm::ARG)
@@ -495,7 +537,8 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .global(true)
                 // No manual env note: unlike `--output`, this arg really
                 // does declare `.env()`, so clap appends one itself.
-                .help("Assume yes: never ask before a destructive command"),
+                .help_heading(BEHAVIOR_OPTIONS)
+                .help("Don't ask before destructive commands"),
         )
         .arg(
             Arg::new(output::banner::ARG)
@@ -506,8 +549,9 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 // Same trap as `--yes`: `MAPBOX_QUIET=1` must not be a usage
                 // error on every command.
                 .value_parser(FalseyValueParser::new())
+                .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help("Don't print the name-and-version banner, or the note after a download, to stderr"),
+                .help("Hide the version banner and download notes"),
         )
         .arg(
             Arg::new(http::TIMEOUT_ARG)
@@ -527,11 +571,9 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 // default.
                 // A value typed here is a different case and stays strict —
                 // it names one flag on one command, and clap says so.
+                .help_heading(BEHAVIOR_OPTIONS)
                 .global(true)
-                .help(
-                    "Seconds to wait for one request, connection included. \
-                     Defaults to 60, or 900 for an upload [env: MAPBOX_TIMEOUT=]",
-                ),
+                .help("Seconds per request; 60, or 900 for uploads [env: MAPBOX_TIMEOUT]"),
         )
         .arg(
             // The arg's id is not `id`: two style operations take a path
@@ -540,8 +582,10 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
             // so the flag can still read as `--id`.
             Arg::new(output::FILTER_ARG)
                 .long("id")
+                .value_name("ID")
+                .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help("Show only the row with this id, from a command that returns a list"),
+                .help("Show only the row with this id from a list"),
         )
         .arg(
             Arg::new(output::ARG)
@@ -549,25 +593,43 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .short('o')
                 .value_parser([output::AUTO, output::TEXT, output::JSON])
                 .default_value(output::AUTO)
+                .value_name("FORMAT")
+                // The help names the three values itself, with what `auto`
+                // means; clap's own list would repeat them.
+                .hide_possible_values(true)
+                .help_heading(OUTPUT_OPTIONS)
                 // Deliberately not `.env()`: clap would validate the variable
                 // and turn `export MAPBOX_OUTPUT=` into a usage error on every
                 // command. `Mode::from_matches` reads it leniently instead.
                 .global(true)
                 .help(
-                    "Output format. `auto` reads stdout: a terminal gets text, \
-                     a pipe or redirect gets JSON [env: MAPBOX_OUTPUT=]",
+                    "text, json, or auto (the default: text in a terminal, JSON when piped) \
+                     [env: MAPBOX_OUTPUT]",
                 ),
+        )
+        .arg(
+            // Read off argv before the parse, by `style::requested_off`;
+            // declared here so that it parses, and shows in help.
+            Arg::new(output::style::NO_COLOR_ARG)
+                .long(output::style::NO_COLOR_ARG)
+                .action(ArgAction::SetTrue)
+                .help_heading(OUTPUT_OPTIONS)
+                .global(true)
+                .help("Turn off color, as NO_COLOR does"),
         )
         .arg(
             Arg::new(schema::ARG)
                 .long(schema::ARG)
                 .action(ArgAction::SetTrue)
+                .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help(
-                    "Describe the command as JSON instead of running it: its arguments, \
-                     their types, and the request it would make",
-                ),
-        );
+                .help("Describe the command as JSON instead of running it"),
+        )
+        // clap renders an env-backed arg as `[env: NAME=VALUE]`, so an
+        // unset variable read as `[env: MAPBOX_USERNAME=]`, and a set one
+        // put its value in the help. Name the variable only, as `--token`
+        // always has.
+        .mut_args(|arg| arg.hide_env_values(true));
 
     // A service every one of whose operations is withheld would be a group
     // `--help` lists and `subcommand_required(true)` then refuses. None is
@@ -793,11 +855,30 @@ fn cli() -> u8 {
         }
     };
 
-    let app = build_app(&specs);
+    // Before the tree is built: it carries clap's color choice, and help is
+    // rendered during the parse. See `style::requested_off`.
+    if output::style::requested_off(&raw_argv) {
+        output::style::turn_off();
+    }
+    if help_layout::help_requested(&raw_argv) {
+        output::theme::allow_background_query(output::on_a_terminal());
+        // Ahead of the parse, which is where clap prints help.
+        output::banner::show_before_help(&raw_argv);
+    }
+
+    let mut app = build_app(&specs);
+    // Here rather than in `build_app`, which tests call directly and which
+    // should not depend on who happens to be running them.
+    if agent_detect::detect_agent().is_some() {
+        app = app.before_help(AGENT_HELP_HINT);
+    }
+    // Last, once the tree is complete: the grouped command list and the
+    // options section are rendered from it.
+    app = help_layout::apply(app);
     let argv = tilesets_cli::escape_passthrough_args(&app, raw_argv.clone());
     // Parsing consumes the tree, and `--schema` still has to read it
     // afterwards — so the parse gets the copy and `app` stays whole.
-    let matches = match app.clone().try_get_matches_from(argv.clone()) {
+    let matches = match help_layout::for_parsing(app.clone()).try_get_matches_from(argv.clone()) {
         Ok(matches) => matches,
         // The ordinary way `--schema` arrives: as a line clap has just
         // refused, because naming a command is not the same as supplying
@@ -959,7 +1040,7 @@ fn clap_tip(rendered: &str) -> Option<String> {
 /// The subcommand placeholder clap ends a usage line with when one is still
 /// required. Nothing here sets `subcommand_value_name`, so this is clap's own
 /// default spelling.
-const SUBCOMMAND_PLACEHOLDER: &str = " <COMMAND>";
+const SUBCOMMAND_PLACEHOLDER: &str = "<COMMAND>";
 
 /// Takes `<COMMAND>` back off the usage line of a suggestion that cannot take one.
 ///
@@ -1007,10 +1088,18 @@ fn drop_subcommand_from_short_circuit_usage(mut err: clap::Error) -> clap::Error
         };
         // `StyledStr` carries its styling as ANSI inside the string, so
         // pushing the trimmed rendering back into a new one round-trips the
-        // styling exactly. The placeholder is plain text at the very end,
-        // after every styled span, which is what makes it safe to cut.
+        // styling exactly. The placeholder comes last, wrapped in the help's
+        // placeholder style: cut it, its style codes, and the space before.
         let rendered = usage.ansi().to_string();
-        let Some(without_subcommand) = rendered.strip_suffix(SUBCOMMAND_PLACEHOLDER) else {
+        let Some(at) = rendered.rfind(SUBCOMMAND_PLACEHOLDER) else {
+            return err;
+        };
+        if !is_style_codes(&rendered[at + SUBCOMMAND_PLACEHOLDER.len()..]) {
+            return err;
+        }
+        let Some(without_subcommand) =
+            without_trailing_style_codes(&rendered[..at]).strip_suffix(' ')
+        else {
             return err;
         };
         let mut corrected = StyledStr::new();
@@ -1019,6 +1108,25 @@ fn drop_subcommand_from_short_circuit_usage(mut err: clap::Error) -> clap::Error
     };
     err.insert(ContextKind::Usage, ContextValue::StyledStr(corrected));
     err
+}
+
+/// Whether `text` is nothing but ANSI style sequences (`ESC [ … m`).
+fn is_style_codes(text: &str) -> bool {
+    without_trailing_style_codes(text).is_empty()
+}
+
+fn without_trailing_style_codes(mut text: &str) -> &str {
+    while let Some(start) = text.rfind("\x1b[") {
+        let code = &text[start + 2..];
+        let Some(params) = code.strip_suffix('m') else {
+            break;
+        };
+        if !params.chars().all(|c| c.is_ascii_digit() || c == ';') {
+            break;
+        }
+        text = &text[..start];
+    }
+    text
 }
 
 /// The command clap says needs a subcommand, as something to run.
@@ -1814,12 +1922,21 @@ mod tests {
 
     /// Help still shows one sentence. This is the whole of what stops the
     /// description change from rewriting every command's help — `spec.rs` now
-    /// keeps the paragraph, and this is where it gets cut back.
+    /// keeps the paragraph, and this is where it gets cut back — and the
+    /// sentence ends at a full stop, not at a dot inside an id or a number.
     #[test]
     fn help_shortens_a_description_to_its_first_sentence() {
         assert_eq!(
             first_sentence("Tileset ID in the format `username.id`. Order matters."),
-            "Tileset ID in the format `username"
+            "Tileset ID in the format `username.id`"
+        );
+        assert_eq!(
+            first_sentence("Latitude in degrees (range -85.0511 to 85.0511)."),
+            "Latitude in degrees (range -85.0511 to 85.0511)"
+        );
+        assert_eq!(
+            first_sentence("Quality appended to format (e.g. png32). Optional."),
+            "Quality appended to format (e.g. png32)"
         );
         assert_eq!(first_sentence("  padded.  rest"), "padded");
         assert_eq!(first_sentence("no full stop here"), "no full stop here");

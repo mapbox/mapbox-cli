@@ -55,7 +55,9 @@ easy thing to add:
 Everything about how output looks lives in `src/output/`: `mod.rs` is the
 entry point (modes, `emit`, tips), `error.rs` shapes and prints failures,
 `render.rs` builds tables and field lists, `style.rs` decides when color is
-allowed, and `banner.rs` is the version line a run opens with.
+allowed, `theme.rs` is the palette — every color the CLI uses, each held to
+a contrast rule by a test — and `banner.rs` is the version line a run opens
+with.
 
 Four modules may touch stdout, and the guard lists each with its reason:
 `output/mod.rs`, which is the machinery; `completion.rs`, because a shell
@@ -112,6 +114,12 @@ Each keeps a list with a reason per entry, and each fails with a message
 saying what to do. **If a guard fails, the fix is almost never to add
 yourself to its list** — read the reason first. When it genuinely is, add the
 entry *and* the sentence explaining it.
+
+One table outside that file works the same way: `GROUPS` in
+`src/help_layout.rs` places every command in a top-level help group, and
+`every_command_has_a_place` fails when a new command has no place there or
+an entry outlives its command. A command it misses still shows, under
+"Other", but CI will not let that ship.
 
 ## What the tests can and cannot tell you
 

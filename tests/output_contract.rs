@@ -363,6 +363,411 @@ fn help_is_never_wrapped() {
     assert!(text.contains("--output"), "--output should be documented");
 }
 
+/// Top-level help is where an agent that only installed the CLI looks for
+/// the rest of Mapbox's agent tooling, so it must list each link — on stdout,
+/// with the help — and subcommand help must not repeat them.
+#[test]
+fn top_level_help_links_to_mapbox_resources() {
+    const LINKS: &[&str] = &[
+        "https://docs.mapbox.com/cli/",
+        "https://cli.mapbox.com/agent-setup/prompt.md",
+        "https://github.com/mapbox/mapbox-agent-skills",
+        "https://github.com/mapbox/mcp-server",
+        "https://docs.mapbox.com/api/overview/",
+    ];
+
+    for args in [&["--help"][..], &["-h"][..], &["help"][..]] {
+        let out = run(args);
+        assert!(out.status.success(), "{args:?} exited non-zero");
+        let text = stdout(&out);
+        // The heading carries clap's header style, which must not leak
+        // into a pipe as raw escape codes.
+        assert!(
+            !text.contains('\x1b'),
+            "{args:?} has escape codes: {text:?}"
+        );
+        for link in LINKS {
+            assert!(text.contains(link), "{args:?} is missing {link}: {text}");
+        }
+    }
+
+    for args in [&["styles", "--help"][..], &["help", "styles"][..]] {
+        let text = stdout(&run(args));
+        assert!(
+            !text.contains("Learn more:"),
+            "{args:?} should not carry the top-level links: {text}"
+        );
+    }
+}
+
+/// Help used to run each option onto one line however long, so an 80-column
+/// terminal folded descriptions back to column 0. clap now wraps to the
+/// terminal, or to 100 columns when there is none, as here.
+#[test]
+fn help_lines_fit_the_wrap_width() {
+    let text = stdout(&run(&["--help"]));
+    for line in text.lines() {
+        assert!(
+            line.chars().count() <= 100,
+            "line over 100 columns: {line:?}"
+        );
+    }
+}
+
+/// An env-backed option names its variable and nothing more: an unset one
+/// used to read `[env: MAPBOX_USERNAME=]`, and a set one printed its value.
+#[test]
+fn help_names_env_variables_without_their_values() {
+    let out = command()
+        .env("MAPBOX_USERNAME", "someone-in-particular")
+        .arg("--help")
+        .output()
+        .expect("run mapbox");
+    let text = stdout(&out);
+
+    assert!(text.contains("[env: MAPBOX_USERNAME]"), "{text}");
+    assert!(!text.contains("someone-in-particular"), "{text}");
+    assert!(!text.contains("=]"), "an env note still shows `=`: {text}");
+}
+
+const AGENT_HINT: &str = "Agents: `mapbox --schema`";
+
+/// An agent reading top-level help is pointed at `--schema` rather than left
+/// to chain `--help` calls. Only there: subcommand help stays as it was.
+#[test]
+fn an_agent_is_pointed_at_the_schema() {
+    let out = command()
+        .env("CLAUDECODE", "1")
+        .arg("--help")
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert!(stdout(&out).contains(AGENT_HINT), "{}", stdout(&out));
+
+    let sub = command()
+        .env("CLAUDECODE", "1")
+        .args(["styles", "--help"])
+        .output()
+        .expect("run mapbox");
+    assert!(!stdout(&sub).contains(AGENT_HINT), "{}", stdout(&sub));
+}
+
+/// A person gets the help they always did. The environment is cleared rather
+/// than having agent variables removed one by one: the suite itself often
+/// runs under an agent, and `agent_detect` knows more variables than this
+/// file should have to list.
+#[test]
+fn without_an_agent_the_help_has_no_hint() {
+    let home = sandbox_home();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    cmd.env_clear()
+        .env("HOME", &home)
+        .env("MAPBOX_CONFIG_DIR", home.join(".mapbox"));
+    // Windows processes expect this one; nothing reads it as an agent.
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        cmd.env("SystemRoot", root);
+    }
+    let out = cmd.arg("--help").output().expect("run mapbox");
+
+    assert!(out.status.success());
+    assert!(!stdout(&out).contains(AGENT_HINT), "{}", stdout(&out));
+}
+
+/// Top-level help lists commands under named groups rather than clap's one
+/// "Commands:" list, and the global options under their own headings. The
+/// table behind the groups is checked against the command tree in
+/// `src/help_layout.rs`; this checks what a reader actually sees.
+#[test]
+fn top_level_help_groups_commands_and_options() {
+    let text = stdout(&run(&["--help"]));
+
+    let headings = [
+        "Maps and data:",
+        "Search:",
+        "Account:",
+        "Coding agents:",
+        "CLI:",
+        "Authentication:",
+        "Output:",
+        "Behavior:",
+        "Learn more:",
+    ];
+    let mut last = 0;
+    for heading in headings {
+        let at = text
+            .find(&format!("\n{heading}\n"))
+            .unwrap_or_else(|| panic!("no {heading:?} heading: {text}"));
+        assert!(at > last, "{heading:?} is out of order: {text}");
+        last = at;
+    }
+    assert!(
+        !text.contains("\nCommands:\n"),
+        "clap's flat list is back: {text}"
+    );
+    assert!(
+        !text.contains("Other:"),
+        "a command fell through to Other: {text}"
+    );
+    assert!(
+        text.lines().any(|line| line.starts_with("  accounts ")
+            && line.ends_with(" List access tokens and their scopes")),
+        "an API command should describe what it does, not its spec title: {text}"
+    );
+    // The commands that install the linked skills and MCP server are listed
+    // with the rest, which is why the links themselves don't repeat them.
+    for command in ["agent-skills", "mcp"] {
+        assert!(
+            text.lines()
+                .any(|line| line.starts_with(&format!("  {command} "))),
+            "`{command}` is not listed: {text}"
+        );
+    }
+}
+
+/// Command sections share one description column and option sections
+/// another, wrapped lines continue on their column, and nothing passes the
+/// terminal's width — the page is rendered here rather than by clap, so none
+/// of that comes for free.
+#[test]
+fn top_level_help_aligns_and_wraps_to_the_terminal() {
+    const OPTION_SECTIONS: &[&str] = &["Authentication:", "Output:", "Behavior:"];
+
+    let out = command()
+        .env("COLUMNS", "80")
+        .env_remove("CLAUDECODE")
+        .arg("--help")
+        .output()
+        .expect("run mapbox");
+    let text = stdout(&out);
+    let page = &text[text.find("Usage:").expect("a usage line")..];
+
+    // Where a row's description starts: past its name and the gap after it.
+    let column = |line: &str| {
+        let indent = line.len() - line.trim_start().len();
+        let gap = indent + line.trim_start().find("  ")?;
+        Some(gap + line[gap..].len() - line[gap..].trim_start().len())
+    };
+    let row_column = |prefix: &str| {
+        page.lines()
+            .find(|line| line.starts_with(prefix))
+            .and_then(column)
+            .unwrap_or_else(|| panic!("no {prefix:?} row: {page}"))
+    };
+    let names = row_column("  styles ");
+    let options = row_column("  -t, --token ");
+    assert!(
+        names < options,
+        "commands should not wait on the longest option"
+    );
+
+    let mut expected = names;
+    for line in page.lines() {
+        assert!(line.chars().count() <= 80, "over 80 columns: {line:?}");
+        if !line.starts_with(' ') && line.ends_with(':') {
+            expected = if OPTION_SECTIONS.contains(&line) {
+                options
+            } else {
+                names
+            };
+        } else if line.starts_with("  ") && !line.trim().is_empty() {
+            // A wrapped line starts on the column; a row reaches it after
+            // its name.
+            let indent = line.len() - line.trim_start().len();
+            let at = if indent == expected {
+                Some(indent)
+            } else {
+                column(line)
+            };
+            assert_eq!(at, Some(expected), "off its section's column: {line:?}");
+        }
+    }
+    assert!(
+        !page.contains('`'),
+        "code spans should show without backticks: {page}"
+    );
+}
+
+/// clap's long layout — every description on a line of its own, a blank
+/// line between options, notes as paragraphs — made a subcommand's `--help`
+/// mostly white space, and the eleven global options repeated on every page
+/// outweighed the command's own. Now: the compact layout, the command's long
+/// description at the top, and one line standing in for the global options,
+/// whichever way help is asked for.
+#[test]
+fn subcommand_help_is_compact_and_about_the_command() {
+    for args in [
+        &["tilesets", "query", "--help"][..],
+        &["help", "tilesets", "query"][..],
+    ] {
+        let out = run(args);
+        assert!(out.status.success(), "{args:?} failed");
+        let text = stdout(&out);
+
+        assert!(
+            text.starts_with("Query one or more tilesets at a coordinate"),
+            "{args:?} lost its long description: {text}"
+        );
+        assert!(
+            text.lines()
+                .any(|line| line.contains("--geometry") && line.contains("[possible values:")),
+            "{args:?} should keep notes on the option's line: {text}"
+        );
+        assert!(
+            !text.contains("--token <TOKEN>") && !text.contains("Authentication:"),
+            "{args:?} spells out the global options again: {text}"
+        );
+        assert!(
+            text.contains("Run mapbox --help for the global options"),
+            "{args:?} should still point at the global options: {text}"
+        );
+        assert!(!text.contains('`'), "{args:?} shows backticks: {text}");
+    }
+}
+
+/// Hidden from a subcommand's help, a global option still parses there and
+/// is still offered for a typo; and the top-level usage line still says the
+/// command takes options.
+#[test]
+fn hidden_global_options_still_work_and_are_suggested() {
+    let typo = run(&["-o", "text", "styles", "list", "--outptu", "json"]);
+    assert!(
+        stderr(&typo).contains("a similar argument exists: '--output'"),
+        "{}",
+        stderr(&typo)
+    );
+
+    let dry = run(&[
+        "styles",
+        "delete",
+        "some-style",
+        "--username",
+        "someone",
+        "--dry-run",
+    ]);
+    assert!(
+        !stderr(&dry).contains("unexpected argument"),
+        "a global option was refused on a subcommand: {}",
+        stderr(&dry)
+    );
+
+    let help = stdout(&run(&["--help"]));
+    assert!(help.contains("Usage: mapbox [OPTIONS] <COMMAND>"), "{help}");
+}
+
+/// The compact help is made on the copy of the tree that parses; `--schema`
+/// still publishes the spec's own text, markup included.
+#[test]
+fn the_schema_keeps_the_text_help_simplifies() {
+    let out = run(&["tilesets", "query", "--schema"]);
+    assert!(out.status.success());
+    assert!(
+        stdout(&out).contains("`{owner}.{tileset}`"),
+        "--schema should keep the spec's wording: {}",
+        stdout(&out)
+    );
+}
+
+/// Color follows the order `cf` uses: `NO_COLOR` wins, then `FORCE_COLOR`
+/// (`0` meaning off), then whether the stream is a terminal — which here it
+/// never is. The palette's 24-bit colors appear only where the terminal is
+/// known to render them; elsewhere styling is bold alone.
+#[test]
+fn color_follows_no_color_then_force_color() {
+    let help = |vars: &[(&str, &str)]| {
+        let mut cmd = command();
+        for var in [
+            "NO_COLOR",
+            "FORCE_COLOR",
+            "COLORTERM",
+            "TERM_PROGRAM",
+            "WT_SESSION",
+            "TERM",
+        ] {
+            cmd.env_remove(var);
+        }
+        cmd.envs(vars.iter().copied());
+        stdout(&cmd.arg("--help").output().expect("run mapbox"))
+    };
+    const MUTED: &str = "\x1b[38;2;127;127;127m";
+
+    assert!(!help(&[]).contains('\x1b'), "a pipe gets plain text");
+
+    let forced = help(&[("FORCE_COLOR", "1")]);
+    assert!(
+        forced.contains("\x1b[1m"),
+        "FORCE_COLOR should style a pipe: {forced:?}"
+    );
+    assert!(
+        !forced.contains("\x1b[38;2;"),
+        "no 24-bit color where the terminal is not known to render it: {forced:?}"
+    );
+
+    // Notes are the one color help uses; headings take the theme's own.
+    let truecolor = help(&[("FORCE_COLOR", "1"), ("COLORTERM", "truecolor")]);
+    assert!(truecolor.contains(MUTED), "{truecolor:?}");
+
+    let both = help(&[("FORCE_COLOR", "1"), ("NO_COLOR", "1")]);
+    assert!(!both.contains('\x1b'), "NO_COLOR wins: {both:?}");
+    assert!(!help(&[("FORCE_COLOR", "0")]).contains('\x1b'));
+}
+
+/// `--no-color` does what `NO_COLOR` does, wherever it is on the line, and
+/// wins over `FORCE_COLOR` — including in help, which clap renders before
+/// the matches that would say so exist.
+#[test]
+fn the_no_color_flag_turns_color_off() {
+    let run_with = |args: &[&str]| {
+        command()
+            .env("FORCE_COLOR", "1")
+            .env("COLORTERM", "truecolor")
+            .env_remove("NO_COLOR")
+            .args(args)
+            .output()
+            .expect("run mapbox")
+    };
+
+    for args in [
+        &["--no-color", "--help"][..],
+        &["tilesets", "query", "--help", "--no-color"],
+    ] {
+        let text = stdout(&run_with(args));
+        assert!(!text.contains('\x1b'), "{args:?} kept color: {text:?}");
+    }
+
+    let typo = run_with(&["-o", "text", "--no-color", "--versiomn"]);
+    assert!(!stderr(&typo).contains('\x1b'), "{:?}", stderr(&typo));
+
+    let parsed = run_with(&[
+        "--no-color",
+        "styles",
+        "delete",
+        "some-style",
+        "--username",
+        "someone",
+        "--dry-run",
+    ]);
+    assert!(
+        !stderr(&parsed).contains("unexpected argument"),
+        "{}",
+        stderr(&parsed)
+    );
+}
+
+/// Forced color is for a person reading a pipe through a pager; a JSON error
+/// is for a program, and must not carry escapes inside its strings.
+#[test]
+fn forced_color_never_reaches_json() {
+    let out = command()
+        .env("FORCE_COLOR", "1")
+        .env("COLORTERM", "truecolor")
+        .args(["-o", "json", "--versiomn"])
+        .output()
+        .expect("run mapbox");
+    let err = stderr(&out);
+    assert!(!err.contains('\x1b'), "{err:?}");
+    assert_eq!(json(&err)["code"], "usage");
+}
+
 /// An operation that can never succeed is not in the command surface, so it
 /// answers exactly as a mistyped name does — same code, same shape, same
 /// exit. Anything else would tell a caller which scopes exist while still

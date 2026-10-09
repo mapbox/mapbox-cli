@@ -24,6 +24,7 @@ pub mod banner;
 mod error;
 mod render;
 pub mod style;
+pub mod theme;
 
 pub use error::{emit_error, CliError};
 pub use render::field_lines;
@@ -335,7 +336,7 @@ fn print_tips(tips: &[String]) {
 
 /// The lines [`print_tips`] writes, colored or not. The label is bold and the
 /// advice dimmed, so the tips read as secondary to the result above them.
-fn tip_lines(tips: &[String], color: bool) -> Vec<String> {
+pub(crate) fn tip_lines(tips: &[String], color: bool) -> Vec<String> {
     if let [tip] = tips {
         return vec![format!(
             "{} {}",
@@ -349,6 +350,12 @@ fn tip_lines(tips: &[String], color: bool) -> Vec<String> {
                 .map(|tip| format!("  {}", style::dim_prose(tip, color))),
         )
         .collect()
+}
+
+/// Whether either output stream is a terminal — something that can be asked
+/// for its background color (see `theme::allow_background_query`).
+pub fn on_a_terminal() -> bool {
+    std::io::stdout().is_terminal() || std::io::stderr().is_terminal()
 }
 
 /// Whether a result written to stdout may carry color. Only a terminal:

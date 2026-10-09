@@ -2119,7 +2119,7 @@ mod tests {
             .expect("--output is global");
         let described = describe(output);
         assert!(
-            described.contains("a terminal gets text"),
+            described.contains("text in a terminal, JSON when piped"),
             "the whole of --output's help should survive: {described}"
         );
 
@@ -2198,7 +2198,8 @@ mod tests {
             // The page heading, then straight to the command — no service
             // intro repeating what the command's own block says.
             let summary_line = page.contents.lines().find(|line| {
-                line.starts_with("Write Agent Skills") || line.starts_with("Proxy commands")
+                line.starts_with("Write Agent Skills")
+                    || line.starts_with("Run the Mapbox Tilesets CLI")
             });
             if let Some(summary) = summary_line {
                 assert_eq!(

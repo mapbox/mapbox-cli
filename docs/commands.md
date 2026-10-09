@@ -546,6 +546,7 @@ either.
 | `--output`, `-o` | `auto` \| `text` \| `json`. |
 | `--id <value>` | On a command that returns a list, print just the row with that `id` or `name`. |
 | `--quiet`, `-q` | Don't print the `mapbox · v<version>` banner, which goes to stderr and only when stderr is a terminal. Also `MAPBOX_QUIET`. |
+| `--no-color` | Turn off color in help, errors and text output. Same as `NO_COLOR`; wins over `FORCE_COLOR`. |
 | `--timeout <seconds>` | How long one request may take, connection included. Defaults to 60 seconds, or 900 for a body read from `--file` or from a `--data @<path>`/`@-`. Also `MAPBOX_TIMEOUT`. |
 
 An operation with a request body takes `--data`/`-d` when that body is text
@@ -4633,15 +4634,11 @@ every line `-o text` prints around the table, is exactly what came back.
 Usage · 2026-08-09 → 2026-09-08
 
 PRODUCT                TOTAL  DAILY TREND
-Directions API    67,840,000  ▁▄▇▆▆▅▅▇▇▇▇▆▅▅▄▇▇██▇▇▆▅▅▇▇██▇▇▆
+Directions API    67,840,000  ▄▅▇▆▆▆▆▇▇▇▇▆▆▆▅▇▇▇▇▇▇▆▆▆▇▇▇▇▇▇▆  peak 2,618,385/day
+Matrix API        45,260,000  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇  peak 1,460,000/day
+Vector Tiles API       6,300  ▁▁▁▁▁▁▇▁▁▁▁▁▁▄▁▁▁▄▁▁▄▁▁▁▁▁▁▁▁▁▁  peak 3,300/day
 
-Matrix API        45,260,000  ▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅▅
-
-Vector Tiles API       6,300  ▆▁▆▁▁▁█▁▁▁▁▁▁█▁▁▁█▆▁█▄▁▁▁▁▄▁▁▁▁
-
-Active days: 31
-
-Generated 2026-09-08T09:49:10.827Z
+31 active days · generated 2026-09-08 09:49 UTC
 
 Tips:
   `-o json` for the exact per-day numbers and the per-browser/country/host breakdown.
@@ -4681,10 +4678,17 @@ JSON `-o json` prints. Each row is a product's total for the period plus a
 sparkline of its daily values — a padded one: a day the API's `daily` array
 leaves out (it omits a day rather than sending `usage: 0` for it) still gets
 its own zero-height glyph at the right position in the line, computed from
-`data.period`'s own start and end. Rows have a blank line between them —
-without it, a sparkline's solid glyphs sitting flush against the next
-row's read as cramped rather than dense, on an account with more than a
-couple of products. Exact per-day numbers and the per-browser/country/host
+`data.period`'s own start and end, so every product's line is the same
+width. Bars scale from zero to the product's own busiest day, the way
+ratatui's sparkline scales, so a bar's height is proportional to its value
+and a product used the same amount every day is at the top every day
+(`Matrix API` above). Since every row is to its own scale, each line ends
+with `peak N/day`, the day's usage its tallest bar stands for. A day with any
+usage is never drawn as the zero glyph.
+Rows stack one per line, and the tallest bar stops at `▇` rather than `█`,
+which leaves a gap under the row above so the products don't run
+together. At a terminal the bars are in the accent color over a muted
+baseline. Exact per-day numbers and the per-browser/country/host
 breakdown are left to `-o json`; `--product` narrows the whole response,
 both columns, to one product's row. A 403 covers two different causes the
 API doesn't otherwise distinguish: the token missing `statistics:read` — a
@@ -4713,9 +4717,7 @@ Directions API — total 67,840,000
   2026-08-10  2,150,000
   2026-08-09  2,100,000
 
-Active days: 31
-
-Generated 2026-09-08T09:49:10.827Z
+31 active days · generated 2026-09-08 09:49 UTC
 
 Tips:
   `-o json` for the per-browser/country/host breakdown.

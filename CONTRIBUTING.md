@@ -76,6 +76,11 @@ where the specs are maintained, which is inside Mapbox.
 editable: hand-authored specs for APIs Mapbox publishes no description for.
 See its own README.
 
+A new command, generated or hand-written, also needs a place in top-level
+`mapbox --help`: add it to `GROUPS` in `src/help_layout.rs`, and give an API
+command a one-line description in `DESCRIPTIONS` there, since its own is the
+spec's title. `every_command_has_a_place` fails until it has both.
+
 `build.rs` records which upstream commit the vendored specs came from, when
 that information is available to it. It is best-effort and can never fail a
 build — read its header before changing it.

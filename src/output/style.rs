@@ -1,10 +1,13 @@
-//! Terminal color, for the parts of the output a person reads.
+//! Terminal color, for the parts of the output a person reads: whether to
+//! color, and raw ANSI helpers for the code that writes its own escapes.
+//! What the colors are is [`super::theme`]'s business.
 //!
-//! Raw ANSI escapes rather than a crate, following the usual conventions by
-//! hand: color only on a stream that is a terminal, and never under
-//! `NO_COLOR` or `TERM=dumb`. The palette is the terminal's own (bold, dim,
-//! bright blue) rather than fixed RGB values, so it follows the user's theme
-//! and reads on a light background as well as a dark one.
+//! Whether follows the order `cf` uses, with the command line first:
+//! `--no-color` or `NO_COLOR` turns color off whatever else is set,
+//! `FORCE_COLOR` (anything but `0`) turns it on even into a pipe, and
+//! otherwise a stream is colored when it is a terminal that is not
+//! `TERM=dumb`. `color_choice` hands clap the same answer for help and usage
+//! errors.
 //!
 //! Windows is the one place that needs care: a legacy console prints the
 //! escapes literally unless virtual-terminal mode is switched on, which takes
@@ -15,25 +18,91 @@
 //! probing it, so that stdout is only ever touched by the modules
 //! `tests/source_guards.rs` allows to.
 
+use std::ffi::OsString;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use clap::ColorChoice;
+
+use super::theme;
+
+/// The global flag that turns color off.
+pub const NO_COLOR_ARG: &str = "no-color";
+
+static TURNED_OFF: AtomicBool = AtomicBool::new(false);
+
+/// Whether argv asks for no color, read before clap parses it.
+///
+/// Help and usage errors are rendered during the parse, so by the time
+/// matches say `--no-color` they have already been printed. This reads the
+/// line the way `Mode::early` reads `--output`: up to `--`, past which
+/// nothing is ours. An argument meant for `tilesets-cli` that happens to be
+/// `--no-color` turns ours off too, which costs only color.
+pub fn requested_off(argv: &[OsString]) -> bool {
+    let flag = format!("--{NO_COLOR_ARG}");
+    argv.iter()
+        .skip(1)
+        .filter_map(|arg| arg.to_str())
+        .take_while(|arg| *arg != "--")
+        .any(|arg| arg == flag)
+}
+
+/// Turns color off for the rest of the run, as `--no-color` asks.
+pub fn turn_off() {
+    TURNED_OFF.store(true, Ordering::Relaxed);
+}
+
 pub const RESET: &str = "\x1b[0m";
 pub const BOLD: &str = "\x1b[1m";
-pub const DIM: &str = "\x1b[2m";
-pub const ACCENT: &str = "\x1b[94m";
+
+/// The palette's accent, as an escape. Bold where 24-bit color is not known
+/// to render.
+pub fn accent() -> String {
+    theme::open(theme::accent())
+}
+
+/// The palette's muted color, as an escape. Empty where 24-bit color is not
+/// known to render: plain text, not a theme's `dim`.
+pub fn muted() -> String {
+    theme::open(theme::muted())
+}
 
 /// Whether a stream should be written in color.
 pub fn enabled(stream_is_terminal: bool) -> bool {
-    stream_is_terminal
-        && allowed(
-            env_value("NO_COLOR").is_some(),
-            env_value("TERM").as_deref(),
-            !cfg!(windows)
-                || env_value("WT_SESSION").is_some()
-                || env_value("TERM_PROGRAM").is_some(),
-        )
+    decide(no_color(), env_value("FORCE_COLOR").as_deref()).unwrap_or_else(|| {
+        stream_is_terminal && env_value("TERM").as_deref() != Some("dumb") && console_renders_ansi()
+    })
 }
 
-fn allowed(no_color: bool, term: Option<&str>, console_renders_ansi: bool) -> bool {
-    !no_color && term != Some("dumb") && console_renders_ansi
+/// The same decision for clap, which checks for a terminal itself.
+pub fn color_choice() -> ColorChoice {
+    match decide(no_color(), env_value("FORCE_COLOR").as_deref()) {
+        Some(true) => ColorChoice::Always,
+        Some(false) => ColorChoice::Never,
+        None if env_value("TERM").as_deref() == Some("dumb") => ColorChoice::Never,
+        None => ColorChoice::Auto,
+    }
+}
+
+/// `--no-color` or `NO_COLOR`.
+fn no_color() -> bool {
+    TURNED_OFF.load(Ordering::Relaxed) || env_value("NO_COLOR").is_some()
+}
+
+/// What the environment settles before the stream is looked at, if anything.
+fn decide(no_color: bool, force_color: Option<&str>) -> Option<bool> {
+    if no_color {
+        Some(false)
+    } else {
+        force_color.map(|value| value != "0")
+    }
+}
+
+/// A legacy Windows console prints escapes literally unless
+/// virtual-terminal mode is on, and switching it on takes an API call this
+/// crate has no `unsafe` for — so color there is kept to terminals known to
+/// have it on already.
+fn console_renders_ansi() -> bool {
+    !cfg!(windows) || env_value("WT_SESSION").is_some() || env_value("TERM_PROGRAM").is_some()
 }
 
 /// A variable's value, treating an empty one as unset — `NO_COLOR=` is how a
@@ -42,22 +111,23 @@ fn env_value(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
-/// `text` in `style`, or unchanged when color is off.
+/// `text` in `style`, or unchanged when color is off or `style` is empty.
 pub fn paint(text: &str, style: &str, on: bool) -> String {
-    if on {
+    if on && !style.is_empty() {
         format!("{style}{text}{RESET}")
     } else {
         text.to_string()
     }
 }
 
-/// Dims prose while keeping its `code spans` in the accent color, so the part
-/// a reader copies stands out from the advice around it. The backticks stay:
+/// Mutes prose while keeping its `code spans` in the accent, so the part a
+/// reader copies stands out from the advice around it. The backticks stay:
 /// the text must mean the same thing with the color stripped.
 pub fn dim_prose(text: &str, on: bool) -> String {
     if !on {
         return text.to_string();
     }
+    let (accent, muted) = (accent(), muted());
     let parts: Vec<&str> = text.split('`').collect();
     let mut out = String::new();
     for (index, part) in parts.iter().enumerate() {
@@ -67,11 +137,11 @@ pub fn dim_prose(text: &str, on: bool) -> String {
         // the text.
         let unpaired = index == parts.len() - 1 && index % 2 == 1;
         if unpaired {
-            out.push_str(&format!("{DIM}`{part}{RESET}"));
+            out.push_str(&paint(&format!("`{part}"), &muted, true));
         } else if index % 2 == 1 {
-            out.push_str(&format!("{ACCENT}`{part}`{RESET}"));
+            out.push_str(&paint(&format!("`{part}`"), &accent, true));
         } else if !part.is_empty() {
-            out.push_str(&format!("{DIM}{part}{RESET}"));
+            out.push_str(&paint(part, &muted, true));
         }
     }
     out
@@ -96,17 +166,30 @@ pub fn strip(text: &str) -> String {
 mod tests {
     use super::*;
 
+    /// `NO_COLOR` wins over everything; `FORCE_COLOR` decides next, with
+    /// `0` meaning off; with neither, the stream decides.
     #[test]
-    fn no_color_a_dumb_terminal_or_a_legacy_console_get_plain_text() {
-        assert!(allowed(false, Some("xterm-256color"), true));
-        assert!(!allowed(true, Some("xterm-256color"), true));
-        assert!(!allowed(false, Some("dumb"), true));
-        assert!(!allowed(false, None, false));
+    fn no_color_then_force_color_then_the_stream() {
+        assert_eq!(decide(true, Some("1")), Some(false));
+        assert_eq!(decide(false, Some("1")), Some(true));
+        assert_eq!(decide(false, Some("3")), Some(true));
+        assert_eq!(decide(false, Some("0")), Some(false));
+        assert_eq!(decide(false, None), None);
     }
 
     #[test]
-    fn a_stream_that_is_not_a_terminal_is_never_colored() {
-        assert!(!enabled(false));
+    fn no_color_is_read_up_to_the_end_of_options() {
+        let argv = |args: &[&str]| -> Vec<OsString> {
+            std::iter::once("mapbox")
+                .chain(args.iter().copied())
+                .map(OsString::from)
+                .collect()
+        };
+        assert!(requested_off(&argv(&["--no-color", "--help"])));
+        assert!(requested_off(&argv(&["styles", "list", "--no-color"])));
+        assert!(!requested_off(&argv(&["styles", "list"])));
+        assert!(!requested_off(&argv(&["tilesets-cli", "--", "--no-color"])));
+        assert!(!requested_off(&argv(&["--no-colors"])));
     }
 
     #[test]
@@ -120,7 +203,7 @@ mod tests {
         let tip = "Values are shortened; `-o json` prints each row whole.";
         let colored = dim_prose(tip, true);
         assert!(
-            colored.contains(&format!("{ACCENT}`-o json`{RESET}")),
+            colored.contains(&format!("{}`-o json`{RESET}", accent())),
             "{colored:?}"
         );
         assert_eq!(strip(&colored), tip);

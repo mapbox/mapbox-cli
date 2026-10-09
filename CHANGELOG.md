@@ -19,6 +19,56 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox usage` reads as a chart: one row per product with no blank
+  lines between, every sparkline as wide as the period, bars scaled from
+  zero so their height is proportional to the value, and the tallest
+  stopping short of the row above. Each row is to its own scale and ends
+  with the peak its tallest bar stands for (`peak 407/day`). A day with any
+  usage never draws as a day without.
+  At a terminal the title and bars are in the accent over a muted
+  baseline, and the tips look like every other command's. The footer is
+  one line (`31 active days · generated 2026-09-08 09:49 UTC`), and the
+  `TOTAL` column lines up under its header. Text output only.
+
+- An API parameter's help line no longer stops at the first dot inside an
+  id, a number or "e.g.": `tilesets get-tile` described `<tilesets>` as
+  "Tileset ID(s) in the format `username" and now shows the whole first
+  sentence. Help text only; `--schema` always had the full description.
+
+- Color reads on light and dark terminal themes alike. Tables, tips, the
+  banner and help use a small fixed palette (teal, gray, red) instead of
+  the terminal's own bright blue and dim, which fell below 2:1 on some
+  light themes; every colored run of text is bold. Help asks the terminal
+  for its background and uses a palette made for a dark or a light one;
+  everything else, and help where the terminal doesn't answer, uses one
+  that reads on both. A terminal not known to show 24-bit color gets bold
+  and plain text instead. New `--no-color` flag turns color off, as
+  `NO_COLOR` does, and `FORCE_COLOR=1` now keeps color in a pipe; either
+  way off wins.
+
+- Top-level `mapbox --help` lists commands in groups (Maps and data,
+  Search, Account, Coding agents, CLI), each with a line saying what it
+  does rather than which API it wraps, and the global options under
+  Authentication, Output and Behavior, wrapped to the terminal. At a
+  terminal, help — top-level or a command's — opens with the
+  `mapbox · v<version>` banner, as a command run does.
+  Subcommand help uses clap's compact layout for `--help` as well as
+  `-h`, with the command's full description at the top, and points to
+  `mapbox --help` for the global options instead of repeating them; they
+  still work on every command. Headings are teal; names to type and values
+  to fill in are bold in the terminal's own foreground; notes are gray. clap's yellow and green in usage errors
+  are bold now too.
+  Help text only: no command, flag, exit code or result output changes.
+
+- Top-level `mapbox --help` / `mapbox help` changes. It ends with a
+  "Learn more" section linking the CLI docs, the agent-setup prompt,
+  Mapbox Agent Skills, the Mapbox MCP server and the API docs. When a
+  coding agent runs it (detected the same way as for the `User-Agent`),
+  it opens with a two-line hint pointing at `mapbox --schema`. Help also
+  wraps to the terminal width (100 columns when piped), and env-backed
+  options read `[env: NAME]` without the variable's value. Help text
+  only: no flag, exit code or result output changes.
+
 - **Breaking**: `--eta-type`, `--navigation-profile` and `--origin` removed
   from `mapbox search category`. The category endpoint does not currently
   return an ETA, so the flags were accepted but had no effect. A script

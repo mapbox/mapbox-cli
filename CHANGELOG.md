@@ -260,10 +260,12 @@ that may never merge. They are not releases and are not listed here.
   code; it does find a `~/.mapbox/history` directory it didn't before, and
   `mapbox config list` now reports a second key, `history`.
 
-- `mapbox config set telemetry off` turns the telemetry event off for good,
-  in every shell, the way `MAPBOX_CLI_NO_TELEMETRY=1` does for one. The run
-  that turns it off records nothing either. `mapbox config list` now also
-  reports `telemetry`.
+- `mapbox config set telemetry off` turns telemetry off for good, in every
+  shell, the way `MAPBOX_CLI_NO_TELEMETRY=1` does for one: the run's event,
+  the `User-Agent` markers and the update notice. The run that turns it off
+  records nothing either. `mapbox config list` now also reports `telemetry`,
+  and `mapbox doctor` reports it as `telemetry_persisted`.
+
 - Each run sends one `cli.command` telemetry event to Mapbox, from a
   background process the command doesn't wait for, with your own token
   (`--token`, `MAPBOX_ACCESS_TOKEN` or your login) or, when you have none,

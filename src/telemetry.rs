@@ -1,5 +1,6 @@
 //! What this CLI's `User-Agent` says about the environment, beyond its
-//! version. `MAPBOX_CLI_NO_TELEMETRY` disables all of it.
+//! version. `MAPBOX_CLI_NO_TELEMETRY` or `mapbox config set telemetry off`
+//! disables all of it — and the update check and the run's event with it.
 //!
 //! `crate::http` builds the client and attaches [`user_agent`]'s result.
 
@@ -17,8 +18,17 @@ const NOT_AN_OPT_OUT: [&str; 6] = ["0", "f", "false", "n", "no", "off"];
 /// Always sent, even when telemetry is off.
 pub const PRODUCT_TOKEN: &str = concat!("mapbox-cli/", env!("CARGO_PKG_VERSION"));
 
-/// Whether anything past [`PRODUCT_TOKEN`] may be sent.
+/// Whether anything past [`PRODUCT_TOKEN`] may be sent: neither opt-out is
+/// on. The two cover the same things, one for a shell and one for good, so
+/// every caller asks this rather than either alone. The setting is read
+/// afresh each time, so a run that turns it off stops at its next check.
 pub(crate) fn telemetry_allowed() -> bool {
+    env_allows_telemetry() && crate::config::telemetry_enabled()
+}
+
+/// `MAPBOX_CLI_NO_TELEMETRY` alone, for `doctor`, which reports the two
+/// opt-outs apart.
+pub(crate) fn env_allows_telemetry() -> bool {
     env_switch(MAPBOX_CLI_NO_TELEMETRY_ENV) != Some(true)
 }
 

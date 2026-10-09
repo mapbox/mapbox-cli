@@ -4130,7 +4130,7 @@ was set in, and stays in every future shell instead.
 | `update-check` | `on` | The update notice; mirrors `MAPBOX_NO_UPDATE_CHECK` (see [Update notices](../README.md#update-notices)) |
 | `history` | `on` | [Command history](../README.md#command-history), read by `mapbox history`; `MAPBOX_HISTORY=0` or `=1` overrides it for a session |
 | `log` | `off` | [Diagnostic logs](../README.md#diagnostic-logs), shown by `mapbox history show`; `MAPBOX_LOG=1` or `=0` overrides it for a session. Needs `history` on: `config set log on` with history off fails with `history_required` |
-| `telemetry` | `on` | The run's telemetry event; mirrors `MAPBOX_CLI_NO_TELEMETRY` (see [Privacy](../README.md#privacy)) |
+| `telemetry` | `on` | Telemetry — the run's event, the `User-Agent` markers and the update notice; mirrors `MAPBOX_CLI_NO_TELEMETRY` (see [Privacy](../README.md#privacy)) |
 
 ### `mapbox config get`
 
@@ -4574,6 +4574,7 @@ Telemetry:     on
   "proxy": { "active": [] },
   "switches": {
     "telemetry_allowed": true,
+    "telemetry_persisted": true,
     "update_check_env_opt_out": false,
     "update_check_persisted": true
   },

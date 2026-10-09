@@ -110,7 +110,13 @@ fn terminal_marker() -> String {
 
 /// The full `User-Agent`: [`PRODUCT_TOKEN`], then markers if allowed.
 pub fn user_agent(command_group: Option<&str>) -> String {
-    if telemetry_allowed() {
+    user_agent_if(telemetry_allowed(), command_group)
+}
+
+/// [`user_agent`] with the decision passed in, so a test isn't at the mercy
+/// of the persisted setting on the machine running it.
+fn user_agent_if(allowed: bool, command_group: Option<&str>) -> String {
+    if allowed {
         assemble(&telemetry_markers(command_group))
     } else {
         assemble(&[])
@@ -148,11 +154,11 @@ mod tests {
         let previous = std::env::var_os(MAPBOX_CLI_NO_TELEMETRY_ENV);
         let read = |value: &&str| {
             std::env::set_var(MAPBOX_CLI_NO_TELEMETRY_ENV, value);
-            user_agent(None)
+            user_agent_if(env_allows_telemetry(), None)
         };
 
         std::env::remove_var(MAPBOX_CLI_NO_TELEMETRY_ENV);
-        let unset = user_agent(None);
+        let unset = user_agent_if(env_allows_telemetry(), None);
         let opted_out: Vec<String> = opt_outs.iter().map(read).collect();
         let allowed: Vec<String> = left_alone.iter().map(read).collect();
 
@@ -162,6 +168,7 @@ mod tests {
         }
 
         assert!(unset.starts_with(PRODUCT_TOKEN), "{unset}");
+        assert_ne!(unset, PRODUCT_TOKEN, "no markers with the switch unset");
         for (value, agent) in opt_outs.iter().zip(&opted_out) {
             assert_eq!(agent, PRODUCT_TOKEN, "MAPBOX_CLI_NO_TELEMETRY={value:?}");
         }

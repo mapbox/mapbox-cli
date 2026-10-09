@@ -240,6 +240,11 @@ fn either_opt_out_records_nothing() {
         received.recv_timeout(Duration::from_secs(3)).is_err(),
         "`telemetry off` still sent an event"
     );
+    // Not left to the send child's own check: the run itself records nothing.
+    assert!(
+        !config_dir(&home).join(".telemetry").exists(),
+        "`telemetry off` still wrote telemetry"
+    );
 }
 
 #[test]

@@ -264,7 +264,10 @@ that may never merge. They are not releases and are not listed here.
   shell, the way `MAPBOX_CLI_NO_TELEMETRY=1` does for one: the run's event,
   the `User-Agent` markers and the update notice. The run that turns it off
   records nothing either. `mapbox config list` now also reports `telemetry`,
-  and `mapbox doctor` reports it as `telemetry_persisted`.
+  and `mapbox doctor` reports it as `telemetry_persisted`; its
+  `telemetry_allowed` still means the environment variable alone. Version
+  0.3.0 doesn't know this key, and its `mapbox config set` drops it from the
+  file, so with two installs, set it again after using the older one.
 
 - Each run sends one `cli.command` telemetry event to Mapbox, from a
   background process the command doesn't wait for, with your own token

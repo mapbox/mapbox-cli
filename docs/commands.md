@@ -4591,6 +4591,10 @@ Telemetry:     on
 </td></tr>
 </table>
 
+In `switches`, `telemetry_allowed` is `MAPBOX_CLI_NO_TELEMETRY` alone and
+`telemetry_persisted` is `mapbox config set telemetry`; telemetry is on only
+when both are `true`.
+
 With `--verify`, a `connectivity` object joins the JSON and a `Reachable:`
 line joins the text — `{ "reachable": true, "status": 200 }`, or `{
 "reachable": false }` (plus an `error` field under `--debug`) when the

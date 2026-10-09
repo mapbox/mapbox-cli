@@ -281,20 +281,30 @@ deeper where that reads better, as in `mapbox styles draft get`.
 [docs/commands.md](./docs/commands.md) lists every command with its
 parameters and sample output.
 
-Every request sends `User-Agent: mapbox-cli/<version>` and nothing else
-about you or your machine. `MAPBOX_CLI_NO_TELEMETRY=1` keeps even future
-markers out of that header.
+Every API request a command makes sends `User-Agent: mapbox-cli/<version>`
+and nothing else about you or your machine. `MAPBOX_CLI_NO_TELEMETRY=1`
+keeps even future markers out of that header.
 
-Each run also sends one event to Mapbox: the command's name, its options
-(a value only when it comes from a fixed list, otherwise just its length or
-size, and for a JSON body only the field names the API defines), how it
-ended, and how long it took — never a token, a file path or free text you
-typed. It carries a random ID that is replaced on the first run a day after
-it was created. It is sent in the background, so a command never waits for
-it, and dropped if it can't be delivered. It is sent with your own token
-(`--token`, `MAPBOX_ACCESS_TOKEN` or your login) when you have one, and with
-a token built into the CLI otherwise. A build from source has no built-in
-token, so with no token of your own the event is dropped.
+Each run also sends one event to Mapbox:
+
+- the command's name and its options: a value only for a flag, a choice from
+  a fixed list, a number, or a language, country or feature-type code;
+  otherwise just its length or size. A coordinate or tile address is sent
+  by name only, and a JSON body only by the field names the API defines;
+- how the run ended, how long it took, and how many requests it made;
+- your OS and architecture, how the CLI was installed, the previous version
+  after an upgrade, and whether it ran in CI or under a detected AI coding
+  agent;
+- which kind of token the command used and the Mapbox account it belongs to.
+
+It never includes a file path or free text you typed. It carries a random ID
+that is replaced on the first run a day after it was created. It is sent in
+the background, so a command never waits for it, and dropped if it can't be
+delivered. It is sent with your own token (`--token`, `MAPBOX_ACCESS_TOKEN`
+or your login) when you have one, and with a token built into the CLI
+otherwise; Mapbox Events keeps the token an event was sent with, and the
+account it belongs to, alongside the event. A build from source has no
+built-in token, so with no token of your own the event is dropped.
 `MAPBOX_CLI_NO_TELEMETRY=1` turns it off.
 
 ### Diagnostics and settings
@@ -618,8 +628,13 @@ Mapbox collects telemetry data from our CLIs to better understand how our
 tools are used and how to improve our products.
 
 - **What Telemetry Data We Collect:** Usage metrics include installs, the
-  service a Mapbox API command belongs to (e.g. `styles` or `geocoder`,
-  never the operation or its arguments), CLI version, OS/architecture,
+  service a Mapbox API command belongs to (e.g. `styles` or `geocoder`), the
+  command that ran and the shape of its options as described under
+  [API commands](#api-commands) (values only for flags, fixed choices,
+  numbers and language, country or feature-type codes; never coordinates,
+  file paths or free text), how it ended and how long it took, the kind of
+  token it used and the Mapbox account that token belongs to, the Mapbox
+  access token the event itself was sent with, CLI version, OS/architecture,
   whether stdin and stdout are attached to a terminal, an identifier for
   the detected AI coding agent (if any) running the command (based on
   signals such as the presence of the `CLAUDECODE` or `COPILOT_MODEL`
@@ -632,7 +647,8 @@ tools are used and how to improve our products.
   adoption, prioritize investments, and improve the reliability,
   performance, and developer experience of our CLIs.
 - **What We Do Not Collect:** Code completion outputs, source code, project
-  file names, directory contents, non-Mapbox API keys, or credentials.
+  file names, directory contents, non-Mapbox API keys, or credentials other
+  than the Mapbox access token an event is sent with.
 - **Who has Access:** Telemetry data will not be disclosed to, or accessed
   by, third parties other than Mapbox affiliates and passive cloud storage
   and hosting providers necessary to maintain our infrastructure.

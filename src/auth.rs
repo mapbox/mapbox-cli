@@ -1068,6 +1068,9 @@ pub fn logout(profile: Option<&str>, mode: Mode) -> Result<()> {
     let path = credentials_path(profile)?;
     let had_credentials = path.exists();
     if had_credentials {
+        // Waits out a refresh in flight, such as the telemetry sender's from
+        // the previous run, which would otherwise write the login back.
+        let _lock = CredentialLock::acquire(profile).ok();
         crate::run_record::set_auth_step("remove_credentials");
         std::fs::remove_file(&path)?;
     }

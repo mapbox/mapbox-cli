@@ -467,10 +467,10 @@ fn an_agent_is_pointed_at_the_schema() {
 fn without_an_agent_the_help_has_no_hint() {
     let home = sandbox_home();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
-    // Telemetry is not under test here, and would post to Mapbox.
-    cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
-        .env_remove("MAPBOX_CLI_TOKEN");
+    // Telemetry is not under test here, and would post to Mapbox. Set after
+    // `env_clear`, which would otherwise clear it too.
     cmd.env_clear()
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env("HOME", &home)
         .env("MAPBOX_CONFIG_DIR", home.join(".mapbox"));
     // Windows processes expect this one; nothing reads it as an agent.

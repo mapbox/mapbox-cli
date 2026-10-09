@@ -48,6 +48,7 @@ fn command(home: &Path) -> Command {
         .env_remove("MAPBOX_CLI_TOKEN")
         .env_remove("MAPBOX_INTERNAL_TELEMETRY_SEND")
         .env_remove("MAPBOX_INTERNAL_TELEMETRY_LOG")
+        .env_remove("SUDO_USER")
         .env("MAPBOX_NO_UPDATE_CHECK", "1")
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
@@ -144,17 +145,21 @@ fn nothing_the_user_typed_reaches_the_event() {
             TOKEN,
         ],
     );
-    let (_, second) = run_sent(
-        &home,
-        &[
-            "geocoder",
-            "forward",
-            "--q",
-            ADDRESS,
-            "--no-such-flag",
-            "-t",
-            TOKEN,
-        ],
+    // A request that parses and then fails offline, through a proxy that
+    // isn't there, so `--q` is classified rather than lost to a usage error.
+    let (_, second) = sent(
+        command(&home)
+            .env("HTTPS_PROXY", "http://127.0.0.1:9")
+            .env_remove("ALL_PROXY")
+            .env_remove("NO_PROXY")
+            .args(["geocoder", "forward", "--q", ADDRESS, "-t", TOKEN]),
+    );
+    assert!(
+        second["params"]
+            .as_array()
+            .expect("params")
+            .contains(&serde_json::json!({ "name": "q", "length": ADDRESS.chars().count() })),
+        "{second}"
     );
     let (_, third) = run_sent(&home, &["/Users/someone/secret/path"]);
 
@@ -402,6 +407,27 @@ fn the_opt_out_sends_nothing() {
     );
 }
 
+/// `sudo` keeps `HOME`, so a root run would leave root-owned files in the
+/// user's `~/.mapbox`.
+#[test]
+fn a_run_under_sudo_sends_nothing() {
+    let home = scratch("send-sudo");
+    let (received, url) = events_server(true);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_ACCESS_TOKEN", "pk.test")
+        .env("SUDO_USER", "someone")
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert!(
+        received.recv_timeout(Duration::from_secs(3)).is_err(),
+        "a run under sudo still sent an event"
+    );
+    assert!(!config_dir(&home).join(".telemetry").exists());
+}
+
 /// Every line of the delivery log under `home`, waiting up to ten seconds
 /// for `count` of them: the outcome is written by a child the command did
 /// not wait for.
@@ -611,6 +637,44 @@ fn a_run_that_never_parses_still_sends_with_the_environment_token() {
             .output()
             .expect("run mapbox");
         assert_eq!(sent_with(&received), "pk.env", "{args:?}");
+    }
+}
+
+#[test]
+fn a_run_that_never_parses_still_honors_use_login() {
+    for args in [
+        &["--use-login", "--version"][..],
+        &["--use-login", "styles", "--help"],
+        &["--use-login", "nosuchcommand"],
+    ] {
+        let home = scratch("send-unparsed-use-login");
+        let (received, url) = events_server(true);
+        let _ = command(&home)
+            .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+            .env("MAPBOX_ACCESS_TOKEN", "pk.env")
+            .env("MAPBOX_CLI_TOKEN", "pk.cli")
+            .args(args)
+            .output()
+            .expect("run mapbox");
+        assert_eq!(sent_with(&received), "pk.cli", "{args:?}");
+    }
+}
+
+/// `MapboxAccessToken` is the user's token for `tilesets-cli`, so it comes
+/// before the CLI's even though clap doesn't read it.
+#[test]
+fn the_legacy_token_variable_is_the_users_too() {
+    for args in [&["config", "list"][..], &["--version"]] {
+        let home = scratch("send-legacy-env");
+        let (received, url) = events_server(true);
+        let _ = command(&home)
+            .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+            .env("MapboxAccessToken", "pk.legacy")
+            .env("MAPBOX_CLI_TOKEN", "pk.cli")
+            .args(args)
+            .output()
+            .expect("run mapbox");
+        assert_eq!(sent_with(&received), "pk.legacy", "{args:?}");
     }
 }
 

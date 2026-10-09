@@ -523,9 +523,10 @@ fn prose_is_american_english() {
 /// A run with a token posts an event to Mapbox from a detached child, so a
 /// test that spawns `mapbox` with a fake `--token` — or on a machine with
 /// `MAPBOX_CLI_TOKEN` exported — would send real requests, and could fall back
-/// to the developer's own login. Naming `MAPBOX_CLI_NO_TELEMETRY` is the
-/// decision this asks for: set it, or test telemetry on purpose as
-/// `telemetry_events.rs`, `doctor.rs` and `update_check.rs` do.
+/// to the developer's own login. Setting `MAPBOX_CLI_NO_TELEMETRY=1`, or
+/// pointing `MAPBOX_INTERNAL_TELEMETRY_URL` at loopback as
+/// `telemetry_events.rs`, `doctor.rs` and `update_check.rs` do, is the
+/// decision this asks for. Removing the variable alone is not.
 #[test]
 fn every_test_that_runs_the_binary_decides_about_telemetry() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
@@ -533,8 +534,9 @@ fn every_test_that_runs_the_binary_decides_about_telemetry() {
         .into_iter()
         .filter_map(|(name, path)| {
             let text = std::fs::read_to_string(&path).expect("read a test");
-            (text.contains("CARGO_BIN_EXE_mapbox") && !text.contains("MAPBOX_CLI_NO_TELEMETRY"))
-                .then_some(name)
+            let decided = text.contains(r#".env("MAPBOX_CLI_NO_TELEMETRY", "1")"#)
+                || text.contains(r#".env("MAPBOX_INTERNAL_TELEMETRY_URL""#);
+            (text.contains("CARGO_BIN_EXE_mapbox") && !decided).then_some(name)
         })
         .collect();
     undecided.sort();

@@ -632,9 +632,14 @@ tools are used and how to improve our products.
   command that ran and the shape of its options as described under
   [API commands](#api-commands) (values only for flags, fixed choices,
   numbers and language, country or feature-type codes; never coordinates,
-  file paths or free text), how it ended and how long it took, the kind of
-  token it used and the Mapbox account that token belongs to, the Mapbox
-  access token the event itself was sent with, CLI version, OS/architecture,
+  file paths or free text), the global options it used (such as `--output`,
+  `--dry-run` or whether a named profile was used), how it ended and how
+  long it took, how many requests it made with their HTTP status and sizes,
+  the kind of token it used and the Mapbox account that token belongs to,
+  the Mapbox access token the event itself was sent with, a random
+  identifier that is replaced every day, which run started this one when it
+  ran inside another, CLI version, how the CLI was installed, the version
+  it was updated from and any newer one it offered, OS/architecture,
   whether stdin and stdout are attached to a terminal, an identifier for
   the detected AI coding agent (if any) running the command (based on
   signals such as the presence of the `CLAUDECODE` or `COPILOT_MODEL`

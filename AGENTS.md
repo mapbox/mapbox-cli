@@ -149,8 +149,9 @@ same for the completion scripts.
   responses are quoted rather than written, and the `cancelled` error code,
   which is a compatibility promise rather than a spelling.
 - **Four rules the compiler holds rather than a reviewer**, declared in
-  `Cargo.toml` with the reasoning beside each: no `unsafe`, no `println!`, no
-  `dbg!`, no `todo!`/`unimplemented!`. `print_stderr` is deliberately *not*
+  `Cargo.toml` with the reasoning beside each: no `unsafe` (one `#[allow]`,
+  in `src/detach.rs`, says why), no `println!`, no `dbg!`, no
+  `todo!`/`unimplemented!`. `print_stderr` is deliberately *not*
   denied — progress belongs there.
 - **The toolchain is pinned, and the floor is a different number.**
   `rust-toolchain.toml` names the exact Rust every clone and every workflow

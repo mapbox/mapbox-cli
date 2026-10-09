@@ -7,7 +7,8 @@
 //!
 //! 1. `--token` or `MAPBOX_ACCESS_TOKEN`, ranked the way a command ranks them
 //!    (see [`user_token`]).
-//! 2. The stored login, loaded the way a command loads it, refresh included.
+//! 2. The stored login, read as it is on disk and refreshed, under the
+//!    credentials lock, only when it is about to expire.
 //! 3. `MAPBOX_CLI_TOKEN` at run time, the CLI's token for someone with none
 //!    of their own, such as a developer pointing at staging.
 //! 4. The token compiled in from `MAPBOX_CLI_BUNDLED_TOKEN` at build time. A
@@ -16,8 +17,8 @@
 //!    every local build.
 //!
 //! A `401` moves on to the next token; any other answer is the caller's.
-//! Callers never see the token, so every one of them gets the same fallback
-//! without doing anything.
+//! [`send`]'s callers never see the token, so every one of them gets the same
+//! fallback without doing anything.
 //!
 //! # What may use the CLI's token
 //!
@@ -47,7 +48,7 @@ use crate::{auth, http};
 pub(crate) enum Fallback {
     /// `--token` or `MAPBOX_ACCESS_TOKEN`, as [`user_token`] ranks them.
     UserToken,
-    /// The stored login, loaded as a command loads it, refresh included.
+    /// The stored login, refreshed only when it is about to expire.
     Login,
     /// `MAPBOX_CLI_TOKEN` at run time, then the bundled token. Billed to the
     /// CLI's account, so it only ever comes after every token of the user's.
@@ -92,14 +93,18 @@ fn cli_token(override_token: Option<&str>) -> Option<String> {
 }
 
 /// The token the user gave this run, ranked as a command ranks it: with
-/// `--use-login` only a typed `--token` counts, otherwise `MAPBOX_ACCESS_TOKEN`
-/// does too. Resolved by the caller, which has the arguments, and handed to
-/// [`send`].
+/// `--use-login` only a typed `--token` counts, otherwise the environment
+/// does too, `MapboxAccessToken` included, since that is the user's token
+/// for `tilesets-cli`. Resolved by the caller, which has the arguments, and
+/// handed to [`send`].
 pub(crate) fn user_token(matches: &clap::ArgMatches) -> Option<String> {
     if matches.get_flag("use-login") {
         auth::typed_token(matches)
     } else {
-        matches.get_one::<String>("token").cloned()
+        matches
+            .get_one::<String>("token")
+            .cloned()
+            .or_else(|| auth::environment_token().map(|(_, token)| token))
     }
 }
 

@@ -331,8 +331,17 @@ fn with_workflow(f: impl FnOnce(&mut Option<Workflow>)) {
 /// its state files as root, and every later run as the user could read none
 /// of them — a fresh `userId` each time. Skipped for the same reason
 /// `run_history` skips it (aws/aws-cli#10031).
+///
+/// `uninstall` on Windows is skipped too: its helper deletes `mapbox.exe` a
+/// second after exit, and a sender still running from that image would keep
+/// the file locked and the delete would fail.
 pub(crate) fn deliver(record: &Record) {
     if !telemetry::telemetry_allowed() || std::env::var_os("SUDO_USER").is_some() {
+        return;
+    }
+    if cfg!(windows)
+        && record.command.first().map(String::as_str) == Some(crate::uninstall::COMMAND)
+    {
         return;
     }
     let event = build(record);
@@ -631,16 +640,21 @@ fn classify(
     param
 }
 
-/// Whether every item of an [`ALLOWLISTED`] value is a code: a language or
-/// country code (`en`, `zh-Hans`, `pt-BR`, `us`) or a known feature type.
+/// Whether every item of an [`ALLOWLISTED`] value is a code: a country code
+/// (`us`), a language code with an optional script or region (`en`,
+/// `zh-Hans`, `pt-BR`, `es-419`), or a known feature type. The shapes are
+/// tight on purpose: anything looser lets a short word through.
 fn is_code(name: &str, values: &[String]) -> bool {
-    fn language_or_country(item: &str) -> bool {
+    fn letters(part: &str, len: usize) -> bool {
+        part.len() == len && part.chars().all(|c| c.is_ascii_alphabetic())
+    }
+    fn language(item: &str) -> bool {
         let mut parts = item.splitn(2, ['-', '_']);
-        let head = parts.next().unwrap_or_default();
-        (2..=3).contains(&head.len())
-            && head.chars().all(|c| c.is_ascii_alphabetic())
+        letters(parts.next().unwrap_or_default(), 2)
             && parts.next().is_none_or(|tail| {
-                (2..=8).contains(&tail.len()) && tail.chars().all(|c| c.is_ascii_alphanumeric())
+                letters(tail, 4)
+                    || letters(tail, 2)
+                    || (tail.len() == 3 && tail.chars().all(|c| c.is_ascii_digit()))
             })
     }
     if !ALLOWLISTED.contains(&name) {
@@ -648,7 +662,8 @@ fn is_code(name: &str, values: &[String]) -> bool {
     }
     let items = || values.iter().flat_map(|v| v.split(',')).map(str::trim);
     match name {
-        "language" | "country" => items().all(language_or_country),
+        "country" => items().all(|item| letters(item, 2)),
+        "language" => items().all(language),
         "types" => items().all(|item| FEATURE_TYPES.contains(&item)),
         _ => false,
     }
@@ -667,6 +682,11 @@ fn data_shape(value: &str, declared: &[String]) -> (Option<u64>, Option<Vec<Stri
             let Ok(meta) = std::fs::metadata(path) else {
                 return (None, None);
             };
+            // The command has already read it, so only a regular file can be
+            // read again: a FIFO or `/dev/stdin` would block the exit.
+            if !meta.is_file() {
+                return (None, None);
+            }
             // Parsed only when small enough to be a request body worth
             // describing; the size alone is still recorded above that.
             if meta.len() > MAX_DATA_TO_PARSE {
@@ -938,6 +958,31 @@ mod tests {
         assert_eq!(data_shape("@-", &declared), (None, None));
     }
 
+    /// A FIFO was already drained by the command; opening it again at exit
+    /// would block until something else wrote to it.
+    #[cfg(unix)]
+    #[test]
+    fn a_data_path_that_is_not_a_regular_file_is_not_read_again() {
+        let dir = std::env::temp_dir().join(format!("mapbox-fifo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let fifo = dir.join(format!("body-{nanos}"));
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("run mkfifo");
+        assert!(made.success());
+
+        let (done, finished) = std::sync::mpsc::channel();
+        let arg = format!("@{}", fifo.display());
+        std::thread::spawn(move || done.send(data_shape(&arg, &[])));
+        let shape = finished.recv_timeout(std::time::Duration::from_secs(5));
+        assert_eq!(shape.expect("data_shape returned"), (None, None));
+    }
+
     #[test]
     fn the_user_id_is_replaced_once_it_is_a_day_old() {
         let id = uuid_v4([0x11; 16]);
@@ -994,7 +1039,7 @@ mod tests {
     fn allowlisted_values_go_out_only_when_they_are_codes() {
         for (name, value) in [
             ("language", "en"),
-            ("language", "zh-Hans,pt-BR"),
+            ("language", "zh-Hans,pt-BR,es-419"),
             ("country", "us,cn"),
             ("types", "address,poi"),
         ] {
@@ -1003,7 +1048,11 @@ mod tests {
         }
         for (name, value) in [
             ("country", "my secret project name"),
+            ("country", "us,my-secret"),
+            ("country", "joe"),
             ("language", "acme-corporation-internal"),
+            ("language", "ab-project1"),
+            ("language", "joe"),
             ("types", "notes about client acme"),
             ("types", "address,acme"),
         ] {
@@ -1014,6 +1063,33 @@ mod tests {
                 "{name}={value}"
             );
         }
+    }
+
+    /// A number's value is sent unless its name is in [`COORDINATES`], so a
+    /// location parameter a spec adds later, such as `proximity-lng`, would
+    /// leak. This fails until it is listed.
+    #[test]
+    fn every_numeric_location_parameter_is_a_coordinate() {
+        let specs = crate::spec::effective_services().expect("the bundled specs");
+        let mut unlisted: Vec<String> = specs
+            .iter()
+            .flat_map(|spec| &spec.operations)
+            .flat_map(|op| op.path_params.iter().chain(&op.query_params))
+            .filter(|param| param.numeric.is_some())
+            .map(|param| param.arg_name.clone())
+            .filter(|name| {
+                ["lon", "lat", "lng", "coord"]
+                    .iter()
+                    .any(|part| name.contains(part))
+                    && !COORDINATES.contains(&name.as_str())
+            })
+            .collect();
+        unlisted.sort();
+        unlisted.dedup();
+        assert!(
+            unlisted.is_empty(),
+            "numeric location parameters not in COORDINATES: {unlisted:?}"
+        );
     }
 
     #[test]

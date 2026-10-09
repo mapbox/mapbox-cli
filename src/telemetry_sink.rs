@@ -163,10 +163,12 @@ pub(crate) fn remember_user_token(token: Option<String>) {
 pub(crate) fn deliver(line: &str, profile: Option<&str>) {
     let url = send_url(is_production_build(), from_environment(URL_ENV));
     // Help, `--version` and usage errors return before the arguments are
-    // parsed, so nothing was remembered; the environment is still the user's.
+    // parsed, so nothing was remembered; the environment is still the user's,
+    // unless `--use-login` was typed to set it aside.
     let user_token = match USER_TOKEN.get() {
         Some(remembered) => remembered.clone(),
-        None => from_environment(auth::CLAP_TOKEN_ENV),
+        None if std::env::args_os().any(|arg| arg == "--use-login") => None,
+        None => auth::environment_token().map(|(_, token)| token),
     };
     if cli_token::has_token_for(cli_token::TELEMETRY, user_token.as_deref(), profile) {
         HttpSink {

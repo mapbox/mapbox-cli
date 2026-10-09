@@ -189,8 +189,9 @@ pub fn is_send_child() -> bool {
 
 /// The whole of the child: read the event from stdin and post it.
 ///
-/// Always succeeds, and says nothing; nobody reads its exit code. The opt-out
-/// is checked again here, because this is the process that makes the request.
+/// Always succeeds, and says nothing; nobody reads its exit code. Both
+/// opt-outs are checked again here, because this is the process that makes
+/// the request.
 pub fn run_send_child() -> ExitCode {
     if telemetry::telemetry_allowed() {
         // Through `send_url` again, so a production child cannot be pointed

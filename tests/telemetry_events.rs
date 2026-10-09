@@ -206,7 +206,7 @@ fn help_version_and_usage_errors_record_their_invocation() {
 }
 
 #[test]
-fn the_opt_out_records_nothing() {
+fn either_opt_out_records_nothing() {
     let home = scratch("opt-out-env");
     let out = command(&home)
         .env("MAPBOX_CLI_NO_TELEMETRY", "1")
@@ -217,6 +217,33 @@ fn the_opt_out_records_nothing() {
     assert!(
         !config_dir(&home).join(".telemetry").exists(),
         "MAPBOX_CLI_NO_TELEMETRY=1 still wrote telemetry"
+    );
+
+    // With a token and somewhere to send, so that nothing arriving is the
+    // setting's doing.
+    let home = scratch("opt-out-config");
+    let (received, url) = events_server(true);
+    let with_a_token = |args: &[&str]| {
+        command(&home)
+            .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+            .env("MAPBOX_CLI_TOKEN", "pk.cli")
+            .args(args)
+            .output()
+            .expect("run mapbox")
+    };
+    assert!(with_a_token(&["config", "set", "telemetry", "off"])
+        .status
+        .success());
+    // That run sends nothing either: the setting it wrote is read at exit.
+    let _ = with_a_token(&["config", "list"]);
+    assert!(
+        received.recv_timeout(Duration::from_secs(3)).is_err(),
+        "`telemetry off` still sent an event"
+    );
+    // Not left to the send child's own check: the run itself records nothing.
+    assert!(
+        !config_dir(&home).join(".telemetry").exists(),
+        "`telemetry off` still wrote telemetry"
     );
 }
 

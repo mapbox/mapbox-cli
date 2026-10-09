@@ -1,7 +1,8 @@
 # Implemented commands
 
-Every command the CLI ships: five auth commands, 36 API operations across 10
-command groups, the tilesets-cli proxy, `completion` and `generate-skills`. Each is
+Every command the CLI ships: five auth commands, 39 API operations (35 across 9
+command groups, plus `directions`, `isochrone`, `map-match` and `matrix`), the
+tilesets-cli proxy, `completion` and `generate-skills`. Each is
 shown in both of its renderings. Which one you get is decided by `--output`, whose default
 (`auto`) reads stdout: a terminal gets the left column, a pipe or redirect
 gets the right one. See
@@ -10,11 +11,12 @@ gets the right one. See
 Account names, style ids and tokens in the examples are replaced; everything
 else is as the API sent it.
 
-**32 of the 36 were run against the live API and show what came back:** 25
+**35 of the 39 were run against the live API and show what came back:** 25
 on 2026-09-01, `fonts list`, `fonts upload` and `fonts delete` on
 2026-09-08, once `fonts:list`/`fonts:write` became registrable,
-`directions route` on 2026-09-23, `feedback list` and `feedback get` on
-2026-09-24, and `feedback create` on 2026-10-02.
+`directions`, `isochrone` and `map-match` on 2026-09-23, `matrix`,
+`feedback list` and `feedback get` on 2026-09-24, and `feedback create` on
+2026-10-02.
 The write operations were exercised as round trips on throwaway objects —
 a style created, updated, drafted and deleted; icons uploaded to a sprite
 and taken out again; a font uploaded and deleted — leaving the account as
@@ -454,33 +456,35 @@ No stored profiles. Run `mapbox auth login` to create one.
 
 ## API command groups
 
-33 operations across 10 command groups. Nine are generated from the OpenAPI specs
-vendored in `openapi/`; `search` is the one exception — a hand-authored
-spec versioned in this repo's own `custom-openapi/`, see
+35 operations across 9 command groups, plus four single-operation commands
+with no group: `directions`, `isochrone`, `map-match` and `matrix`. Seven
+groups are generated from the OpenAPI specs vendored in `openapi/`; `search`,
+`feedback` and the four single commands are the exceptions — hand-authored
+specs versioned in this repo's own `custom-openapi/`, see
 `custom-openapi/README.md`.
 
 **A command group is not a spec file.** Which command group an operation belongs to is
 decided per operation, by an `x-mapbox-cli-command` extension the sync
 writes onto it, not by which file it was parsed from — so `sprites` is
 five operations out of the styles spec, and `tilesets` is one operation
-each out of the raster-tiles and vector-tiles specs. Two names that used to
-be command groups, `maps` and `vectortiles`, are gone because their last
-operation moved to `tilesets`.
+each out of the raster-tiles, vector-tiles and tilequery specs. Names that
+used to be command groups — `maps`, `vectortiles`, `tilequery`,
+`static-images` and `static-tiles` — are gone because their last operation
+moved to `tilesets` or `static`.
 
 | Command group | Operations |
 | --- | --- |
 | [`accounts`](#accounts) | **3** |
+| [`feedback`](#feedback) | **3** |
 | [`fonts`](#fonts) | **3** |
 | [`geocoder`](#geocoder) | **3** |
 | [`search`](#search) | **4** |
 | [`sprites`](#sprites) | **5** |
-| [`static-images`](#static-images) | **3** |
-| [`static-tiles`](#static-tiles) | **1** |
-| [`styles`](#styles) | **8** |
-| [`tilequery`](#tilequery) | **1** |
-| [`tilesets`](#tilesets) | **2** |
+| [`static`](#static) | **2** |
+| [`styles`](#styles) | **9** |
+| [`tilesets`](#tilesets) | **3** |
 
-The [Contents](#contents) list above names every one of the 33.
+The [Contents](#contents) list above names every one of the 39.
 
 **Everything else the Mapbox specs describe is not here at all.** Not
 hidden, not shipped as a command that refuses: absent from the spec content
@@ -588,8 +592,8 @@ Three things worth knowing about the read forms:
 
 A command that changes something takes `--dry-run`, which prints the request
 it would send, on stdout, and sends nothing. Which commands those are is not
-a list anyone keeps: it is every `POST`, `PUT`, `PATCH` and `DELETE` — 12 of
-the 33 operations — plus `auth login`, `auth logout`, `auth refresh` and
+a list anyone keeps: it is every `POST`, `PUT`, `PATCH` and `DELETE` — 13 of
+the 39 operations — plus `auth login`, `auth logout`, `auth refresh` and
 `generate-skills`. A read-only `GET` does not take it, so `mapbox styles
 list --dry-run` is a usage error rather than a no-op. It rehearses
 rather than describes: `--data` is parsed and every `--file` is read, so a
@@ -629,7 +633,7 @@ rather than from the spec:
 | One key holding an array of like objects | The same table — `{"icons":[…]}` is still a listing |
 | A single object | A field list, one level of nesting flattened onto dotted keys |
 | No body at all | A confirmation naming what happened — `Deleted <id>.`, or `{"ok":true,…}` |
-| A `search`, `geocoder` or `tilequery` `FeatureCollection` | A numbered list, one entry per feature — see the paragraph below |
+| A `search`, `geocoder` or `tilesets query` `FeatureCollection` | A numbered list, one entry per feature — see the paragraph below |
 | Anything else | Pretty-printed JSON — every other command group's GeoJSON, style documents and bare values lose their meaning in a table |
 
 A table shows the columns most rows have, that vary, and that do not repeat
@@ -658,7 +662,7 @@ usually wants a result for), never clipped:
    24.7454,59.437
 ```
 
-`geocoder`'s and `tilequery`'s `FeatureCollection`s render as a numbered list
+`geocoder`'s and `tilesets query`'s `FeatureCollection`s render as a numbered list
 for the same reason — see their own sections for the shape. The match is on
 those three command-group names exactly, so another command group that answers with
 GeoJSON keeps falling to pretty-printed JSON; its nesting is the information
@@ -667,12 +671,11 @@ to show falls the whole collection back to JSON rather than print a blank
 numbered entry — a feature that also carries a geometry still keeps its
 coordinate line, since the guard checks what the row ended up with, not the
 properties directly. A conforming response never reaches that case:
-`geocoder` requires `name`/`feature_type` on every feature, `tilequery`
+`geocoder` requires `name`/`feature_type` on every feature, `tilesets query`
 requires `tilequery.layer`.
 
-Three of the ten command groups can answer with bytes — `static-images`,
-`static-tiles` and `tilesets`. Those bypass `--output` in
-both modes:
+Two of the nine command groups can answer with bytes — `static` and
+`tilesets`. Those bypass `--output` in both modes:
 
 <table>
 <tr><th width="50%">Terminal — refuses</th><th width="50%">Redirected — raw bytes</th></tr>
@@ -687,7 +690,7 @@ it to a file, e.g. `... > out.png`.
 </td><td>
 
 ```
-$ mapbox static-images get-static-image … > map.png
+$ mapbox static get-image … > map.png
 $ file map.png
 map.png: PNG image data, 600 x 400
 ```

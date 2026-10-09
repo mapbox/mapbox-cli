@@ -1,7 +1,7 @@
 //! Turning a response into something a person reads.
 //!
 //! Tables for lists, aligned field lists for single objects, and numbered
-//! feature lists for the geocoding, search and tilequery services. Every
+//! feature lists for `geocoder`, `search` and `tilesets query`. Every
 //! function here returns text rather than printing it, so the shape of each
 //! rendering is testable; `super::emit_value` decides where it goes.
 
@@ -16,6 +16,13 @@ use super::style;
 /// somebody has looked at its features and decided what a line of them should
 /// say. `None` — an unlisted service, no service at all, or a value that is
 /// not a `FeatureCollection` — falls through to [`render_human`].
+///
+/// The names are `Operation::service`, which is the command group, not the
+/// spec file: `tilesets query` comes from the tilequery spec but answers as
+/// `tilesets`. An arm still named `tilequery` after #116 moved the command
+/// silently dropped its list for every release since; see
+/// `every_listed_service_is_a_real_command_group`. `tilesets`'s other
+/// commands answer with tile bytes, which never reach here.
 pub(super) fn list_rendering(value: &Value, service: Option<&str>) -> Option<Rendered> {
     match service {
         Some("search") => match search_feature_rows(value) {
@@ -25,7 +32,7 @@ pub(super) fn list_rendering(value: &Value, service: Option<&str>) -> Option<Ren
         Some("geocoder") => {
             render_geocoder_list(value).or_else(|| render_batch_feature_list(value))
         }
-        Some("tilequery") => tilequery_feature_rows(value).map(|rows| render_feature_list(&rows)),
+        Some("tilesets") => tilequery_feature_rows(value).map(|rows| render_feature_list(&rows)),
         _ => None,
     }
 }
@@ -63,7 +70,7 @@ const FLOOR: usize = 8;
 /// `search forward`/`reverse`/`category` are asked for a list of POIs to
 /// scan, the way any other listing is scanned — but as
 /// [`render_feature_list`], not a table: see there for why. `geocoder` and
-/// `tilequery` read the same way and reach the same renderer through their
+/// `tilesets query` read the same way and reach the same renderer through their
 /// own row-builders; every other service's GeoJSON stays pretty-printed — see
 /// `shapes_a_table_would_misrepresent_are_left_alone` below — because it is a
 /// handful of features whose nesting *is* the content a table would throw
@@ -241,7 +248,7 @@ fn search_result_row(feature: &Value) -> Value {
 /// A `FeatureCollection`'s features, as one row per result — named
 /// generically since `geocoder` is the first caller, not the last.
 ///
-/// `search` and `tilequery` keep their own row-builders
+/// `search` and `tilesets query` keep their own row-builders
 /// ([`search_feature_rows`], [`tilequery_feature_rows`]) because what they
 /// read out of a feature genuinely differs: a search result carries a
 /// distance and a POI category a geocoding result has no equivalent of, and
@@ -365,7 +372,7 @@ fn feature_row(feature: &Value) -> Value {
     Value::Object(row)
 }
 
-/// `tilequery`'s features, as one row per result — same `feature_collection_rows`
+/// `tilesets query`'s features, as one row per result — same `feature_collection_rows`
 /// contract, different fields: labeled layers (`poi_label`, `place_label`, a
 /// named `road`, …) carry `properties.name`; unlabeled ones (`building`,
 /// `landuse`, …) don't, and where the tileset sends `properties.type` as a
@@ -514,8 +521,8 @@ fn tilequery_row(feature: &Value) -> Value {
 ///
 /// One renderer for all three services that get a list. Which fields a row
 /// carries is its own row-builder's business, and every field here is skipped
-/// when absent: `extra` is `tilequery`'s alone, and `distance` arrives
-/// already formatted — `km` from `search`, `m` from `tilequery` — so the unit
+/// when absent: `extra` is `tilesets query`'s alone, and `distance` arrives
+/// already formatted — `km` from `search`, `m` from `tilesets query` — so the unit
 /// is the builder's decision rather than this function's.
 fn render_feature_list(rows: &[Value]) -> Rendered {
     if rows.is_empty() {
@@ -572,7 +579,7 @@ fn feature_list_text(rows: &[Value], color: bool) -> String {
         if let Some(coordinates) = row.get("coordinates").and_then(Value::as_str) {
             out.push_str(&format!("\n   {}", dim(coordinates)));
         }
-        // Only `tilequery` fills this in; a geocoding row never carries it.
+        // Only `tilesets query` fills this in; a geocoding row never carries it.
         if let Some(extra) = row.get("extra").and_then(Value::as_object) {
             for (key, value) in extra {
                 let rendered = match value {
@@ -1740,7 +1747,7 @@ mod tests {
 
         for rendered in [
             list_rendering(&empty, Some("geocoder")),
-            list_rendering(&empty, Some("tilequery")),
+            list_rendering(&empty, Some("tilesets")),
         ] {
             assert_eq!(rendered.expect("a list").text, "(none)");
         }
@@ -1765,10 +1772,33 @@ mod tests {
         }
         assert!(render_human(&fc).is_none(), "and nothing else renders it");
 
-        for service in ["search", "geocoder", "tilequery"] {
+        for service in LISTED_SERVICES {
             assert!(
                 list_rendering(&fc, Some(service)).is_some(),
                 "{service} should get a list"
+            );
+        }
+    }
+
+    /// Every service `list_rendering` matches, by name.
+    const LISTED_SERVICES: [&str; 3] = ["search", "geocoder", "tilesets"];
+
+    /// The match is on a string, so a command group renamed or merged in the
+    /// specs leaves its arm unreachable without a warning — the tests above
+    /// pass that string straight in and keep passing. #116 moved
+    /// `tilequery get` to `tilesets query` exactly that way. Checking each
+    /// name against the bundled specs is what ties the arm to a real command.
+    #[test]
+    fn every_listed_service_is_a_real_command_group() {
+        let services: Vec<String> = crate::spec::effective_services()
+            .expect("the bundled specs parse")
+            .into_iter()
+            .map(|service| service.name)
+            .collect();
+        for listed in LISTED_SERVICES {
+            assert!(
+                services.iter().any(|name| name == listed),
+                "`{listed}` has a list rendering but no command group by that name: {services:?}"
             );
         }
     }
@@ -2160,7 +2190,7 @@ mod tests {
         );
     }
 
-    /// Pins docs/commands.md's two `get-tilequery` examples to the real
+    /// Pins docs/commands.md's two `tilesets query` examples to the real
     /// render — the vector one, whose `height` has to reach the text column
     /// now that it reaches the JSON one, and the raster-array one, which has
     /// no name to show and carries its sample under `val`.

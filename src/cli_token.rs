@@ -28,6 +28,14 @@
 //! Callers never see the token, so every one of them gets the same fallback
 //! and replacement without doing anything.
 //!
+//! # Where the CLI's token may go
+//!
+//! Steps 4 and 5 are the CLI's token, and every request made with it is
+//! billed to the account that owns it. So it is sent only to the APIs in
+//! [`CLI_TOKEN_APIS`], whether the request is the CLI's own (through [`send`])
+//! or a command's (through [`for_command`]). Anything else gets the user's
+//! token or none.
+//!
 //! # The bundled token is public
 //!
 //! Anything compiled into a distributed binary can be pulled out with
@@ -44,8 +52,65 @@ use crate::http;
 /// Seconds of remaining life below which a stored OAuth token is not used.
 const EXPIRY_MARGIN_SECS: u64 = 60;
 
+/// APIs the CLI's token may be sent to, as host, path prefix and the reason
+/// the CLI's account should carry their use. Matched on `https`, the exact
+/// host with no port, and whole path segments, so `/events/v2` does not
+/// cover `/events/v20`.
+const CLI_TOKEN_APIS: &[(&str, &str, &str)] = &[
+    (
+        "events.mapbox.com",
+        "/events/v2",
+        "Telemetry; no user to bill.",
+    ),
+    (
+        "api-events-staging.tilestream.net",
+        "/events/v2",
+        "Telemetry to staging; no user to bill.",
+    ),
+];
+
 /// Lists an account's tokens; `?default=true` narrows it to the default one.
 const TOKENS_ENDPOINT: &str = "https://api.mapbox.com/tokens/v2";
+
+/// The CLI's token for a command's request, when the user has none of their
+/// own and the command calls an API in [`CLI_TOKEN_APIS`].
+///
+/// Only for a user with no token at all: one whose token is rejected sees that
+/// rejection rather than having it hidden behind the CLI's token.
+pub(crate) fn for_command(op: &crate::spec::Operation) -> Option<String> {
+    if allowed(CLI_TOKEN_APIS, &operation_url(op)?) {
+        cli_token(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref())
+    } else {
+        None
+    }
+}
+
+/// Where a command sends its request, enough to match against
+/// [`CLI_TOKEN_APIS`]: path parameters stay as their `{placeholders}`.
+fn operation_url(op: &crate::spec::Operation) -> Option<reqwest::Url> {
+    reqwest::Url::parse(&format!("{}{}", op.base_url, op.path_template)).ok()
+}
+
+/// `MAPBOX_CLI_TOKEN` at run time, then the bundled token.
+fn cli_token(override_token: Option<&str>) -> Option<String> {
+    usable(override_token)
+        .or_else(|| usable(option_env!("MAPBOX_CLI_BUNDLED_TOKEN")))
+        .map(str::to_owned)
+}
+
+fn allowed(apis: &[(&str, &str, &str)], url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url.port().is_none()
+        && apis.iter().any(|(host, prefix, _)| {
+            url.host_str() == Some(*host) && {
+                let mut segments = url.path().split('/').filter(|s| !s.is_empty());
+                prefix
+                    .split('/')
+                    .filter(|s| !s.is_empty())
+                    .all(|want| segments.next() == Some(want))
+            }
+        })
+}
 
 /// The token the user gave this run, ranked as a command ranks it: with
 /// `--use-login` only a typed `--token` counts, otherwise `MAPBOX_ACCESS_TOKEN`
@@ -78,6 +143,11 @@ pub(crate) fn send(
     // re-permissions the config directory on a machine that never logged in.
     let creds = auth::load_credentials_readonly(profile);
     let override_token = std::env::var("MAPBOX_CLI_TOKEN").ok();
+    // Read off a request built only to be looked at; the one sent is built
+    // again per attempt.
+    let cli_allowed = request()
+        .build()
+        .is_ok_and(|built| allowed(CLI_TOKEN_APIS, built.url()));
     let sources = Sources {
         user: user_token,
         stored: creds
@@ -88,6 +158,7 @@ pub(crate) fn send(
             .and_then(|c| Login::from_credentials(c, now_secs())),
         override_token: override_token.as_deref(),
         bundled: option_env!("MAPBOX_CLI_BUNDLED_TOKEN"),
+        cli_allowed,
     };
     resolve(
         sources,
@@ -109,6 +180,9 @@ struct Sources<'a> {
     login: Option<Login>,
     override_token: Option<&'a str>,
     bundled: Option<&'a str>,
+    /// Whether the request goes to an API in [`CLI_TOKEN_APIS`]; without it
+    /// the two tokens above are never sent.
+    cli_allowed: bool,
 }
 
 /// A stored OAuth login that is still good for long enough to use.
@@ -175,8 +249,11 @@ fn resolve<R>(
             Stage::Stored => usable(sources.stored).map(str::to_owned),
             Stage::Fetched => sources.login.as_ref().and_then(&mut fetch),
             Stage::Login => sources.login.as_ref().map(|l| l.access_token.clone()),
-            Stage::Override => usable(sources.override_token).map(str::to_owned),
-            Stage::Bundled => usable(sources.bundled).map(str::to_owned),
+            Stage::Override if sources.cli_allowed => {
+                usable(sources.override_token).map(str::to_owned)
+            }
+            Stage::Bundled if sources.cli_allowed => usable(sources.bundled).map(str::to_owned),
+            Stage::Override | Stage::Bundled => None,
         };
         let Some(token) = token else { continue };
         if tried.contains(&token) {
@@ -301,6 +378,7 @@ mod tests {
             login,
             override_token,
             bundled,
+            cli_allowed: true,
         }
     }
 
@@ -428,6 +506,21 @@ mod tests {
         );
         assert_eq!(answer, Some(200));
         assert_eq!(sent, ["pk.same", "sk.oauth", "pk.bundled"]);
+    }
+
+    #[test]
+    fn the_clis_token_is_never_sent_to_an_api_outside_the_list() {
+        let (answer, sent, _) = run(
+            Sources {
+                user: Some("pk.typed"),
+                cli_allowed: false,
+                ..sources(None, None, Some("pk.override"), Some("pk.bundled"))
+            },
+            None,
+            &["pk.override", "pk.bundled"],
+        );
+        assert_eq!(answer, Some(401));
+        assert_eq!(sent, ["pk.typed"]);
     }
 
     #[test]
@@ -572,6 +665,78 @@ mod tests {
         assert_eq!(
             user_token_for(&["mapbox", "--use-login", "auth", "whoami"]),
             None
+        );
+    }
+
+    fn url(text: &str) -> reqwest::Url {
+        reqwest::Url::parse(text).unwrap()
+    }
+
+    const APIS: &[(&str, &str, &str)] = &[("events.mapbox.com", "/events/v2", "test")];
+
+    #[test]
+    fn an_allowed_api_matches_on_whole_segments() {
+        for (text, ok) in [
+            ("https://events.mapbox.com/events/v2", true),
+            ("https://events.mapbox.com/events/v2/", true),
+            ("https://events.mapbox.com/events/v2/batch?x=1", true),
+            ("https://events.mapbox.com/events/v20", false),
+            ("https://events.mapbox.com/events", false),
+            ("https://events.mapbox.com/other/events/v2", false),
+        ] {
+            assert_eq!(allowed(APIS, &url(text)), ok, "{text}");
+        }
+    }
+
+    #[test]
+    fn an_allowed_api_needs_the_exact_host_over_https() {
+        for text in [
+            "http://events.mapbox.com/events/v2",
+            "https://events.mapbox.com:8443/events/v2",
+            "https://evil.events.mapbox.com/events/v2",
+            "https://events.mapbox.com.evil.example/events/v2",
+            "https://api.mapbox.com/events/v2",
+        ] {
+            assert!(!allowed(APIS, &url(text)), "{text}");
+        }
+        assert!(!allowed(&[], &url("https://events.mapbox.com/events/v2")));
+    }
+
+    #[test]
+    fn every_cli_token_api_is_well_formed() {
+        for (host, prefix, reason) in CLI_TOKEN_APIS {
+            assert_eq!(*host, host.to_ascii_lowercase(), "{host}");
+            assert!(prefix.starts_with('/'), "{prefix}");
+            assert!(!reason.trim().is_empty(), "{host}{prefix} needs a reason");
+            assert!(
+                allowed(CLI_TOKEN_APIS, &url(&format!("https://{host}{prefix}"))),
+                "{host}{prefix}"
+            );
+        }
+    }
+
+    // A URL that failed to parse would quietly keep every command off the
+    // CLI's token, listed or not.
+    #[test]
+    fn every_commands_url_can_be_matched() {
+        let specs = crate::spec::effective_services().expect("the bundled specs parse");
+        for op in specs.iter().flat_map(|svc| &svc.operations) {
+            let url = operation_url(op).unwrap_or_else(|| panic!("{}", op.command()));
+            assert_eq!(url.scheme(), "https", "{}", op.command());
+        }
+    }
+
+    #[test]
+    fn the_runtime_override_comes_before_the_bundled_token() {
+        assert_eq!(
+            cli_token(Some(" pk.override ")).as_deref(),
+            Some("pk.override")
+        );
+        assert_eq!(
+            cli_token(Some("  ")).as_deref(),
+            option_env!("MAPBOX_CLI_BUNDLED_TOKEN")
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
         );
     }
 

@@ -1454,6 +1454,16 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             if let Some(token) = &token {
                 run_record::set_resolved_token(matches, use_login, token);
             }
+            // After the record above, which knows only the user's own
+            // sources. `--use-login` already returned when it found nothing.
+            let token = token.or_else(|| {
+                let token = cli_token::for_command(op)?;
+                output::progress(
+                    "No token of your own, so this request uses the CLI's token. \
+                     Run `mapbox auth login` to use yours.",
+                );
+                Some(token)
+            });
             let username: Option<String> = matches
                 .get_one::<String>("username")
                 .cloned()

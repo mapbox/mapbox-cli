@@ -458,6 +458,8 @@ token whenever you have one: `--token` or `MAPBOX_ACCESS_TOKEN`, then your
 account's default public token, which the CLI fetches with your login, keeps
 beside it, and fetches again if you rotate it. Only when you have none does
 it use the CLI's token: `MAPBOX_CLI_TOKEN`, or one built into the binary.
+The CLI's token is only ever sent to the few Mapbox APIs listed for it in
+`src/cli_token.rs`, today just telemetry.
 
 ### Proxies
 

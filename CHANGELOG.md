@@ -25,6 +25,32 @@ that may never merge. They are not releases and are not listed here.
   that passes them now fails with an unknown-argument error; drop the
   flags. `mapbox search forward` keeps them. (#76)
 
+- `mapbox matrix`, travel time and/or distance between every pair in a set
+  of up to 25 coordinates in one call, for driving (with or without live
+  traffic), walking, or cycling. No subcommand: like `mapbox directions`
+  below, this API has one operation, so there's nothing a second word (the
+  old `compute`) would disambiguate; see `spec::FLATTENED_SERVICES`.
+  Hand-authored into `custom-openapi/` for the same reason the other
+  Navigation commands were: no upstream spec exists yet. Reuses the
+  `profile`-vs-`--profile` collision fix (`ARG_NAME_OVERRIDES` gets a
+  fourth row) and the free-form (not `enum`) routing profile, for the same
+  OEM-account reason. `--sources`/`--destinations` take
+  semicolon-separated indices, not comma; verified against production
+  after the API answered a comma-separated list with a 422.
+
+- `mapbox map-match`, snapping a noisy GPS trace to the road network and
+  returning the route it most likely followed, for driving (with or
+  without live traffic), walking, or cycling. No subcommand: like `mapbox
+  directions` below, this API has one operation, so there's nothing a
+  second word (the old `match`) would disambiguate; see
+  `spec::FLATTENED_SERVICES`. Hand-authored into `custom-openapi/` for the
+  same reason `mapbox directions` and `mapbox isochrone` were: no upstream
+  spec exists yet. Reuses the `profile`-vs-`--profile` collision fix
+  (`ARG_NAME_OVERRIDES` gets a third row) and the free-form (not `enum`)
+  routing profile, for the same OEM-account reason. Excludes POST, for the
+  same reason `directions` does: the API's own POST is for a trace too long
+  for a URL, a real gap rather than a design choice.
+
 - `mapbox isochrone`, how far you can get from a point in a given time or
   distance, for driving (with or without live traffic), walking, or
   cycling, returned as GeoJSON polygons or linestrings. No subcommand:

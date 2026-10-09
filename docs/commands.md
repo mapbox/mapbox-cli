@@ -97,6 +97,10 @@ nests, and is typed `mapbox styles draft get`.
 
 **[Isochrone](#isochrone)** — [isochrone](#mapbox-isochrone)
 
+**[Map Match](#map-match)** — [map-match](#mapbox-map-match)
+
+**[Matrix](#matrix)** — [matrix](#mapbox-matrix)
+
 **[Search](#search)** — [search.forward](#mapbox-search-forward) ·
 [search.reverse](#mapbox-search-reverse) ·
 [search.category](#mapbox-search-category) ·
@@ -1635,6 +1639,226 @@ line, same shape as `mapbox directions`'s Outputs section above:
 
 Trimmed to one of the two features (the response has one per
 `--contours-minutes` value) and the polygon's coordinates, for length.
+
+---
+## Map Match
+
+Snaps a noisy GPS trace to the road network and returns the route it most
+likely followed, for driving (with or without live traffic), walking, or
+cycling. Curated by hand down to the parameters documented at
+docs.mapbox.com/api/navigation/map-matching — see `custom-openapi/README.md`
+for why this command group doesn't come from the vendored specs the way
+most others do. Excludes POST, which this CLI's spec format has no way to
+express alongside GET for the same operation — the API's own POST is for a
+trace too long for a URL (~8100 bytes), a real gap rather than a design
+choice.
+
+### `mapbox map-match`
+
+One or more matched routes — more than one where the trace is ambiguous
+enough to split — each carrying a `confidence` the API assigns itself, plus
+one tracepoint per input coordinate (`null` for one too far from any
+candidate to match at all). No subcommand: this API has one operation, so
+there's nothing a second word would disambiguate, the same reason `mapbox
+directions` has none either.
+
+#### Parameters
+
+`<routing-profile>` and `<coordinates>` (both positional) are required.
+`<routing-profile>` is sent exactly as typed, not checked against a fixed
+list: `mapbox/driving-traffic`, `mapbox/driving`, `mapbox/walking` and
+`mapbox/cycling` are documented, but some accounts (OEM agreements, mainly)
+have additional profiles of their own that were never published, the API
+is the authority on whether a value is valid, not this page. `<coordinates>`
+is 2-100 `{longitude},{latitude}` trace points, semicolon-separated, or an
+OpenLR-encoded string of up to 50 points (pair with `--openlr-spec`/
+`--openlr-format`).
+
+| Parameter | Effect |
+| --- | --- |
+| `--annotations <fields>` | Segment-level metadata per leg, comma-separated (`distance`, `duration`, `speed`, `congestion`, `congestion_numeric` (both `mapbox/driving-traffic` only), `maxspeed` (`mapbox/driving` and `mapbox/driving-traffic` only)). Requires `--overview full`. |
+| `--approaches <unrestricted\|curb;...>` | Which side of the road to approach each waypoint from. Requires `--steps`. |
+| `--geometries <geojson\|polyline\|polyline6>` | Route geometry format. Defaults to `polyline`. |
+| `--overview <full\|simplified\|false>` | Geometry detail level. Defaults to `simplified`. |
+| `--radiuses <meters;...>` | Max snap distance, 0-50, one per coordinate. Defaults to 5. |
+| `--steps` | Return turn-by-turn instructions. Several flags below only take effect with this set. |
+| `--banner-instructions` | Return banner objects for display. Requires `--steps`. |
+| `--language <tag>` | Instruction language. Defaults to `en`. Requires `--steps`. |
+| `--roundabout-exits` | Separate entry/exit instructions for a roundabout. Requires `--steps`. |
+| `--voice-instructions` | Return SSML-marked voice guidance. Requires `--steps`. |
+| `--voice-units <imperial\|british_imperial\|metric>` | Requires `--steps` and `--voice-instructions`. |
+| `--tidy` | Remove clusters and resample the trace before matching — for a trace recorded at an inconsistent sample rate. |
+| `--timestamps <unix;...>` | When the trace was recorded, per coordinate, ascending — rather than assumed from even spacing. |
+| `--waypoint-names <names;...>` | A name per waypoint for its arrival instruction. Requires `--steps`. |
+| `--waypoints <indices;...>` | Which coordinates get their own arrival instruction, semicolon-separated — must include `0` and the last index. Most useful with `--steps`, which it does not require. |
+| `--ignore <types>` | Restrictions to ignore, comma-separated (`access`, `oneways`, `restrictions`). `mapbox/driving` only. |
+| `--linear-references` | Return an OpenLR reference (base64) per matched leg, alongside the ordinary geometry. `mapbox/driving` and `mapbox/driving-traffic` only. |
+| `--openlr-spec <tomtom\|here>` | Which OpenLR spec `coordinates` is encoded with, if it's an OpenLR string. Defaults to `tomtom`. |
+| `--openlr-format tomtom` | The OpenLR binary format `coordinates` is encoded in, if it's an OpenLR string. |
+| `--depart-at <time>` | Departure time from the first coordinate, one of `YYYY-MM-DDThh:mm`, `YYYY-MM-DDThh:mm:ssZ` or `YYYY-MM-DDThh:mm:ss±hh:mm` — not open ISO 8601, the API rejects other valid ISO 8601 shapes. |
+
+#### Examples
+
+```sh
+mapbox map-match mapbox/driving "-122.42,37.78;-122.421,37.781;-122.422,37.782"
+mapbox map-match mapbox/driving "-122.42,37.78;-122.421,37.781;-122.422,37.782" \
+  --steps --geometries geojson
+```
+
+#### Outputs
+
+Captured live: three trace points in San Francisco, one deliberately far
+enough off the road network to leave its tracepoint `null`.
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```json
+{
+  "code": "Ok",
+  "matchings": [
+    {
+      "confidence": 0,
+      "distance": 353.157,
+      "duration": 92.702,
+      "geometry": "q|qeFndejVf@lJyDd@Y_E",
+      "legs": [
+        {
+          "distance": 353.157,
+          "duration": 92.702,
+          "steps": [],
+          "summary": "McAllister Street, Franklin Street",
+          "weight": 126.614
+        }
+      ],
+      "weight": 126.614,
+      "weight_name": "auto"
+    }
+  ],
+  "tracepoints": [
+    { "name": "McAllister Street", "location": [-122.420084, 37.780093], "waypoint_index": 0 },
+    { "name": "Golden Gate Avenue", "location": [-122.421141, 37.780946], "waypoint_index": 1 },
+    null
+  ]
+}
+```
+
+</td><td>
+
+```json
+{"code":"Ok","matchings":[{"confidence":0,"distance":353.157,"duration":92.702,"geometry":"q|qeFndejVf@lJyDd@Y_E","legs":[{"distance":353.157,"duration":92.702,"steps":[],"summary":"McAllister Street, Franklin Street","weight":126.614}],"weight":126.614,"weight_name":"auto"}],"tracepoints":[{"name":"McAllister Street","location":[-122.420084,37.780093],"waypoint_index":0},{"name":"Golden Gate Avenue","location":[-122.421141,37.780946],"waypoint_index":1},null]}
+```
+
+</td></tr>
+</table>
+
+Like `mapbox directions`, neither output mode has a bespoke rendering for
+this response — it isn't GeoJSON at the top level — so both print the same
+JSON, `-o text` pretty-printed and `-o json` on one line. Trimmed to one
+matching and dropped `admins`/`via_waypoints`/`alternatives_count`/`uuid`
+for length; the real response carries them too.
+
+---
+## Matrix
+
+Travel time and distance between every pair in a set of up to 25
+coordinates, in one call, for driving (with or without live traffic),
+walking, or cycling. Curated by hand down to the parameters documented at
+docs.mapbox.com/api/navigation/matrix — see `custom-openapi/README.md` for
+why this command group doesn't come from the vendored specs the way most
+others do.
+
+**vs. `mapbox directions`**: this answers "how far/long between every pair",
+not a route through all of them in order — `mapbox directions` is a route
+through fixed stops; this is an N×N table, useful for ranking or filtering
+many candidates by reachability before committing to a route through any of
+them.
+
+### `mapbox matrix`
+
+A `durations` and/or `distances` matrix in row-major order —
+`durations[i][j]` is the time from the ith source to the jth destination —
+across every source/destination pair, or a subset of either side. No
+subcommand: this API has one operation, so there's nothing a second word
+would disambiguate, the same reason `mapbox directions` has none either.
+
+#### Parameters
+
+`<routing-profile>` and `<coordinates>` (both positional) are required.
+`<routing-profile>` is sent exactly as typed, not checked against a fixed
+list: `mapbox/driving-traffic`, `mapbox/driving`, `mapbox/walking` and
+`mapbox/cycling` are documented, but some accounts (OEM agreements, mainly)
+have additional profiles of their own that were never published, the API
+is the authority on whether a value is valid, not this page.
+`<coordinates>` is 2-25 `{longitude},{latitude}` pairs, semicolon-separated,
+10 max for `mapbox/driving-traffic`.
+
+| Parameter | Effect |
+| --- | --- |
+| `--annotations <duration\|distance>` | Which matrix or matrices to return, comma-separated. `duration` alone is the default; both together returns both. |
+| `--approaches <unrestricted\|curb;...>` | Which side of the road to approach each coordinate from. |
+| `--bearings <angle,degrees;...>` | Filter road segments by direction of travel, one entry per coordinate. |
+| `--sources <indices>` | Which coordinates are matrix rows — `all` (the default) or zero-based indices, **semicolon**-separated. Verified against production: comma-separated is a 422 here, unlike most other index lists on these commands. |
+| `--destinations <indices>` | Which coordinates are matrix columns — same rules as `--sources`. |
+| `--fallback-speed <km/h>` | Replaces a `null` (unreachable) cell with a straight-line estimate at this speed, rather than leaving it `null`. Legacy. |
+| `--depart-at <ISO 8601>` | For future traffic conditions and time-dependent road restrictions. |
+
+#### Examples
+
+```sh
+mapbox matrix mapbox/driving "-122.42,37.78;-122.45,37.91;-122.41,37.80"
+mapbox matrix mapbox/driving "-122.42,37.78;-122.45,37.91;-122.41,37.80" \
+  --sources 0 --destinations "1;2"
+```
+
+#### Outputs
+
+Captured live: a full 3×3 matrix between three San Francisco points, both
+`durations` (seconds) and `distances` (meters).
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```json
+{
+  "code": "Ok",
+  "durations": [
+    [0, 2381.5, 790.1],
+    [2593.8, 0, 2272.5],
+    [994.8, 2269.7, 0]
+  ],
+  "distances": [
+    [0, 25766, 3348.3],
+    [26960.4, 0, 25382],
+    [3781.3, 25174.1, 0]
+  ],
+  "sources": [
+    { "name": "Van Ness Avenue", "location": [-122.420122, 37.779978] },
+    { "name": "Playa Verde", "location": [-122.461997, 37.89621] },
+    { "name": "Columbus Avenue", "location": [-122.409926, 37.800067] }
+  ],
+  "destinations": [
+    { "name": "Van Ness Avenue", "location": [-122.420122, 37.779978] },
+    { "name": "Playa Verde", "location": [-122.461997, 37.89621] },
+    { "name": "Columbus Avenue", "location": [-122.409926, 37.800067] }
+  ]
+}
+```
+
+</td><td>
+
+```json
+{"code":"Ok","durations":[[0,2381.5,790.1],[2593.8,0,2272.5],[994.8,2269.7,0]],"distances":[[0,25766,3348.3],[26960.4,0,25382],[3781.3,25174.1,0]],"sources":[{"name":"Van Ness Avenue","location":[-122.420122,37.779978]},{"name":"Playa Verde","location":[-122.461997,37.89621]},{"name":"Columbus Avenue","location":[-122.409926,37.800067]}],"destinations":[{"name":"Van Ness Avenue","location":[-122.420122,37.779978]},{"name":"Playa Verde","location":[-122.461997,37.89621]},{"name":"Columbus Avenue","location":[-122.409926,37.800067]}]}
+```
+
+</td></tr>
+</table>
+
+Neither output mode has a bespoke rendering for this response, same as
+`mapbox directions` and `mapbox map-match` — both print the same JSON,
+`-o text` pretty-printed and `-o json` on one line.
 
 ---
 

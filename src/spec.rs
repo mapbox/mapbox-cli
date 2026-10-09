@@ -30,6 +30,9 @@ pub struct Operation {
     pub body: Option<RequestBody>,
     /// JSON body properties that are also flags. See [`BODY_FIELD_FLAGS`].
     pub body_fields: Vec<Parameter>,
+    /// A single JSON body array field exposed as one or more positional
+    /// arguments instead of `--data`. See [`VARIADIC_BODY_ARRAY`].
+    pub variadic_body_array: Option<VariadicBodyArray>,
     pub base_url: String,
     /// Set when the operation needs a scope that isn't registrable as OAuth
     /// (see `UNSUPPORTED_OPERATIONS` below). A `mapbox auth login` token can
@@ -90,6 +93,69 @@ const BODY_FIELD_FLAGS: &[(&str, &str, &[BodyField])] = &[(
         ("category", None),
     ],
 )];
+
+/// (service, operationId, body field name, CLI positional name, max count)
+/// for an operation whose JSON body takes a single array field, exposed as
+/// one or more positional arguments collected into it instead of `--data`.
+///
+/// The rule for any API shaped like a single-item GET and a batch POST of
+/// the same thing: one command, not a choice between "one id" and a
+/// hand-typed JSON array. The single-item operation is dropped from the
+/// spec entirely rather than kept and hidden — see `places.yaml`'s own
+/// header for the first case this applied to.
+const VARIADIC_BODY_ARRAY: &[(&str, &str, &str, &str, usize)] =
+    &[("places", "batch", "ids", "mapbox-id", 100)];
+
+/// A positional argument collected into one JSON array body field, in
+/// place of `--data`. See [`VARIADIC_BODY_ARRAY`].
+#[derive(Debug, Clone)]
+pub struct VariadicBodyArray {
+    pub field: String,
+    pub arg_name: String,
+    pub max: usize,
+    pub description: Option<String>,
+}
+
+fn variadic_body_array_names(
+    service: &str,
+    operation_id: &str,
+) -> Option<(&'static str, &'static str, usize)> {
+    VARIADIC_BODY_ARRAY
+        .iter()
+        .find(|(s, id, _, _, _)| *s == service && *id == operation_id)
+        .map(|(_, _, field, arg_name, max)| (*field, *arg_name, *max))
+}
+
+/// Builds the [`VariadicBodyArray`] for an operation [`variadic_body_array_names`]
+/// names, reading the field's own description off the request body schema
+/// the same way [`body_field_parameters`] does for a scalar field.
+fn variadic_body_array_parameter(
+    op: &Value,
+    full_spec: &Value,
+    field: &str,
+    arg_name: &str,
+    max: usize,
+) -> Result<VariadicBodyArray> {
+    let schema = &op["requestBody"]["content"]["application/json"]["schema"];
+    let schema = match schema["$ref"].as_str() {
+        Some(reference) => resolve_ref(full_spec, reference).unwrap_or(schema),
+        None => schema,
+    };
+    let property = &schema["properties"][field];
+    anyhow::ensure!(
+        property["type"].as_str() == Some("array")
+            && property["items"]["type"].as_str() == Some("string"),
+        "body property `{field}` is listed in VARIADIC_BODY_ARRAY but is not an array of \
+         strings in the spec"
+    );
+    let description = property["description"].as_str().map(first_paragraph);
+    Ok(VariadicBodyArray {
+        field: field.to_string(),
+        arg_name: arg_name.to_string(),
+        max,
+        description,
+    })
+}
 
 /// (service, operationId, the media type the API actually wants) for
 /// operations whose spec gets the content type wrong.
@@ -172,7 +238,8 @@ fn arg_name_override(service_name: &str, param_name: &str) -> Option<&'static st
 /// `generate-skills`, this file's own `command()` above — reads a
 /// [`FLATTENED_SERVICES`] service correctly for free, because they all go
 /// through `command()` rather than reconstructing the string themselves.
-pub const FLATTENED_SERVICES: &[&str] = &["directions", "isochrone", "map-match", "matrix"];
+pub const FLATTENED_SERVICES: &[&str] =
+    &["directions", "isochrone", "map-match", "matrix", "places"];
 
 /// (service, path parameter name) pairs whose value is trusted to reach the
 /// URL unescaped, because every legitimate value already contains a
@@ -756,6 +823,10 @@ pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
         name: "matrix",
         yaml: include_str!("../custom-openapi/matrix/openapi/matrix.yaml"),
     },
+    SpecEntry {
+        name: "places",
+        yaml: include_str!("../custom-openapi/places/openapi/places.yaml"),
+    },
 ];
 
 /// The list the CLI actually generates commands from: [`MAPBOX_SPEC_ENTRIES`],
@@ -1088,6 +1159,17 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
                 None => vec![],
             };
 
+            let variadic_body_array = match operation_id
+                .and_then(|id| variadic_body_array_names(service_name, id))
+            {
+                Some((field, arg_name, max)) => Some(
+                    variadic_body_array_parameter(op, &doc, field, arg_name, max).with_context(
+                        || format!("{service_name} {}", operation_id.unwrap_or("")),
+                    )?,
+                ),
+                None => None,
+            };
+
             let disabled_scope =
                 operation_id.and_then(|id| unsupported_scope_for(service_name, id));
 
@@ -1106,6 +1188,7 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
                 query_params,
                 body,
                 body_fields,
+                variadic_body_array,
                 base_url: base_url.clone(),
                 disabled_scope,
                 detail: None,
@@ -1912,6 +1995,63 @@ requestBody:
         assert!(!fields[0].required);
         assert_eq!(fields[0].default.as_deref(), Some("0"));
         assert_eq!(fields[0].description.as_deref(), Some("Latitude."));
+    }
+
+    #[test]
+    fn a_variadic_body_array_needs_an_array_of_strings_the_spec_declares() {
+        let op: Value = serde_yaml::from_str(
+            r#"
+requestBody:
+  content:
+    application/json:
+      schema:
+        type: object
+        required: [ids]
+        properties:
+          ids: { type: array, description: "One or more ids.", items: { type: string } }
+          names: { type: array, items: { type: number } }
+"#,
+        )
+        .unwrap();
+
+        let variadic = variadic_body_array_parameter(&op, &op, "ids", "mapbox-id", 100).unwrap();
+        assert_eq!(variadic.field, "ids");
+        assert_eq!(variadic.arg_name, "mapbox-id");
+        assert_eq!(variadic.max, 100);
+        assert_eq!(variadic.description.as_deref(), Some("One or more ids."));
+
+        assert!(variadic_body_array_parameter(&op, &op, "names", "name", 100).is_err());
+        assert!(variadic_body_array_parameter(&op, &op, "missing", "x", 100).is_err());
+    }
+
+    /// `places` is the first (and so far only) `VARIADIC_BODY_ARRAY` /
+    /// `FLATTENED_SERVICES` service: one operation, no subcommand, its one
+    /// positional feeding the batch endpoint's `ids` array instead of
+    /// `--data`, even for a single id.
+    #[test]
+    fn places_is_flattened_and_variadic() {
+        let spec = parse_spec(
+            "places",
+            include_str!("../custom-openapi/places/openapi/places.yaml"),
+        )
+        .expect("places.yaml parses");
+
+        assert!(FLATTENED_SERVICES.contains(&"places"));
+        let batch = spec
+            .operations
+            .iter()
+            .find(|op| op.command_path == ["batch"])
+            .expect("the batch operation exists in the spec");
+        assert!(batch.is_exposed());
+        assert_eq!(batch.command(), "places");
+        assert!(batch.body_fields.is_empty());
+        let variadic = batch
+            .variadic_body_array
+            .as_ref()
+            .expect("batch has a variadic_body_array");
+        assert_eq!(variadic.field, "ids");
+        assert_eq!(variadic.arg_name, "mapbox-id");
+        assert_eq!(variadic.max, 100);
     }
 
     #[test]

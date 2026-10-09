@@ -80,6 +80,15 @@ that may never merge. They are not releases and are not listed here.
   that passes them now fails with an unknown-argument error; drop the
   flags. `mapbox search forward` keeps them. (#76)
 
+- `mapbox places <mapbox-id>...`, full place detail — hours, phone,
+  website, photos, address, coordinates, activity data — for one or more
+  `mapbox_id`s a Search Box API result already returned, up to 100 in one
+  call. Always uses the batch endpoint, even for a single id, so there is
+  one command rather than a choice between one id and a hand-typed JSON
+  array. Hand-authored into `custom-openapi/` since no upstream spec
+  exists yet. Places is Public Preview, with a 1000-records-per-account
+  monthly quota.
+
 - `mapbox matrix`, travel time and/or distance between every pair in a set
   of up to 25 coordinates in one call, for driving (with or without live
   traffic), walking, or cycling. No subcommand: like `mapbox directions`

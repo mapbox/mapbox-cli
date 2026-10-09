@@ -44,7 +44,8 @@ installers end to end without touching the network, and
 `scripts/test-completion.sh` does the same for the completion scripts.
 
 Four rules the compiler holds rather than a reviewer, declared in
-`Cargo.toml` with the reasoning beside each: no `unsafe`, no `println!`
+`Cargo.toml` with the reasoning beside each: no `unsafe` (outside one
+`#[allow]` in `src/detach.rs`), no `println!`
 (stdout belongs to `output::emit`, the single place `--output` is honored),
 no `dbg!`, no `todo!`/`unimplemented!`.
 

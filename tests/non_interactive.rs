@@ -33,6 +33,9 @@ fn scratch(test: &str) -> PathBuf {
 /// these assertions pass for the wrong reason.
 fn command(home: &Path) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    // Telemetry is not under test here, and would post to Mapbox.
+    cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN");
     cmd.env_remove("MAPBOX_ACCESS_TOKEN")
         .env_remove("MapboxAccessToken")
         .env_remove("MAPBOX_USERNAME")
@@ -347,6 +350,8 @@ fn under_a_pty(home: &Path, out_path: &Path, args: &str, expect: &str) -> Option
             .env_remove("MAPBOX_USERNAME")
             .env_remove("MAPBOX_OUTPUT")
             .env_remove("MAPBOX_YES")
+            .env_remove("MAPBOX_CLI_TOKEN")
+            .env("MAPBOX_CLI_NO_TELEMETRY", "1")
             .env("HOME", home)
             .env("MAPBOX_CONFIG_DIR", home.join("config"))
             .stdin(std::process::Stdio::null())

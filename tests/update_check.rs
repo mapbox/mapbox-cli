@@ -82,6 +82,9 @@ fn command(home: &Path) -> Command {
         .env_remove("MAPBOX_OUTPUT")
         .env_remove("MAPBOX_NO_UPDATE_CHECK")
         .env_remove("MAPBOX_CLI_NO_TELEMETRY")
+        // Telemetry stays on, as it is for a user, but goes nowhere.
+        .env_remove("MAPBOX_CLI_TOKEN")
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", "http://127.0.0.1:9/")
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("MAPBOX_CONFIG_DIR", config_dir(home));
@@ -443,6 +446,8 @@ fn under_a_pty(
             .env_remove("MAPBOX_OUTPUT")
             .env_remove("MAPBOX_NO_UPDATE_CHECK")
             .env_remove("MAPBOX_CLI_NO_TELEMETRY")
+            .env_remove("MAPBOX_CLI_TOKEN")
+            .env("MAPBOX_INTERNAL_TELEMETRY_URL", "http://127.0.0.1:9/")
             .env("HOME", home)
             .env("MAPBOX_CONFIG_DIR", config_dir(home))
             .stdin(std::process::Stdio::null())

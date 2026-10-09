@@ -37,8 +37,9 @@ path = "src/main.rs"
 # until somebody writes the obvious thing at two in the morning.
 [lints.rust]
 # There is no `unsafe` in this crate outside a couple of `env::set_var` calls
-# in tests, and there is no reason for there to be: nothing here does FFI,
-# manual memory management or lock-free anything. Denying it means adding some
+# in tests and two Win32 calls in `src/detach.rs` (the reason is there), and
+# there is no reason for more: nothing else here does FFI, manual memory
+# management or lock-free anything. Denying it means adding some
 # is a deliberate `#[allow]` with a reason next to it rather than a diff nobody
 # looks twice at.
 unsafe_code = "deny"
@@ -110,6 +111,11 @@ jsonc-parser = { version = "0.34.0", features = ["serde", "serde_json"] }
 # OSC 11 is known at once instead of after the timeout. Asked only by a run
 # that shows help; see src/output/theme.rs.
 terminal-colorsaurus = "1"
+
+[target.'cfg(windows)'.dependencies]
+# For `src/detach.rs`: keeping the parent's standard handles out of a detached
+# child. Already in the graph through tokio and others; the same version.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
 
 [dev-dependencies]
 # Integration tests build fake Mapbox tokens; same crate the CLI already uses.

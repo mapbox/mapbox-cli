@@ -44,6 +44,7 @@ fn sources() -> Vec<(String, String)> {
 ///   size limit, matched by exact `YYYY-MM-DD.jsonl` names inside the
 ///   directory it writes to, and the scratch file a trim leaves when its
 ///   rename fails.
+/// - `telemetry_sink` — a state file in `~/.mapbox/.telemetry` it replaces.
 /// - `executor` — nothing durable; the temp file a `--file` upload streams.
 /// - `generate_skills` — the staged skill directory it renames into place.
 /// - `skill_dest` — a test scratch directory.
@@ -55,6 +56,7 @@ const MAY_DELETE: &[&str] = &[
     "executor.rs",
     "generate_skills.rs",
     "skill_dest.rs",
+    "telemetry_sink.rs",
     "uninstall.rs",
 ];
 
@@ -512,5 +514,35 @@ fn prose_is_american_english() {
          rather than a spelling — a place name in a fixture, say — move it inside \
          a fenced block or drop the word from BRITISH with the reason.",
         found.join("\n  ")
+    );
+}
+
+/// Every end-to-end test file that runs the binary says what it does about
+/// telemetry.
+///
+/// A run with a token posts an event to Mapbox from a detached child, so a
+/// test that spawns `mapbox` with a fake `--token` — or on a machine with
+/// `MAPBOX_CLI_TOKEN` exported — would send real requests, and could fall back
+/// to the developer's own login. Setting `MAPBOX_CLI_NO_TELEMETRY=1`, or
+/// pointing `MAPBOX_INTERNAL_TELEMETRY_URL` at loopback as
+/// `telemetry_events.rs`, `doctor.rs` and `update_check.rs` do, is the
+/// decision this asks for. Removing the variable alone is not.
+#[test]
+fn every_test_that_runs_the_binary_decides_about_telemetry() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let mut undecided: Vec<String> = files_under(&dir, &["rs"])
+        .into_iter()
+        .filter_map(|(name, path)| {
+            let text = std::fs::read_to_string(&path).expect("read a test");
+            let decided = text.contains(r#".env("MAPBOX_CLI_NO_TELEMETRY", "1")"#)
+                || text.contains(r#".env("MAPBOX_INTERNAL_TELEMETRY_URL""#);
+            (text.contains("CARGO_BIN_EXE_mapbox") && !decided).then_some(name)
+        })
+        .collect();
+    undecided.sort();
+    assert!(
+        undecided.is_empty(),
+        "these run `mapbox` without setting MAPBOX_CLI_NO_TELEMETRY, so a run with a \
+         token sends real telemetry: {undecided:?}. Set it on the command they build."
     );
 }

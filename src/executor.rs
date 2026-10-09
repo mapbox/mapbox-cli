@@ -1571,6 +1571,7 @@ mod tests {
             required: false,
             content_types: content_types.iter().map(|s| s.to_string()).collect(),
             multipart_field: multipart_field.map(|s| s.to_string()),
+            json_fields: vec![],
         }
     }
 

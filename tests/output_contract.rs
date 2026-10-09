@@ -45,6 +45,9 @@ fn sandbox_home() -> PathBuf {
 fn command() -> Command {
     let home = sandbox_home();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    // Telemetry is not under test here, and would post to Mapbox.
+    cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN");
     cmd.env_remove("MAPBOX_ACCESS_TOKEN")
         .env_remove("MapboxAccessToken")
         .env_remove("MAPBOX_USERNAME")
@@ -100,6 +103,8 @@ fn a_file_where_the_credential_directory_goes_fails_before_the_browser() {
     std::fs::write(home.join(".mapbox"), "pk.a-legacy-token").expect("write the legacy file");
 
     let out = Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .args(["-o", "text", "auth", "login"])
         .env_remove("MAPBOX_ACCESS_TOKEN")
         .env_remove("MapboxAccessToken")
@@ -155,6 +160,8 @@ fn a_command_that_is_not_about_credentials_warns_in_one_line() {
     std::fs::write(home.join(".mapbox"), "pk.a-legacy-token").expect("write the legacy file");
 
     let out = Command::new(env!("CARGO_BIN_EXE_mapbox"))
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
+        .env_remove("MAPBOX_CLI_TOKEN")
         .args(["-o", "text", "styles", "list"])
         .env_remove("MAPBOX_ACCESS_TOKEN")
         .env_remove("MapboxAccessToken")
@@ -460,7 +467,10 @@ fn an_agent_is_pointed_at_the_schema() {
 fn without_an_agent_the_help_has_no_hint() {
     let home = sandbox_home();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    // Telemetry is not under test here, and would post to Mapbox. Set after
+    // `env_clear`, which would otherwise clear it too.
     cmd.env_clear()
+        .env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env("HOME", &home)
         .env("MAPBOX_CONFIG_DIR", home.join(".mapbox"));
     // Windows processes expect this one; nothing reads it as an agent.

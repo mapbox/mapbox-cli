@@ -42,6 +42,9 @@ fn command(home: &Path) -> Command {
         .env_remove("NO_PROXY")
         .env_remove("no_proxy")
         .env_remove("MAPBOX_CLI_NO_TELEMETRY")
+        // Telemetry stays on, as it is for a user, but goes nowhere.
+        .env_remove("MAPBOX_CLI_TOKEN")
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", "http://127.0.0.1:9/")
         .env_remove("MAPBOX_NO_UPDATE_CHECK")
         .env_remove("MAPBOX_TIMEOUT")
         .env("HOME", home)

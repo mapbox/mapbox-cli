@@ -803,6 +803,7 @@ dependencies = [
  "tar",
  "terminal-colorsaurus",
  "terminal_size",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

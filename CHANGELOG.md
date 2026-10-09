@@ -260,6 +260,15 @@ that may never merge. They are not releases and are not listed here.
   code; it does find a `~/.mapbox/history` directory it didn't before, and
   `mapbox config list` now reports a second key, `history`.
 
+- Each run sends one `cli.command` telemetry event to Mapbox, from a
+  background process the command doesn't wait for, with your own token
+  (`--token`, `MAPBOX_ACCESS_TOKEN` or your login) or, when you have none,
+  one built into the CLI. A build from source has no built-in token, so with
+  no token of your own the event is dropped. It never touches stdout, the
+  exit code or how long a command takes, so a script sees no difference; a
+  machine that already has `~/.mapbox` finds a `.telemetry` directory in it.
+  `MAPBOX_CLI_NO_TELEMETRY=1` turns it off.
+
 - `MAPBOX_CLI_EXTRA_QUERY` appends raw query parameters to every request, in
   the same `k1=v1&k2=v2` shape as a URL's own query string — for an API
   parameter this CLI's specs don't declare a flag for.

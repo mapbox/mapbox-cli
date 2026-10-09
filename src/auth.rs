@@ -117,11 +117,6 @@ pub struct Credentials {
     pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
-    /// The account's default public token, kept for [`crate::cli_token`].
-    /// Filled in on first use rather than at login, so credentials written
-    /// before it existed work the same way.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_public_token: Option<String>,
 }
 
 /// Restrict a directory to the owner (0700). No-op off Unix.
@@ -491,61 +486,6 @@ pub(crate) fn load_credentials_readonly(profile: Option<&str>) -> Option<Credent
     serde_json::from_str(&data).ok()
 }
 
-/// Saves `token` as the profile's default public token, returning whether it
-/// was written.
-///
-/// For [`crate::cli_token`], which calls it from requests nobody is waiting
-/// for, so it never blocks and never creates anything: it gives up when
-/// another invocation holds the lock, and writes only into a credentials file
-/// that still exists and still belongs to `account`. A logout or a login as
-/// someone else in the meantime must not be undone by a background request.
-pub(crate) fn store_default_public_token(
-    profile: Option<&str>,
-    account: &str,
-    token: &str,
-) -> bool {
-    let (Some(path), Ok(lock)) = (credentials_path_readonly(profile), lock_filename(profile))
-    else {
-        return false;
-    };
-    store_default_public_token_at(&path, &path.with_file_name(lock), account, token)
-}
-
-fn store_default_public_token_at(path: &Path, lock: &Path, account: &str, token: &str) -> bool {
-    // Checked before taking the lock, which would otherwise leave a lock file
-    // behind for a profile that has no credentials.
-    if !path.exists() {
-        return false;
-    }
-    let Some(_lock) = CredentialLock::try_at(lock) else {
-        return false;
-    };
-    // Re-read under the lock, so a refresh that landed since the caller read
-    // the file is kept rather than overwritten with the older tokens.
-    let Some(mut creds) = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|data| serde_json::from_str::<Credentials>(&data).ok())
-    else {
-        return false;
-    };
-    if credentials_account(&creds).as_deref() != Some(account) {
-        return false;
-    }
-    creds.default_public_token = Some(token.to_owned());
-    serde_json::to_string_pretty(&creds)
-        .ok()
-        .is_some_and(|data| write_private(path, &data).is_ok())
-}
-
-/// The account stored credentials belong to: the saved username, or the
-/// access token's own `u` claim for credentials saved without one.
-pub(crate) fn credentials_account(creds: &Credentials) -> Option<String> {
-    creds
-        .username
-        .clone()
-        .or_else(|| token_account(&creds.access_token))
-}
-
 /// The reverse of [`credentials_filename`]: the profile name a credentials
 /// filename would have been written under, or `None` for anything else in
 /// the config directory — `credentials-<name>.json.lock`, `config.json`,
@@ -641,20 +581,6 @@ impl CredentialLock {
 
     /// Block until this lock file is ours.
     fn at(path: &Path) -> Result<Self> {
-        let file = Self::open(path)?;
-        file.lock()
-            .with_context(|| format!("Failed to lock {}", path.display()))?;
-        Ok(Self { file })
-    }
-
-    /// [`Self::at`], but `None` rather than waiting when someone else holds it.
-    fn try_at(path: &Path) -> Option<Self> {
-        let file = Self::open(path).ok()?;
-        file.try_lock().ok()?;
-        Some(Self { file })
-    }
-
-    fn open(path: &Path) -> Result<std::fs::File> {
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create(true).truncate(false);
         #[cfg(unix)]
@@ -662,8 +588,12 @@ impl CredentialLock {
             use std::os::unix::fs::OpenOptionsExt;
             opts.mode(0o600);
         }
-        opts.open(path)
-            .with_context(|| format!("Failed to open lock file {}", path.display()))
+        let file = opts
+            .open(path)
+            .with_context(|| format!("Failed to open lock file {}", path.display()))?;
+        file.lock()
+            .with_context(|| format!("Failed to lock {}", path.display()))?;
+        Ok(Self { file })
     }
 }
 
@@ -2141,7 +2071,6 @@ fn exchange_code_for_token(
         refresh_token,
         username,
         client_id: None,
-        default_public_token: None,
     })
 }
 
@@ -3144,95 +3073,6 @@ mod tests {
         assert_eq!(describe(Duration::from_millis(300)), "300 ms");
         assert_eq!(describe(Duration::from_secs(30)), "30 seconds");
         assert_eq!(describe(CALLBACK_TIMEOUT), "5 minutes");
-    }
-
-    fn stored_default_token(path: &Path) -> Option<String> {
-        let creds: Credentials =
-            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        creds.default_public_token
-    }
-
-    #[test]
-    fn default_public_token_is_added_beside_the_login() {
-        let dir = scratch("default-token-added");
-        let path = dir.join("credentials.json");
-        let lock = dir.join("credentials.json.lock");
-        std::fs::write(
-            &path,
-            r#"{"access_token":"sk.a","refresh_token":"r","username":"someone"}"#,
-        )
-        .unwrap();
-
-        assert!(store_default_public_token_at(
-            &path,
-            &lock,
-            "someone",
-            "pk.default"
-        ));
-
-        let creds: Credentials =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(creds.default_public_token.as_deref(), Some("pk.default"));
-        assert_eq!(creds.access_token, "sk.a");
-        assert_eq!(creds.refresh_token.as_deref(), Some("r"));
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn default_public_token_never_recreates_a_logged_out_profile() {
-        let dir = scratch("default-token-logged-out");
-        let path = dir.join("credentials.json");
-        let lock = dir.join("credentials.json.lock");
-
-        assert!(!store_default_public_token_at(
-            &path,
-            &lock,
-            "someone",
-            "pk.default"
-        ));
-        assert!(!path.exists());
-        assert!(!lock.exists());
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn default_public_token_is_not_saved_over_another_account() {
-        let dir = scratch("default-token-other-account");
-        let path = dir.join("credentials.json");
-        let lock = dir.join("credentials.json.lock");
-        std::fs::write(
-            &path,
-            r#"{"access_token":"sk.b","username":"someone-else"}"#,
-        )
-        .unwrap();
-
-        assert!(!store_default_public_token_at(
-            &path,
-            &lock,
-            "someone",
-            "pk.default"
-        ));
-        assert_eq!(stored_default_token(&path), None);
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn default_public_token_gives_up_rather_than_wait_for_the_lock() {
-        let dir = scratch("default-token-locked");
-        let path = dir.join("credentials.json");
-        let lock = dir.join("credentials.json.lock");
-        std::fs::write(&path, r#"{"access_token":"sk.a","username":"someone"}"#).unwrap();
-
-        let held = CredentialLock::at(&lock).unwrap();
-        assert!(!store_default_public_token_at(
-            &path,
-            &lock,
-            "someone",
-            "pk.default"
-        ));
-        drop(held);
-        assert_eq!(stored_default_token(&path), None);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A unique scratch dir, so tests never touch the real config dir.

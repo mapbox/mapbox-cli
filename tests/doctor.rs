@@ -297,6 +297,92 @@ fn telemetry_off_alone_is_enough_to_turn_the_reported_update_check_off() {
     );
 }
 
+/// `config set telemetry off` turns the event off as surely as the
+/// environment variable, so doctor has to say so — and say which switch did
+/// it — rather than report the variable alone.
+#[test]
+fn the_persisted_telemetry_setting_is_reported() {
+    let home = scratch("telemetry-config-off");
+    assert!(command(&home)
+        .args(["config", "set", "telemetry", "off"])
+        .output()
+        .expect("run mapbox config set")
+        .status
+        .success());
+
+    let json = stdout(
+        &command(&home)
+            .args(["-o", "json", "doctor"])
+            .output()
+            .expect("run mapbox doctor"),
+    );
+    assert_eq!(json["switches"]["telemetry_allowed"], true);
+    assert_eq!(json["switches"]["telemetry_persisted"], false);
+
+    let out = command(&home)
+        .args(["-o", "text", "doctor"])
+        .output()
+        .expect("run mapbox doctor");
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        text.lines().any(|line| line.contains("Telemetry:")
+            && line.contains("off (mapbox config set telemetry off)")),
+        "{text}"
+    );
+    // The setting covers what the variable covers, the update check included.
+    assert!(
+        text.lines().any(|line| line.contains("Update check:")
+            && line.contains("off (mapbox config set telemetry off silences this too)")),
+        "{text}"
+    );
+}
+
+/// The persisted setting strips the `User-Agent` markers the way the
+/// variable does, leaving the product token that is always sent.
+#[test]
+fn the_persisted_telemetry_setting_strips_the_user_agent_markers() {
+    let home = scratch("telemetry-config-user-agent");
+    assert!(command(&home)
+        .args(["config", "set", "telemetry", "off"])
+        .output()
+        .expect("run mapbox config set")
+        .status
+        .success());
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let url = format!(
+        "http://{}/",
+        listener.local_addr().expect("the bound address")
+    );
+    let seen = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("the doctor's request");
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+        let mut buf = [0u8; 4096];
+        let n = stream.read(&mut buf).unwrap_or(0);
+        let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
+        String::from_utf8_lossy(&buf[..n]).into_owned()
+    });
+
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_DOCTOR_URL", &url)
+        // A marker that would be sent with telemetry on.
+        .env("CLAUDECODE", "1")
+        .args(["-o", "json", "doctor", "--verify"])
+        .output()
+        .expect("run mapbox doctor --verify");
+    assert!(out.status.success());
+
+    let head = seen.join().expect("the server thread");
+    let user_agent = head
+        .lines()
+        .find_map(|l| l.strip_prefix("user-agent: "))
+        .expect("a user agent");
+    assert_eq!(
+        user_agent,
+        concat!("mapbox-cli/", env!("CARGO_PKG_VERSION"))
+    );
+}
+
 #[test]
 fn verify_honors_an_explicit_timeout() {
     let home = scratch("verify-timeout");

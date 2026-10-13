@@ -138,7 +138,7 @@ fn list_reports_every_setting_including_an_unset_one() {
     assert!(empty.status.success());
     assert_eq!(
         stdout(&empty),
-        r#"[{"key":"update-check","value":true},{"key":"history","value":true},{"key":"log","value":false}]"#
+        r#"[{"key":"update-check","value":true},{"key":"history","value":true},{"key":"log","value":false},{"key":"telemetry","value":true}]"#
     );
 
     let set = command(&home)
@@ -154,7 +154,7 @@ fn list_reports_every_setting_including_an_unset_one() {
     assert!(after.status.success());
     assert_eq!(
         stdout(&after),
-        r#"[{"key":"update-check","value":false},{"key":"history","value":true},{"key":"log","value":false}]"#
+        r#"[{"key":"update-check","value":false},{"key":"history","value":true},{"key":"log","value":false},{"key":"telemetry","value":true}]"#
     );
 
     let text = command(&home)
@@ -164,7 +164,7 @@ fn list_reports_every_setting_including_an_unset_one() {
     assert!(text.status.success());
     assert_eq!(
         stdout(&text),
-        "update-check  off\nhistory       on\nlog           off"
+        "update-check  off\nhistory       on\nlog           off\ntelemetry     on"
     );
 }
 

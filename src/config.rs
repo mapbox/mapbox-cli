@@ -19,8 +19,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::builder::PossibleValuesParser;
 use clap::{Arg, ArgMatches, Command};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde::Serialize;
+use serde_json::{json, Map, Value};
 
 use crate::auth;
 use crate::output::{self, CliError, Mode};
@@ -33,7 +33,8 @@ const CONFIG_FILE: &str = "config.json";
 const UPDATE_CHECK_KEY: &str = "update-check";
 const HISTORY_KEY: &str = "history";
 const LOG_KEY: &str = "log";
-const KEYS: &[&str] = &[UPDATE_CHECK_KEY, HISTORY_KEY, LOG_KEY];
+const TELEMETRY_KEY: &str = "telemetry";
+const KEYS: &[&str] = &[UPDATE_CHECK_KEY, HISTORY_KEY, LOG_KEY, TELEMETRY_KEY];
 
 const ON: &str = "on";
 const OFF: &str = "off";
@@ -42,7 +43,7 @@ const OFF: &str = "off";
 /// default is `on` — distinct from `Some(true)`, which is someone turning it
 /// back on after having turned it off, but read identically by
 /// [`update_check_setting`].
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
 struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     update_check: Option<bool>,
@@ -50,6 +51,35 @@ struct Config {
     history: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     log: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    telemetry: Option<bool>,
+    /// Keys this version doesn't know, kept so that writing the file doesn't
+    /// erase a setting a newer version saved.
+    #[serde(flatten)]
+    rest: Map<String, Value>,
+}
+
+impl Config {
+    /// Reads each key on its own, so one malformed value resets only that
+    /// key. Parsed as a whole, a single bad value would reset every key,
+    /// `telemetry` included, and an opt-out would quietly turn back on.
+    fn parse(text: &str) -> Config {
+        let Ok(Value::Object(mut rest)) = serde_json::from_str(text) else {
+            return Config::default();
+        };
+        let mut flag = |key: &str| rest.remove(key).and_then(|value| value.as_bool());
+        let update_check = flag("update_check");
+        let history = flag("history");
+        let log = flag("log");
+        let telemetry = flag("telemetry");
+        Config {
+            update_check,
+            history,
+            log,
+            telemetry,
+            rest,
+        }
+    }
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -64,7 +94,7 @@ fn config_path() -> Option<PathBuf> {
 fn read_config() -> Config {
     config_path()
         .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|text| serde_json::from_str(&text).ok())
+        .map(|text| Config::parse(&text))
         .unwrap_or_default()
 }
 
@@ -102,6 +132,12 @@ pub fn log_enabled() -> bool {
     read_config().log.unwrap_or(false)
 }
 
+/// Whether telemetry is on, per the persisted setting. Read through
+/// [`crate::telemetry::telemetry_allowed`], alongside `MAPBOX_CLI_NO_TELEMETRY`.
+pub fn telemetry_enabled() -> bool {
+    read_config().telemetry.unwrap_or(true)
+}
+
 fn on_off(enabled: bool) -> &'static str {
     if enabled {
         ON
@@ -118,6 +154,7 @@ fn resolve(config: &Config, key: &str) -> bool {
         UPDATE_CHECK_KEY => update_check_setting(config),
         HISTORY_KEY => config.history.unwrap_or(true),
         LOG_KEY => config.log.unwrap_or(false),
+        TELEMETRY_KEY => config.telemetry.unwrap_or(true),
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
 }
@@ -132,6 +169,7 @@ fn clear(config: &mut Config, key: &str) {
         UPDATE_CHECK_KEY => config.update_check = None,
         HISTORY_KEY => config.history = None,
         LOG_KEY => config.log = None,
+        TELEMETRY_KEY => config.telemetry = None,
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
 }
@@ -214,6 +252,7 @@ pub fn set(matches: &ArgMatches, mode: Mode) -> Result<()> {
         UPDATE_CHECK_KEY => config.update_check = Some(enabled),
         HISTORY_KEY => config.history = Some(enabled),
         LOG_KEY => config.log = Some(enabled),
+        TELEMETRY_KEY => config.telemetry = Some(enabled),
         _ => unreachable!("clap's value_parser restricts `key` to {KEYS:?}"),
     }
     write_config(&config)?;
@@ -273,13 +312,30 @@ mod tests {
         };
         let text = serde_json::to_string(&off).expect("serialize");
         assert_eq!(text, r#"{"update_check":false}"#);
-        let read: Config = serde_json::from_str(&text).expect("deserialize");
-        assert_eq!(read, off);
+        assert_eq!(Config::parse(&text), off);
 
         // A file from before this key existed, or one with nothing set yet.
-        let empty: Config = serde_json::from_str("{}").expect("an empty object");
+        let empty = Config::parse("{}");
         assert_eq!(empty.update_check, None);
         assert!(update_check_setting(&empty));
+    }
+
+    #[test]
+    fn a_malformed_value_resets_only_its_own_key() {
+        let config = Config::parse(r#"{"telemetry":false,"history":"off"}"#);
+        assert_eq!(config.telemetry, Some(false));
+        assert_eq!(config.history, None);
+        assert_eq!(Config::parse("not json"), Config::default());
+    }
+
+    #[test]
+    fn keys_from_a_newer_version_survive_a_write() {
+        let mut config = Config::parse(r#"{"history":true,"future_key":[1]}"#);
+        config.history = Some(false);
+        assert_eq!(
+            serde_json::to_string(&config).expect("serialize"),
+            r#"{"history":false,"future_key":[1]}"#
+        );
     }
 
     #[test]

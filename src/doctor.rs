@@ -238,7 +238,11 @@ impl ProxyReport {
 
 #[derive(Serialize)]
 struct SwitchesReport {
+    /// `MAPBOX_CLI_NO_TELEMETRY` alone, as before `telemetry_persisted`
+    /// existed; a script that read it keeps reading the same fact.
     telemetry_allowed: bool,
+    /// `mapbox config set telemetry`; the event needs this and the above.
+    telemetry_persisted: bool,
     update_check_env_opt_out: bool,
     update_check_persisted: bool,
 }
@@ -248,7 +252,8 @@ impl SwitchesReport {
         let env_opted_out =
             std::env::var(update_check::NO_UPDATE_CHECK_ENV).is_ok_and(|v| !v.trim().is_empty());
         SwitchesReport {
-            telemetry_allowed: telemetry::telemetry_allowed(),
+            telemetry_allowed: telemetry::env_allows_telemetry(),
+            telemetry_persisted: config::telemetry_enabled(),
             update_check_env_opt_out: env_opted_out,
             update_check_persisted: config::update_check_enabled(),
         }
@@ -264,7 +269,10 @@ impl SwitchesReport {
     /// and `update_check_env_opt_out` alone, so `MAPBOX_CLI_NO_TELEMETRY=1`
     /// printed "Update check: on" for a check that would not run.
     fn update_check_on(&self) -> bool {
-        self.update_check_persisted && !self.update_check_env_opt_out && self.telemetry_allowed
+        self.update_check_persisted
+            && !self.update_check_env_opt_out
+            && self.telemetry_allowed
+            && self.telemetry_persisted
     }
 
     fn update_check_field(&self) -> (&'static str, String) {
@@ -272,6 +280,8 @@ impl SwitchesReport {
             format!(" ({} is set)", update_check::NO_UPDATE_CHECK_ENV)
         } else if !self.telemetry_allowed {
             " (MAPBOX_CLI_NO_TELEMETRY silences this too)".to_string()
+        } else if !self.telemetry_persisted {
+            " (mapbox config set telemetry off silences this too)".to_string()
         } else if !self.update_check_persisted {
             " (mapbox config set update-check off)".to_string()
         } else {
@@ -282,8 +292,14 @@ impl SwitchesReport {
     }
 
     fn telemetry_field(&self) -> (&'static str, String) {
-        let state = if self.telemetry_allowed { "on" } else { "off" };
-        ("Telemetry:", state.to_string())
+        let value = if !self.telemetry_allowed {
+            "off (MAPBOX_CLI_NO_TELEMETRY is set)"
+        } else if !self.telemetry_persisted {
+            "off (mapbox config set telemetry off)"
+        } else {
+            "on"
+        };
+        ("Telemetry:", value.to_string())
     }
 }
 

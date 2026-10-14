@@ -51,33 +51,6 @@ nests, and is typed `mapbox styles draft get`.
 [auth.logout](#mapbox-auth-logout) · [auth.refresh](#mapbox-auth-refresh) ·
 [auth.whoami](#mapbox-auth-whoami) · [auth.profiles](#mapbox-auth-profiles)
 
-**[Agent skills](#agent-skills)** —
-[agent-skills.list](#mapbox-agent-skills-list) ·
-[agent-skills.install](#mapbox-agent-skills-install) ·
-[agent-skills.update](#mapbox-agent-skills-update) ·
-[agent-skills.uninstall](#mapbox-agent-skills-uninstall)
-
-**[Completion](#completion)** — [completion](#mapbox-completion)
-
-**[Generate skills](#generate-skills)** —
-[generate-skills](#mapbox-generate-skills)
-
-**[MCP servers](#mcp-servers)** — [mcp.list](#mapbox-mcp-list) ·
-[mcp.install](#mapbox-mcp-install)
-
-**[Uninstall](#uninstall)** — [uninstall](#mapbox-uninstall)
-
-**[Config](#config)** — [config.get](#mapbox-config-get) ·
-[config.set](#mapbox-config-set) · [config.list](#mapbox-config-list) ·
-[config.unset](#mapbox-config-unset)
-
-**[History](#history)** — [history.list](#mapbox-history-list) ·
-[history.show](#mapbox-history-show)
-
-**[Doctor](#doctor)** — [doctor](#mapbox-doctor)
-
-**[Usage](#usage)** — [usage](#mapbox-usage)
-
 **[Accounts](#accounts)** —
 [accounts.list-tokens](#mapbox-accounts-list-tokens) ·
 [accounts.retrieve-token](#mapbox-accounts-retrieve-token) ·
@@ -130,6 +103,33 @@ nests, and is typed `mapbox styles draft get`.
 [tilesets.get-tile](#mapbox-tilesets-get-tile) ·
 [tilesets.get-mvt](#mapbox-tilesets-get-mvt) ·
 [tilesets.query](#mapbox-tilesets-query)
+
+**[Agent skills](#agent-skills)** —
+[agent-skills.list](#mapbox-agent-skills-list) ·
+[agent-skills.install](#mapbox-agent-skills-install) ·
+[agent-skills.update](#mapbox-agent-skills-update) ·
+[agent-skills.uninstall](#mapbox-agent-skills-uninstall)
+
+**[Completion](#completion)** — [completion](#mapbox-completion)
+
+**[Generate skills](#generate-skills)** —
+[generate-skills](#mapbox-generate-skills)
+
+**[MCP servers](#mcp-servers)** — [mcp.list](#mapbox-mcp-list) ·
+[mcp.install](#mapbox-mcp-install)
+
+**[Uninstall](#uninstall)** — [uninstall](#mapbox-uninstall)
+
+**[Config](#config)** — [config.get](#mapbox-config-get) ·
+[config.set](#mapbox-config-set) · [config.list](#mapbox-config-list) ·
+[config.unset](#mapbox-config-unset)
+
+**[History](#history)** — [history.list](#mapbox-history-list) ·
+[history.show](#mapbox-history-show)
+
+**[Doctor](#doctor)** — [doctor](#mapbox-doctor)
+
+**[Usage](#usage)** — [usage](#mapbox-usage)
 
 **[Tilesets CLI](#tilesets-cli)** — [tilesets-cli](#mapbox-tilesets-cli-args)
 

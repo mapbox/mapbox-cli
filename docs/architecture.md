@@ -10,9 +10,9 @@ directly to public Mapbox API endpoints.
 
 ## Diagrams
 
-There are three request-response cases that happen at runtime. Each one
+There are four request-response cases that happen at runtime. Each one
 crosses trust boundaries differently, so each gets its own diagram.
-**Legend** (shared by all three): 🔒 means the arrow crosses the network
+**Legend** (shared by all four): 🔒 means the arrow crosses the network
 (HTTPS/TLS). Arrows without 🔒 stay on the local machine (same process or
 same disk, no network). Dashed arrows happen once or in one direction only
 (a compile-time embed, or a check done only at startup).
@@ -86,10 +86,10 @@ flowchart LR
     end
 
     subgraph cloud["Mapbox Cloud · api.mapbox.com"]
-        api["Mapbox APIs (11 services)<br/>accounts, fonts, geocoder, rasterarrays,<br/>search, sprites, static-images, static-tiles,<br/>styles, tilequery, tilesets"]
+        api["Mapbox APIs (13 services)<br/>accounts, directions, feedback, fonts,<br/>geocoder, isochrone, map-match, matrix,<br/>search, sprites, static, styles, tilesets"]
     end
 
-    user -- "mapbox styles ... / mapbox tilequery ... / etc." --> bin
+    user -- "mapbox styles ... / mapbox tilesets query ... / etc." --> bin
     store -. "① read stored token;<br/>auto-refresh if expiring within 5 min" .-> bin
     bin -- "② 🔒 HTTPS + ?access_token=…" --> api
     api -- "③ 🔒 JSON response" --> bin
@@ -102,11 +102,14 @@ place if it's close to expiring, then sent as an `access_token` query
 parameter. It is not sent as an `Authorization` header, because that
 matches how these APIs have always been called.
 
-The request also carries `User-Agent: mapbox-cli/<version>`. This is how
-Mapbox's logs identify this CLI's traffic. `src/http.rs` is the only place
-an HTTP client is built, so every request goes through it. Anything added
-to that header beyond the version is gated on `MAPBOX_CLI_NO_TELEMETRY`. Nothing
-is added today.
+The request also carries `User-Agent: mapbox-cli/<version>`, plus telemetry
+markers today: `os/`, `arch/`, a `command/<group>` naming the command group
+that ran, an `agent/` marker when an AI coding agent is detected, and a
+couple more (`src/telemetry.rs` builds the full list). This is how Mapbox's
+logs identify this CLI's traffic. `src/http.rs` is the only place an HTTP
+client is built, so every request goes through it. Everything past the
+version is gated on `MAPBOX_CLI_NO_TELEMETRY`: set it and only the product
+token ships.
 
 ### 3. The Tilesets CLI proxy (`mapbox tilesets-cli`)
 
@@ -173,3 +176,40 @@ which cover this in practice.
 One thing is not done, and won't be: `mapbox` does **not** install
 `tilesets`. It only checks whether the binary is reachable, and prints
 install instructions if it isn't.
+
+### 4. The `cli.command` telemetry event
+
+```mermaid
+flowchart LR
+    bin["mapbox binary<br/>(the run that just finished)"]
+
+    subgraph local["User's local machine"]
+        child["mapbox binary<br/>(detached child,<br/>MAPBOX_INTERNAL_TELEMETRY_SEND=1)"]
+    end
+
+    subgraph cloud["Mapbox Cloud · events.mapbox.com<br/>(not api.mapbox.com)"]
+        events["Mapbox Events<br/>POST /events/v2"]
+    end
+
+    bin -- "① spawn detached, event + token<br/>on stdin (never argv or env)" --> child
+    child -- "② 🔒 HTTPS POST" --> events
+```
+
+Built in `src/telemetry_event.rs`, delivered by `src/telemetry_sink.rs`. One
+`cli.command` event per run — what ran, how it ended, the environment
+markers described above — goes to Mapbox Events, a different host from the
+one every other diagram here talks to. `MAPBOX_CLI_NO_TELEMETRY` skips this
+entirely, same as Diagram 2.
+
+Step ① is detached and non-blocking: the parent spawns a copy of itself in
+this special mode and exits without waiting on it, so a dead network or a
+slow endpoint never adds to a command's run time. The event and the token it
+travels with go over the child's stdin rather than its argv or environment,
+for the same `ps`-visibility reason Diagram 3 gives.
+
+Step ②'s token follows `src/cli_token.rs`'s fallback order: the user's own
+token first (flag, environment, or stored login), and only when none of
+those exist, a `pk.` token compiled into the binary at build time
+(`MAPBOX_CLI_BUNDLED_TOKEN`) as a last resort so usage from a user who has
+never logged in is still counted. A `cargo build` from source has no bundled
+token, so with no login either, the event is simply dropped.

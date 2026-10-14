@@ -438,3 +438,72 @@ fn the_plan_is_a_result_and_goes_to_stdout() {
         "{text}"
     );
 }
+
+/// `places` always sends the batch request, one id or many — the whole
+/// point of merging `places get`/`places batch` into one command.
+#[test]
+fn places_always_batches_even_for_one_id() {
+    let config = config_dir("places-one-id");
+    let out = run(
+        &config,
+        &[
+            "-o",
+            "json",
+            "--token",
+            "sk.a-test-token",
+            "places",
+            "zz-mapbox-id-1",
+            "--dry-run",
+        ],
+    );
+
+    assert!(out.status.success(), "{}", stderr(&out));
+    let body = &json(&stdout(&out))["body"]["json"];
+    assert_eq!(body, &serde_json::json!({ "ids": ["zz-mapbox-id-1"] }));
+}
+
+#[test]
+fn places_takes_more_than_one_id() {
+    let config = config_dir("places-many-ids");
+    let out = run(
+        &config,
+        &[
+            "-o",
+            "json",
+            "--token",
+            "sk.a-test-token",
+            "places",
+            "zz-mapbox-id-1",
+            "zz-mapbox-id-2",
+            "zz-mapbox-id-3",
+            "--dry-run",
+        ],
+    );
+
+    assert!(out.status.success(), "{}", stderr(&out));
+    let body = &json(&stdout(&out))["body"]["json"];
+    assert_eq!(
+        body,
+        &serde_json::json!({ "ids": ["zz-mapbox-id-1", "zz-mapbox-id-2", "zz-mapbox-id-3"] })
+    );
+}
+
+/// The API's own limit (100), enforced before the request goes out rather
+/// than left to a 400 that says the same thing less directly.
+#[test]
+fn places_refuses_more_than_a_hundred_ids_before_sending() {
+    let config = config_dir("places-too-many-ids");
+    let ids: Vec<String> = (0..101).map(|n| format!("zz-id-{n}")).collect();
+    let mut args = vec!["-o", "json", "--token", "sk.a-test-token", "places"];
+    args.extend(ids.iter().map(String::as_str));
+    args.push("--dry-run");
+
+    let out = run(&config, &args);
+
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("no more were expected"),
+        "{}",
+        stderr(&out)
+    );
+}

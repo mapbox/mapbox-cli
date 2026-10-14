@@ -474,7 +474,14 @@ fn api_command(app: &Command, svc: &ServiceSpec, op: &Operation) -> CommandEntry
     arguments.extend(
         op.body
             .as_ref()
-            .map(|body| body_arguments(body, !op.body_fields.is_empty(), declared))
+            .map(|body| {
+                body_arguments(
+                    body,
+                    !op.body_fields.is_empty(),
+                    op.variadic_body_array.is_some(),
+                    declared,
+                )
+            })
             .unwrap_or_default(),
     );
 
@@ -482,6 +489,14 @@ fn api_command(app: &Command, svc: &ServiceSpec, op: &Operation) -> CommandEntry
         flag: Some(format!("--{}", field.arg_name)),
         location: Some("body"),
         ..parameter(field, ArgKind::Option)
+    }));
+
+    arguments.extend(op.variadic_body_array.as_ref().map(|variadic| Argument {
+        required: true,
+        repeatable: true,
+        location: Some("body"),
+        description: variadic.description.clone(),
+        ..Argument::new(variadic.arg_name.clone(), ArgKind::Positional)
     }));
 
     // Described because it is declared — `the_schema_lists_the_flags_clap_declares`
@@ -637,10 +652,11 @@ fn username_argument(op: &Operation) -> Option<Argument> {
 fn body_arguments(
     body: &RequestBody,
     has_field_flags: bool,
+    suppress_data: bool,
     declared: Option<&Command>,
 ) -> Vec<Argument> {
     let text = body.text_content_type();
-    let takes_data = body.accepts_json() || text.is_some();
+    let takes_data = (body.accepts_json() || text.is_some()) && !suppress_data;
     let file_type = body.file_content_type();
 
     // `starFile` and `initUpload` accept either flag for the same body. When
@@ -927,9 +943,12 @@ mod tests {
             .filter(|arg| arg.source.is_none())
             .map(|arg| {
                 let spelling = arg.flag.clone().unwrap_or_else(|| arg.name.clone());
-                let required = if arg.location == Some("body") {
+                let required = if arg.location == Some("body") && arg.kind != ArgKind::Positional {
                     // Whatever clap says, so this comparison stays about the
-                    // fields it can speak to.
+                    // fields it can speak to. A `VariadicBodyArray`
+                    // positional is exempt: unlike `--data`/`--file`, clap
+                    // has no either-or ambiguity to paper over for it, its
+                    // `required` is exactly what `main.rs` declared.
                     false
                 } else {
                     arg.required

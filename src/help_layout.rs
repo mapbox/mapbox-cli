@@ -35,7 +35,7 @@ const GROUPS: &[(&str, &[&str])] = &[
         "Maps and data",
         &["styles", "sprites", "fonts", "tilesets", "static"],
     ),
-    ("Search", &["search", "geocoder", "feedback"]),
+    ("Search", &["search", "geocoder", "places", "feedback"]),
     (
         "Navigation",
         &["directions", "matrix", "isochrone", "map-match"],
@@ -75,6 +75,10 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
         "Find addresses and places by text, coordinate or category",
     ),
     ("geocoder", "Forward, reverse and batch geocoding"),
+    (
+        "places",
+        "Full detail for a place, by its Search Box result id",
+    ),
     ("feedback", "Submit and list feedback about Mapbox data"),
     ("directions", "Route between waypoints"),
     (

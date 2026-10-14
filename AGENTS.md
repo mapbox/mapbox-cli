@@ -103,8 +103,10 @@ purpose: they do not prove a call is correct, they make it *conspicuous*, so
 that adding one is a decision somebody made rather than a line nobody looked
 at twice. Today they hold which modules may delete from the filesystem, which
 may write to stdout, which must carry a request id into an error, that every
-telemetry marker is disclosed in README.md, and that the prose is American
-English.
+telemetry marker is disclosed in README.md, that every end-to-end test file
+that runs the binary either sets `MAPBOX_CLI_NO_TELEMETRY=1` or points
+`MAPBOX_INTERNAL_TELEMETRY_URL` at loopback (so CI can't fire a real event by
+accident), and that the prose is American English.
 
 They read `src/` recursively and name a file by its path under it
 (`output/mod.rs`), so a module that moves into a directory stays covered —

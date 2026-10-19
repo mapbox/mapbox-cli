@@ -568,3 +568,91 @@ fn report_needs_a_message_and_takes_no_data() {
         assert!(stdout(&out).is_empty(), "{args:?}: {}", stdout(&out));
     }
 }
+
+/// What `report` sends with, and what it says, when it cannot use the CLI's
+/// token. Every case here is decided before a request: the token endpoint
+/// is a dead port, and a cooldown is written to disk.
+mod report_token {
+    use super::*;
+
+    /// A saved CLI token whose cooldown for `report` runs for another hour.
+    fn resting(config: &Path) {
+        let until = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a clock after 1970")
+            .as_secs()
+            + 3600;
+        std::fs::write(
+            config.join("cli-token.json"),
+            format!(
+                r#"{{"token":"pk.saved","overridden":true,"cooldowns":{{"report":{{"failures":1,"until":{until}}}}}}}"#
+            ),
+        )
+        .expect("write the state");
+    }
+
+    fn error_code(out: &Output) -> String {
+        json(&stderr(out))["code"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    #[test]
+    fn with_no_token_at_all_it_says_the_clis_is_unavailable() {
+        let config = config_dir("report-no-tokens");
+        let out = run(&config, &["-o", "json", "report", "A test"]);
+        assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+        assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+        assert_eq!(error_code(&out), "cli_token_unavailable");
+    }
+
+    #[test]
+    fn while_resting_with_no_token_it_says_the_api_refused_it() {
+        let config = config_dir("report-resting");
+        resting(&config);
+        let out = run(&config, &["-o", "json", "report", "A test"]);
+        assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+        assert_eq!(error_code(&out), "cli_token_forbidden");
+        assert!(
+            stderr(&out).contains("refused it recently"),
+            "{}",
+            stderr(&out)
+        );
+    }
+
+    /// `MAPBOX_CLI_TOKEN` is a developer's, not the fetched token, so the
+    /// fetched token's cooldown does not hold it back.
+    #[test]
+    fn a_cooldown_does_not_hold_back_the_override() {
+        let config = config_dir("report-resting-override");
+        resting(&config);
+        let out = command(&config)
+            .env("MAPBOX_CLI_TOKEN", "pk.cli")
+            .args(["--token", "sk.mine", "report", "--dry-run", "A test"])
+            .output()
+            .expect("run mapbox");
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(
+            stderr(&out).contains("`--token` was not used"),
+            "{}",
+            stderr(&out)
+        );
+    }
+
+    /// While the CLI's token cannot be used, the user's is: the plan goes
+    /// out with it, and a typed `--token` is not reported as ignored.
+    #[test]
+    fn while_resting_a_dry_run_plans_with_the_users_token() {
+        let config = config_dir("report-resting-user");
+        resting(&config);
+        let out = run(
+            &config,
+            &["--token", "sk.mine", "report", "--dry-run", "A test"],
+        );
+        assert!(out.status.success(), "{}", stderr(&out));
+        let err = stderr(&out);
+        assert!(!err.contains("was not used"), "{err}");
+        assert!(!err.contains("no access token was resolved"), "{err}");
+    }
+}

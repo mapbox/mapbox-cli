@@ -20,9 +20,13 @@ that may never merge. They are not releases and are not listed here.
 ## Unreleased
 
 - New `mapbox report "<message>"` sends feedback about the CLI itself to
-  the Mapbox CLI team. It works with any valid token, needs no
-  `user-feedback:write` scope, and files nothing under your own account.
-  `--category` is optional and defaults to `general`.
+  the Mapbox CLI team. It is sent with the CLI's own token, so it needs no
+  login, no `user-feedback:write` scope, and files nothing under your own
+  account; your token stands in only while the CLI's can't be used.
+  `--category` is optional and defaults to `general`. Two new error codes
+  say why the CLI's token couldn't be used when you have no token either:
+  `cli_token_unavailable` and `cli_token_forbidden` (see
+  [Errors](docs/commands.md#errors)).
 
 - The CLI's own token, used for telemetry when you have no token of your
   own, is now fetched from `https://cli.mapbox.com/config/token.json` and

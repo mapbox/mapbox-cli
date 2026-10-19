@@ -331,7 +331,8 @@ mapbox report "tilesets query hangs behind my proxy" --category bug
 ```
 
 The message goes to the Mapbox CLI team, not to your account, so
-`mapbox feedback list` won't show it. Any valid token works. See
+`mapbox feedback list` won't show it. It is sent with the CLI's own token,
+so it needs no login; yours stands in only while the CLI's can't be used. See
 [Report](./docs/commands.md#report).
 
 ### Shell completion
@@ -499,7 +500,8 @@ third in a row pauses telemetry's sending with it for an hour, as three
 fetches in a row that find no usable token pause fetching. The token is
 restricted to `https://cli.mapbox.com/`, so every request with it carries
 that as its `Referer`. The CLI's token is only used for what
-`src/cli_token.rs` lists for it, today just telemetry.
+`src/cli_token.rs` lists for it: telemetry, and `mapbox report`, which
+prefers it to yours and falls back to yours while it can't be used.
 
 ### Proxies
 

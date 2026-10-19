@@ -65,6 +65,47 @@ const TRIES_BEFORE_WAITING: u32 = 3;
 /// Long enough for any `pk.` token; anything longer is not one.
 const MAX_TOKEN_LEN: usize = 512;
 
+/// Why there is no CLI token to use right now, as a command that wanted one
+/// tells its user.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Unavailable {
+    /// The endpoint could not be reached. Asked again on the next run.
+    Unreachable,
+    /// The endpoint answered without a usable token, so it is not asked
+    /// again before `retry_at` (Unix seconds). `revoked` when there is a
+    /// dead token it has not replaced yet, rather than never a token at all.
+    Waiting { retry_at: u64, revoked: bool },
+    /// None on disk, and the caller asked not to fetch, as a dry run does.
+    NotFetched,
+    /// This caller's API refused the token lately, so it rests from it
+    /// until `until` (Unix seconds).
+    Resting { until: u64 },
+}
+
+impl std::fmt::Display for Unavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unreachable => write!(f, "the token endpoint could not be reached"),
+            Self::Waiting { retry_at, revoked } => write!(
+                f,
+                "{}; trying again in {}",
+                if *revoked {
+                    "it is revoked and no new one is published yet"
+                } else {
+                    "the token endpoint did not return a usable token"
+                },
+                wait_text(retry_at.saturating_sub(now()))
+            ),
+            Self::NotFetched => write!(f, "it has not been fetched yet"),
+            Self::Resting { until } => write!(
+                f,
+                "this API refused it recently; trying it again in {}",
+                wait_text(until.saturating_sub(now()))
+            ),
+        }
+    }
+}
+
 /// What a fetch got back, before [`acquire`] judges it.
 #[derive(Debug)]
 pub(crate) enum Fetched {
@@ -142,16 +183,18 @@ fn backoff(failures: u32) -> u64 {
     }
 }
 
-/// Whether `caller` — today only `telemetry` — is resting from the
+/// Whether `caller` — `telemetry`, or a command's name — is resting from the
 /// CLI's token. While it is, it sends nothing with it, so nothing is
 /// refused, and nothing is checked.
 pub(crate) fn cooling(caller: &str) -> bool {
-    read_state().is_some_and(|state| {
-        state
-            .cooldowns
-            .get(caller)
-            .is_some_and(|cooldown| holds(cooldown.until, now()))
-    })
+    resting_until(caller).is_some()
+}
+
+/// When `caller`'s cooldown ends, while it has one.
+pub(crate) fn resting_until(caller: &str) -> Option<u64> {
+    let state = read_state()?;
+    let cooldown = state.cooldowns.get(caller)?;
+    holds(cooldown.until, now()).then_some(cooldown.until)
 }
 
 /// Records that `caller`'s request with the saved `token` went through, which
@@ -165,16 +208,39 @@ pub(crate) fn accepted(caller: &str, token: &str) {
 }
 
 /// The CLI's token: the one on disk while it is not dead, otherwise a fresh
-/// one from the endpoint unless it is being waited for. `None` when there is
-/// none to be had right now.
-pub(crate) fn token() -> Option<String> {
+/// one from the endpoint unless it is being waited for.
+pub(crate) fn token() -> Result<String, Unavailable> {
     let mut state = read_state().unwrap_or_default();
     let before = state.clone();
-    let token = acquire(&mut state, now(), || get(&endpoint()), check);
+    let mut unreachable = false;
+    let token = acquire(
+        &mut state,
+        now(),
+        || {
+            let fetched = get(&endpoint());
+            unreachable = matches!(fetched, Fetched::Failed);
+            fetched
+        },
+        check,
+    );
+    let why = if unreachable {
+        Unavailable::Unreachable
+    } else {
+        Unavailable::Waiting {
+            retry_at: state.retry_at,
+            revoked: state.rejected,
+        }
+    };
     if state != before {
         save_fetch(&before, state);
     }
-    token
+    token.ok_or(why)
+}
+
+/// The token on disk while it is not dead, without asking the endpoint, for
+/// a run that must not send anything, such as a dry run.
+pub(crate) fn saved_token() -> Option<String> {
+    read_state()?.usable_token().map(str::to_owned)
 }
 
 /// Writes what a fetch decided, unless another run decided first. The fetch
@@ -403,6 +469,22 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or_default()
+}
+
+fn wait_text(seconds: u64) -> String {
+    let minutes = seconds.div_ceil(60).max(1);
+    match minutes {
+        1 => "1 minute".to_owned(),
+        m if m < 60 => format!("{m} minutes"),
+        m => {
+            let hours = m.div_ceil(60);
+            if hours == 1 {
+                "1 hour".to_owned()
+            } else {
+                format!("{hours} hours")
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -644,6 +726,35 @@ mod tests {
         let mut counted = before.clone();
         counted.fail(NOW);
         assert_eq!(merged(&before, failed, counted), None);
+    }
+
+    #[test]
+    fn a_wait_says_whether_a_token_was_ever_revoked() {
+        let waiting = |revoked| {
+            Unavailable::Waiting {
+                retry_at: 0,
+                revoked,
+            }
+            .to_string()
+        };
+        assert!(
+            waiting(true).starts_with("it is revoked"),
+            "{}",
+            waiting(true)
+        );
+        assert!(
+            waiting(false).starts_with("the token endpoint did not return"),
+            "{}",
+            waiting(false)
+        );
+    }
+
+    #[test]
+    fn the_wait_reads_in_minutes_or_hours() {
+        assert_eq!(wait_text(0), "1 minute");
+        assert_eq!(wait_text(59 * 60), "59 minutes");
+        assert_eq!(wait_text(HOUR), "1 hour");
+        assert_eq!(wait_text(DAY), "24 hours");
     }
 
     #[test]

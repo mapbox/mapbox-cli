@@ -886,7 +886,9 @@ fn a_revoked_token_is_fetched_again_on_the_next_run() {
     )
     .expect("write the state");
     let (_, events_url) = answer_once("401 Unauthorized", r#"{"message":"Not Authorized"}"#);
-    let (checked, tokens_url) = answer_once("200 OK", r#"{"code":"TokenRevoked"}"#);
+    // A `401` around the verdict, which the real endpoint has not been seen
+    // to send: the `code` still decides.
+    let (checked, tokens_url) = answer_once("401 Unauthorized", r#"{"code":"TokenRevoked"}"#);
     let out = command(&home)
         .env(
             "MAPBOX_INTERNAL_TELEMETRY_URL",
@@ -942,11 +944,30 @@ fn a_token_an_api_refuses_is_kept() {
         .expect("the token was checked");
     let lines = deliveries(&home, 2);
     assert_eq!(lines[1]["status"], 401, "{lines:?}");
-    let state: Value = serde_json::from_str(
-        &std::fs::read_to_string(config_dir(&home).join("cli-token.json")).expect("the state"),
-    )
-    .expect("the state is JSON");
-    assert_eq!(state, serde_json::json!({ "token": "pk.kept" }));
+    let state = cli_token_state(&home, "valid_at");
+    assert_eq!(state["token"], "pk.kept");
+    assert_eq!(state["rejected"], false);
+
+    // Refused again within the hour: the verdict is reused, not asked for.
+    let (_, events_url) = answer_once("401 Unauthorized", r#"{"message":"Not Authorized"}"#);
+    let (checked, tokens_url) = answer_once("200 OK", r#"{"code":"TokenValid"}"#);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
+        .env(
+            "MAPBOX_INTERNAL_TELEMETRY_URL",
+            events_url.replace("/config/token.json", "/events/v2"),
+        )
+        .env("MAPBOX_INTERNAL_TOKENS_URL", &tokens_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    let lines = deliveries(&home, 4);
+    assert_eq!(lines[3]["status"], 401, "{lines:?}");
+    assert!(
+        checked.recv_timeout(Duration::from_millis(500)).is_err(),
+        "the token was checked again"
+    );
 }
 
 /// The endpoint still serving the rejected token is not asked again for an
@@ -987,4 +1008,66 @@ fn the_rejected_token_served_again_waits_before_asking() {
     assert!(out.status.success());
     let lines = deliveries(&home, 1);
     assert_eq!(lines.last().expect("a delivery line")["stage"], "no_token");
+}
+
+/// With no config directory, a fetched token still has to be kept, or a dead
+/// one is never marked and nothing backs off; so the directory is created.
+#[test]
+fn a_fetched_token_is_kept_even_without_a_config_directory() {
+    let home = scratch("send-fetched-no-dir");
+    std::fs::remove_dir(config_dir(&home)).expect("remove the scratch config dir");
+    let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.fetched"}"#);
+    let (received, url) = events_server(true);
+    // History would create the directory first, and hide whether keeping
+    // the token does.
+    let out = command(&home)
+        .env("MAPBOX_HISTORY", "0")
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert_eq!(sent_with(&received), "pk.fetched");
+    assert_eq!(cli_token_state(&home, "pk.fetched")["token"], "pk.fetched");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(config_dir(&home))
+            .expect("the config dir")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
+}
+
+/// An existing config directory is written into as it is.
+#[cfg(unix)]
+#[test]
+fn keeping_a_fetched_token_leaves_the_directory_mode_alone() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = scratch("send-fetched-mode");
+    let dir = config_dir(&home);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.fetched"}"#);
+    let (received, url) = events_server(true);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert_eq!(sent_with(&received), "pk.fetched");
+    cli_token_state(&home, "pk.fetched");
+    let mode = std::fs::metadata(&dir)
+        .expect("the config dir")
+        .permissions()
+        .mode();
+    assert_eq!(
+        mode & 0o777,
+        0o755,
+        "the write changed the directory's mode"
+    );
 }

@@ -25,14 +25,15 @@
 //! is for, not where it goes: a request the CLI makes for itself passes
 //! [`send`] an order that ends in [`Fallback::CliToken`], and every such order
 //! is defined in this file (today only [`TELEMETRY`]); a command must be in
-//! [`CLI_TOKEN_COMMANDS`], which also says whether it uses the CLI's token
-//! only or only when the user has none ([`Use`]). Where the request is sent
-//! does not matter, so a URL overridden from the environment keeps the same
-//! fallback.
+//! [`CLI_TOKEN_COMMANDS`], which also says how it uses it ([`Use`]). Where
+//! the request is sent does not matter, so a URL overridden from the
+//! environment keeps the same fallback.
 //!
-//! A command that cannot have the CLI's token is told which of two reasons
-//! applies ([`Unusable`]): it is not listed, which no retry changes, or the
-//! token is unavailable right now.
+//! A command that tries the CLI's token and cannot use it falls back to the
+//! user's. Why it could not is kept apart, since the user sees it when they
+//! have no token either: the token is unavailable right now
+//! ([`Unavailable`]), or it works but this API refuses it
+//! ([`Refusal::Forbidden`]).
 //!
 //! # The token is public
 //!
@@ -89,43 +90,25 @@ pub(crate) enum Use {
 /// quietly move to another API when a spec changes its URL.
 const CLI_TOKEN_COMMANDS: &[(&str, Use, &str)] = &[];
 
-/// Why a command cannot have the CLI's token.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Unusable {
-    /// The command is not in [`CLI_TOKEN_COMMANDS`]. No retry changes that.
-    NotAllowed,
-    /// It is, but there is no CLI token right now.
-    Unavailable(Unavailable),
-}
-
-impl std::fmt::Display for Unusable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotAllowed => write!(f, "this command is not listed to use it"),
-            Self::Unavailable(why) => why.fmt(f),
-        }
-    }
-}
-
 /// How `command` uses the CLI's token, or `None` when it may not.
-pub(crate) fn use_for(command: &str) -> Option<Use> {
+fn use_for(command: &str) -> Option<Use> {
     CLI_TOKEN_COMMANDS
         .iter()
         .find(|(name, _, _)| *name == command)
         .map(|(_, how, _)| *how)
 }
 
-/// The CLI's token for `command`. `fetch` is false where nothing may be
-/// sent, as in a dry run: only a token already at hand is returned then.
-///
-/// Whether the user's own token should be used instead is the caller's to
-/// decide, by [`use_for`].
-pub(crate) fn for_command(command: &str, fetch: bool) -> Result<String, Unusable> {
-    if use_for(command).is_none() {
-        return Err(Unusable::NotAllowed);
+/// The CLI's token for `command`, or `None` when the command is not listed
+/// for it. The only way to ask, so an unlisted command never gets one.
+/// `fetch` is false where nothing may be sent, as in a dry run: only a token
+/// already at hand is returned then.
+pub(crate) fn for_command(command: &str, fetch: bool) -> Option<Result<String, Unavailable>> {
+    match use_for(command)? {
+        Use::Preferred => Some(cli_token(
+            std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref(),
+            fetch,
+        )),
     }
-    cli_token(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref(), fetch)
-        .map_err(Unusable::Unavailable)
 }
 
 /// `MAPBOX_CLI_TOKEN` at run time, then the fetched token.
@@ -589,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unlisted_command_is_told_it_may_not_rather_than_unavailable() {
-        assert_eq!(for_command("styles list", false), Err(Unusable::NotAllowed));
+    fn an_unlisted_command_never_gets_the_clis_token() {
+        assert_eq!(for_command("styles list", true), None);
     }
 }

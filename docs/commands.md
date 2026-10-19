@@ -5084,7 +5084,6 @@ faults and are not:
 | `cancelled` | A delete was declined at the confirmation prompt. Nothing was sent. |
 | `cli_token_unavailable` | A command that prefers the CLI's own token could not use it — it could not be fetched, or it is revoked and no new one is published yet — and you have no token of your own to fall back to. |
 | `cli_token_forbidden` | The CLI's own token is valid, but this API does not accept it, and you have no token of your own to fall back to. |
-| `cli_token_not_allowed` | A command asked for the CLI's own token without being listed for it. A bug in the CLI, not something to retry. |
 | `usage` | Anything else clap rejected. Exit code 2, not 1. |
 | `error` | Unclassified. |
 

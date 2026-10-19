@@ -1329,9 +1329,33 @@ fn verify_token(token: &str, debug: bool, timeout: Option<Duration>) -> Result<V
 }
 
 /// The request behind [`verify_token`], at `url`: the endpoint's answer,
-/// whose `code` is the verdict. Also how [`crate::cli_token`] tells a revoked
-/// token from one an API merely refuses.
-pub(crate) fn check_token(url: &str, token: &str, timeout: Duration) -> Result<Value> {
+/// whose `code` is the verdict.
+fn check_token(url: &str, token: &str, timeout: Duration) -> Result<Value> {
+    let (status, request_id, body) = send_token_check(url, token, timeout)?;
+    if !status.is_success() {
+        return Err(CliError::http(status.as_u16(), &body)
+            .with_request_id(request_id)
+            .into());
+    }
+    serde_json::from_str(&body).context("Invalid JSON from the token check endpoint")
+}
+
+/// The verdict's `code` alone, read whatever the status, or `None` when there
+/// was no answer with one. How [`crate::cli_token`] tells a dead token from
+/// one an API merely refuses. Observed answering `200` for every verdict, but
+/// a dead token's `code` must not be lost if that ever changes, or the token
+/// would never be replaced.
+pub(crate) fn token_code(url: &str, token: &str, timeout: Duration) -> Option<String> {
+    let (_, _, body) = send_token_check(url, token, timeout).ok()?;
+    let answer: Value = serde_json::from_str(&body).ok()?;
+    Some(answer.get("code")?.as_str()?.to_owned())
+}
+
+fn send_token_check(
+    url: &str,
+    token: &str,
+    timeout: Duration,
+) -> Result<(reqwest::StatusCode, Option<String>, String)> {
     let response = crate::http::send(
         crate::http::client()?
             .get(url)
@@ -1347,14 +1371,7 @@ pub(crate) fn check_token(url: &str, token: &str, timeout: Duration) -> Result<V
     let body = response
         .text()
         .map_err(|e| crate::executor::transport_failure("Failed to read the token check", e))?;
-
-    if !status.is_success() {
-        return Err(CliError::http(status.as_u16(), &body)
-            .with_request_id(request_id)
-            .into());
-    }
-
-    serde_json::from_str(&body).context("Invalid JSON from the token check endpoint")
+    Ok((status, request_id, body))
 }
 
 /// A verdict from [`verify_token`] that is not `TokenValid`.

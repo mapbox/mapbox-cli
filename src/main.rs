@@ -1456,7 +1456,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             deprecation::warn_endpoint(op, &op.command());
 
             let dry_run = executor::wants_dry_run(op_matches);
-            let flags = executor::RunFlags {
+            let mut flags = executor::RunFlags {
                 debug,
                 assume_yes,
                 dry_run,
@@ -1472,11 +1472,34 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             // Ahead of the user's credentials, so a run the CLI's token
             // serves never refreshes a login it will not send.
             let mut cli_failure = None;
-            if cli_token::use_for(&command) == Some(cli_token::Use::Preferred) {
+            if let Some(cli) = cli_token::for_command(&command, !dry_run) {
                 let username = matches.get_one::<String>("username").cloned();
-                match try_cli_token(op, op_matches, &command, username.as_deref(), flags, mode) {
-                    CliAttempt::Done(result) => return result,
-                    CliAttempt::Unusable(error) => cli_failure = Some(error),
+                let attempt = try_cli_token(
+                    op,
+                    op_matches,
+                    &command,
+                    cli,
+                    username.as_deref(),
+                    flags,
+                    mode,
+                );
+                match attempt {
+                    CliAttempt::Done(result) => {
+                        if result.is_ok() && auth::typed_token(matches).is_some() {
+                            output::progress(
+                                "`--token` was not used: this command sends with the CLI's \
+                                 own token while it works.",
+                            );
+                        }
+                        return result;
+                    }
+                    CliAttempt::Unusable { error, sent } => {
+                        // The user already confirmed the request that was
+                        // refused; sending it again with their own token is
+                        // the same request, not a second one to agree to.
+                        flags.assume_yes |= sent;
+                        cli_failure = Some(error);
+                    }
                 }
             }
 
@@ -1504,7 +1527,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             // and fetches nothing, so it plans with whatever there is.
             if let Some(failure) = cli_failure.filter(|_| !dry_run) {
                 if token.is_none() {
-                    return Err(failure.into());
+                    return Err((*failure).into());
                 }
                 output::progress(&format!(
                     "{} Using your own token instead.",
@@ -1552,11 +1575,13 @@ enum CliAttempt {
     /// The CLI's token was used; this is the command's own result.
     Done(Result<()>),
     /// It could not be used, for the reason given, and the user's token may
-    /// stand in.
-    Unusable(CliError),
+    /// stand in. `sent` when a request went out and was refused, so any
+    /// confirmation was already given.
+    Unusable { error: Box<CliError>, sent: bool },
 }
 
-/// Runs a [`cli_token::Use::Preferred`] command on the CLI's token.
+/// Runs a [`cli_token::Use::Preferred`] command on the CLI's token, given
+/// what [`cli_token::for_command`] found for it.
 ///
 /// A `401` or `403` is checked with [`cli_token::refused`]. A dead token is
 /// replaced and the request sent once more, since a refused request was not
@@ -1566,40 +1591,50 @@ fn try_cli_token(
     op: &spec::Operation,
     op_matches: &clap::ArgMatches,
     command: &str,
+    cli: Result<String, cli_token::Unavailable>,
     username: Option<&str>,
-    flags: executor::RunFlags,
+    mut flags: executor::RunFlags,
     mode: output::Mode,
 ) -> CliAttempt {
-    let execute =
-        |token: &str| executor::execute(op, op_matches, Some(token), username, flags, mode);
-    let mut token = match cli_token::for_command(command, !flags.dry_run) {
+    let mut token = match cli {
         Ok(token) => token,
-        Err(why) => return CliAttempt::Unusable(cli_token_unusable(&why)),
+        Err(why) => {
+            return CliAttempt::Unusable {
+                error: Box::new(cli_token_unavailable(&why)),
+                sent: false,
+            }
+        }
     };
     let mut replaced = false;
     loop {
-        let error = match execute(&token) {
+        let error = match executor::execute(op, op_matches, Some(&token), username, flags, mode) {
             Err(error) if is_refusal(&error) => error,
             result => return CliAttempt::Done(result),
         };
-        let unusable = |code: &str, message: &str| {
-            CliAttempt::Unusable(
-                CliError::new(code, message).with_request_id(request_id_of(&error)),
-            )
+        // Confirmed once already, if the command asks.
+        flags.assume_yes = true;
+        let unusable = |code: &str, message: &str| CliAttempt::Unusable {
+            error: Box::new(CliError::new(code, message).with_request_id(request_id_of(&error))),
+            sent: true,
         };
         match cli_token::refused(&token) {
             cli_token::Refusal::Dead if !replaced => match cli_token::for_command(command, true) {
-                Ok(fresh) if fresh != token => {
+                Some(Ok(fresh)) if fresh != token => {
                     token = fresh;
                     replaced = true;
                 }
-                Ok(_) => {
+                Some(Err(why)) => {
+                    return CliAttempt::Unusable {
+                        error: Box::new(cli_token_unavailable(&why)),
+                        sent: true,
+                    }
+                }
+                _ => {
                     return unusable(
                         "cli_token_unavailable",
                         "The CLI's token is revoked and no new one is published yet.",
                     )
                 }
-                Err(why) => return CliAttempt::Unusable(cli_token_unusable(&why)),
             },
             cli_token::Refusal::Dead => {
                 return unusable(
@@ -1623,15 +1658,13 @@ fn try_cli_token(
     }
 }
 
-/// Why a command could not have the CLI's token, as the error it fails with.
-/// The code tells a script which it was: one that waiting may fix, and one
-/// that it never will.
-fn cli_token_unusable(why: &cli_token::Unusable) -> CliError {
-    let code = match why {
-        cli_token::Unusable::NotAllowed => "cli_token_not_allowed",
-        cli_token::Unusable::Unavailable(_) => "cli_token_unavailable",
-    };
-    CliError::new(code, format!("Can't get the CLI's token: {why}."))
+/// Why there was no CLI token to try, as the error a command fails with
+/// when the user has no token of their own either.
+fn cli_token_unavailable(why: &cli_token::Unavailable) -> CliError {
+    CliError::new(
+        "cli_token_unavailable",
+        format!("Can't get the CLI's token: {why}."),
+    )
 }
 
 fn is_refusal(error: &anyhow::Error) -> bool {

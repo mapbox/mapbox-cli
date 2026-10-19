@@ -161,7 +161,7 @@ pub(crate) fn remember_user_token(token: Option<String>) {
 /// it with, and drops it otherwise. `profile` is the run's `--profile`, whose
 /// login it may send with.
 pub(crate) fn deliver(line: &str, profile: Option<&str>) {
-    let url = send_url(is_production_build(), from_environment(URL_ENV));
+    let url = send_url();
     // Help, `--version` and usage errors return before the arguments are
     // parsed, so nothing was remembered; the environment is still the user's,
     // unless `--use-login` was typed to set it aside.
@@ -196,7 +196,7 @@ pub fn run_send_child() -> ExitCode {
     if telemetry::telemetry_allowed() {
         // Through `send_url` again, so a production child cannot be pointed
         // elsewhere either.
-        let url = send_url(is_production_build(), from_environment(URL_ENV));
+        let url = send_url();
         let mut input = String::new();
         let read = std::io::stdin()
             .take(MAX_EVENT_BYTES)
@@ -279,38 +279,9 @@ fn from_environment(name: &str) -> Option<String> {
 }
 
 /// Where to send: [`ENDPOINT`], or [`URL_ENV`]'s override in a build that is
-/// not a production release. A release ignores the override, so an injected
-/// variable cannot send a user's token to a host of its choosing.
-fn send_url(production: bool, override_url: Option<String>) -> String {
-    match override_url {
-        Some(url) if !production => url,
-        _ => ENDPOINT.to_string(),
-    }
-}
-
-/// `MAPBOX_CLI_BUILD_ENV` is how the release pipeline marks a production
-/// build; see `update_check`.
-const fn is_production_build() -> bool {
-    match option_env!("MAPBOX_CLI_BUILD_ENV") {
-        Some(env) => same(env, "production"),
-        None => false,
-    }
-}
-
-/// `==` on `&str`, which is not available in a `const` context.
-const fn same(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
+/// not a production release (see [`http::url_override`]).
+fn send_url() -> String {
+    http::url_override(URL_ENV).unwrap_or_else(|| ENDPOINT.to_string())
 }
 
 /// The contents of a state file, trimmed, if it is there.
@@ -370,18 +341,4 @@ fn dir() -> Option<PathBuf> {
         return None;
     }
     dated_jsonl::private_dir(DIR)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_a_build_that_is_not_production_takes_the_url_override() {
-        let custom = || Some("http://127.0.0.1:1/events/v2".to_string());
-        assert_eq!(send_url(false, custom()), "http://127.0.0.1:1/events/v2");
-        assert_eq!(send_url(true, custom()), ENDPOINT);
-        assert_eq!(send_url(false, None), ENDPOINT);
-        assert_eq!(send_url(true, None), ENDPOINT);
-    }
 }

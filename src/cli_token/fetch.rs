@@ -27,10 +27,10 @@
 //! how the tests stay off the network: every end-to-end test sets it
 //! (`tests/source_guards.rs` holds that).
 //!
-//! The state file is written only when the config directory already exists,
-//! for the reason `telemetry_sink::dir` gives: a read-only command must not
-//! be what creates `~/.mapbox`. Without it, every run that needs the token
-//! fetches it.
+//! The state file is what makes all of this hold across runs, so writing it
+//! creates the config directory when there is none — a run that never needs
+//! the CLI's token, or only fails to reach the endpoint, still leaves no
+//! trace. See [`write_state`].
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -68,8 +68,9 @@ pub(crate) enum Unavailable {
     /// The endpoint could not be reached. Asked again on the next run.
     Unreachable(String),
     /// The endpoint answered without a usable token, so it is not asked
-    /// again before `retry_at` (Unix seconds).
-    Waiting { retry_at: u64 },
+    /// again before `retry_at` (Unix seconds). `revoked` when there is a
+    /// dead token it has not replaced yet, rather than never a token at all.
+    Waiting { retry_at: u64, revoked: bool },
     /// None on disk, and the caller asked not to fetch, as a dry run does.
     NotFetched,
 }
@@ -78,9 +79,14 @@ impl std::fmt::Display for Unavailable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unreachable(error) => write!(f, "fetching it failed: {error}"),
-            Self::Waiting { retry_at } => write!(
+            Self::Waiting { retry_at, revoked } => write!(
                 f,
-                "it was rejected and no new one is published yet; trying again in {}",
+                "{}; trying again in {}",
+                if *revoked {
+                    "it is revoked and no new one is published yet"
+                } else {
+                    "the token endpoint did not return a usable token"
+                },
                 wait_text(retry_at.saturating_sub(now()))
             ),
             Self::NotFetched => write!(f, "it has not been fetched yet"),
@@ -104,9 +110,16 @@ pub(crate) enum Fetched {
 struct State {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     token: Option<String>,
-    /// Whether the API answered `401` to `token`.
+    /// Whether the Tokens API called `token` dead. A `401` or `403` alone
+    /// never sets it: the API may only be refusing it for one endpoint.
     #[serde(default)]
     rejected: bool,
+    /// Unix seconds when the Tokens API last called `token` valid after an
+    /// API refused it. For an hour after, a refusal is taken to mean the same
+    /// without asking again, so telemetry refused by Events on every run
+    /// does not cost a check on every run too.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    valid_at: u64,
     /// Consecutive fetches that found nothing usable.
     #[serde(default)]
     failures: u32,
@@ -171,15 +184,24 @@ pub(crate) enum Refusal {
 /// Asks the Tokens API why `token` was refused, and marks it when it is
 /// dead. A token other than the saved one is never marked.
 pub(crate) fn refused(token: &str) -> Refusal {
-    let url = override_outside_production(
-        option_env!("MAPBOX_CLI_BUILD_ENV"),
-        std::env::var(TOKENS_URL_ENV).ok(),
-    )
-    .unwrap_or_else(|| auth::VALIDATION_ENDPOINT.to_owned());
-    let answer = auth::check_token(&url, token, FETCH_TIMEOUT).ok();
-    let refusal = verdict(answer.as_ref().and_then(|a| a.get("code")?.as_str()));
-    if refusal == Refusal::Dead {
-        mark_dead(token);
+    let now = now();
+    let saved = read_state().filter(|state| state.token.as_deref() == Some(token));
+    if saved
+        .as_ref()
+        .is_some_and(|state| recently_valid(state, now))
+    {
+        return Refusal::Forbidden;
+    }
+    let url =
+        http::url_override(TOKENS_URL_ENV).unwrap_or_else(|| auth::VALIDATION_ENDPOINT.to_owned());
+    let refusal = verdict(auth::token_code(&url, token, FETCH_TIMEOUT).as_deref());
+    if let Some(mut state) = saved {
+        match refusal {
+            Refusal::Dead => state.rejected = true,
+            Refusal::Forbidden => state.valid_at = now,
+            Refusal::Unknown => return refusal,
+        }
+        write_state(&state);
     }
     refusal
 }
@@ -192,14 +214,14 @@ fn verdict(code: Option<&str>) -> Refusal {
     }
 }
 
-fn mark_dead(token: &str) {
-    let Some(mut state) = read_state() else {
-        return;
-    };
-    if state.token.as_deref() == Some(token) && !state.rejected {
-        state.rejected = true;
-        write_state(&state);
-    }
+/// Whether the Tokens API called the saved token valid within the hour. A
+/// time in the future is a clock that went backwards, and is not trusted.
+fn recently_valid(state: &State, now: u64) -> bool {
+    state.valid_at != 0 && state.valid_at <= now && now - state.valid_at < HOUR
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 /// The decision, with the clock and the network passed in.
@@ -218,6 +240,7 @@ fn acquire(
     if waiting(state, now) {
         return Err(Unavailable::Waiting {
             retry_at: state.retry_at,
+            revoked: state.rejected,
         });
     }
     match get() {
@@ -238,6 +261,7 @@ fn acquire(
             state.fail(now);
             Err(Unavailable::Waiting {
                 retry_at: state.retry_at,
+                revoked: state.rejected,
             })
         }
     }
@@ -262,18 +286,7 @@ fn is_plausible(value: &str) -> bool {
 }
 
 fn endpoint() -> String {
-    override_outside_production(
-        option_env!("MAPBOX_CLI_BUILD_ENV"),
-        std::env::var(URL_ENV).ok(),
-    )
-    .unwrap_or_else(|| PRODUCTION_URL.to_owned())
-}
-
-/// A URL override, honored only in a build that is not a production
-/// release, so an injected variable cannot choose where a release asks.
-fn override_outside_production(build_env: Option<&str>, url: Option<String>) -> Option<String> {
-    let url = url.filter(|url| !url.trim().is_empty())?;
-    (build_env != Some("production")).then(|| url.trim().to_owned())
+    http::url_override(URL_ENV).unwrap_or_else(|| PRODUCTION_URL.to_owned())
 }
 
 fn get(url: &str) -> Fetched {
@@ -296,8 +309,7 @@ fn get(url: &str) -> Fetched {
 }
 
 fn state_path() -> Option<PathBuf> {
-    let dir = auth::config_dir_path()?;
-    dir.is_dir().then(|| dir.join(STATE_FILE))
+    Some(auth::config_dir_path()?.join(STATE_FILE))
 }
 
 /// The state on disk, or `None` when there is no readable one. A malformed
@@ -309,12 +321,29 @@ fn read_state() -> Option<State> {
 
 /// Best-effort: a read-only home directory costs a fetch per run, not an
 /// error.
+///
+/// Creates the config directory when there is none, `0700` like any other
+/// first write to it, because without this file a dead token is never marked
+/// and nothing backs off. An existing one is written into as it is, so its
+/// permissions are not changed by a run that only sent telemetry. A plain
+/// file where the directory belongs leaves nothing to write into, and each
+/// run then fetches as if for the first time.
 fn write_state(state: &State) {
-    let Some(path) = state_path() else {
+    let Some(dir) = auth::config_dir_path() else {
         return;
     };
+    let dir = if dir.is_dir() {
+        dir
+    } else if dir.exists() {
+        return;
+    } else {
+        match auth::config_dir() {
+            Ok(dir) => dir,
+            Err(_) => return,
+        }
+    };
     if let Ok(text) = serde_json::to_string(state) {
-        let _ = auth::write_private(&path, &text);
+        let _ = auth::write_private(&dir.join(STATE_FILE), &text);
     }
 }
 
@@ -406,7 +435,8 @@ mod tests {
             assert_eq!(
                 result,
                 Err(Unavailable::Waiting {
-                    retry_at: state.retry_at
+                    retry_at: state.retry_at,
+                    revoked: true,
                 })
             );
             waits.push(state.retry_at - now);
@@ -430,7 +460,8 @@ mod tests {
         assert_eq!(
             result,
             Err(Unavailable::Waiting {
-                retry_at: NOW + HOUR
+                retry_at: NOW + HOUR,
+                revoked: true,
             })
         );
         let (result, asked) = run(&mut state, NOW + HOUR, token("pk.new"));
@@ -452,7 +483,8 @@ mod tests {
             assert_eq!(
                 result,
                 Err(Unavailable::Waiting {
-                    retry_at: NOW + HOUR
+                    retry_at: NOW + HOUR,
+                    revoked: false,
                 })
             );
             assert_eq!(state.token, None, "nothing unusable is kept");
@@ -494,22 +526,19 @@ mod tests {
     }
 
     #[test]
-    fn only_production_ignores_an_override() {
-        let custom = || Some("http://127.0.0.1:1/token.json".to_owned());
-        assert_eq!(override_outside_production(None, None), None);
-        assert_eq!(override_outside_production(None, custom()), custom());
-        assert_eq!(
-            override_outside_production(Some("staging"), custom()),
-            custom()
+    fn a_valid_verdict_is_trusted_for_an_hour() {
+        let state = State {
+            valid_at: NOW,
+            ..saved("pk.a", false)
+        };
+        assert!(recently_valid(&state, NOW));
+        assert!(recently_valid(&state, NOW + HOUR - 1));
+        assert!(!recently_valid(&state, NOW + HOUR));
+        assert!(
+            !recently_valid(&state, NOW - 1),
+            "a clock that went backwards"
         );
-        assert_eq!(
-            override_outside_production(Some("production"), custom()),
-            None
-        );
-        assert_eq!(
-            override_outside_production(None, Some("  ".to_owned())),
-            None
-        );
+        assert!(!recently_valid(&saved("pk.a", false), NOW), "never checked");
     }
 
     #[test]
@@ -534,12 +563,34 @@ mod tests {
             rejected: true,
             failures: 2,
             retry_at: 7,
+            valid_at: 0,
         };
         let text = serde_json::to_string(&state).unwrap();
         assert_eq!(serde_json::from_str::<State>(&text).unwrap(), state);
         assert_eq!(
             serde_json::from_str::<State>(r#"{"token":"pk.a"}"#).unwrap(),
             saved("pk.a", false)
+        );
+    }
+
+    #[test]
+    fn a_wait_says_whether_a_token_was_ever_revoked() {
+        let waiting = |revoked| {
+            Unavailable::Waiting {
+                retry_at: 0,
+                revoked,
+            }
+            .to_string()
+        };
+        assert!(
+            waiting(true).starts_with("it is revoked"),
+            "{}",
+            waiting(true)
+        );
+        assert!(
+            waiting(false).starts_with("the token endpoint did not return"),
+            "{}",
+            waiting(false)
         );
     }
 

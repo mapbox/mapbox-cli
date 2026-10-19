@@ -286,8 +286,9 @@ fn build_operation_command(op: &spec::Operation) -> Command {
         // A variadic positional builds the whole body on its own — see
         // below — so `--data` would be a second, redundant way to say the
         // same thing, with nothing else the body ever carries.
-        let takes_data =
-            (body.accepts_json() || text_body.is_some()) && op.variadic_body_array.is_none();
+        let takes_data = (body.accepts_json() || text_body.is_some())
+            && op.variadic_body_array.is_none()
+            && op.body_positional.is_none();
         if takes_data {
             cmd = cmd.arg(
                 Arg::new("data")
@@ -347,6 +348,17 @@ fn build_operation_command(op: &spec::Operation) -> Command {
             arg = arg.value_parser(PossibleValuesParser::new(&field.enum_values));
         }
         cmd = cmd.arg(arg);
+    }
+
+    // `merge_body_fields` reads it by `arg_name`, the same as a flag. A
+    // `fixed_body_fields` entry has no argument at all; its default is what
+    // gets sent.
+    if let Some(field) = &op.body_positional {
+        cmd = cmd.arg(
+            Arg::new(field.arg_name.clone())
+                .required(true)
+                .help(help_text(field)),
+        );
     }
 
     if let Some(variadic) = &op.variadic_body_array {

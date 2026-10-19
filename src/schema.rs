@@ -478,7 +478,7 @@ fn api_command(app: &Command, svc: &ServiceSpec, op: &Operation) -> CommandEntry
                 body_arguments(
                     body,
                     !op.body_fields.is_empty(),
-                    op.variadic_body_array.is_some(),
+                    op.variadic_body_array.is_some() || op.body_positional.is_some(),
                     declared,
                 )
             })
@@ -489,6 +489,12 @@ fn api_command(app: &Command, svc: &ServiceSpec, op: &Operation) -> CommandEntry
         flag: Some(format!("--{}", field.arg_name)),
         location: Some("body"),
         ..parameter(field, ArgKind::Option)
+    }));
+
+    arguments.extend(op.body_positional.iter().map(|field| Argument {
+        required: true,
+        location: Some("body"),
+        ..parameter(field, ArgKind::Positional)
     }));
 
     arguments.extend(op.variadic_body_array.as_ref().map(|variadic| Argument {

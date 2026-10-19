@@ -33,6 +33,12 @@ pub struct Operation {
     /// A single JSON body array field exposed as one or more positional
     /// arguments instead of `--data`. See [`VARIADIC_BODY_ARRAY`].
     pub variadic_body_array: Option<VariadicBodyArray>,
+    /// A JSON body property taken as the command's positional argument.
+    /// See [`POSITIONAL_BODY_FIELDS`].
+    pub body_positional: Option<Parameter>,
+    /// JSON body properties sent with a fixed value and never typed. See
+    /// [`FIXED_BODY_FIELDS`].
+    pub fixed_body_fields: Vec<Parameter>,
     pub base_url: String,
     /// Set when the operation needs a scope that isn't registrable as OAuth
     /// (see `UNSUPPORTED_OPERATIONS` below). A `mapbox auth login` token can
@@ -83,16 +89,37 @@ type BodyField = (&'static str, Option<&'static str>);
 /// The API requires `lat`/`lon`, but some feedback has no place. The
 /// Feedback API team's advice (2026-10-06) is to send 0,0 until the pair
 /// becomes optional; drop the defaults then.
-const BODY_FIELD_FLAGS: &[(&str, &str, &[BodyField])] = &[(
-    "feedback",
-    "create",
-    &[
-        ("feedback", None),
-        ("lat", Some("0")),
-        ("lon", Some("0")),
-        ("category", None),
-    ],
-)];
+const BODY_FIELD_FLAGS: &[(&str, &str, &[BodyField])] = &[
+    (
+        "feedback",
+        "create",
+        &[
+            ("feedback", None),
+            ("lat", Some("0")),
+            ("lon", Some("0")),
+            ("category", None),
+        ],
+    ),
+    ("report", "report", &[("category", Some("general"))]),
+];
+
+/// (service, operationId, body field name, CLI positional name) for a
+/// required string body property that is what the command is for, typed as
+/// its positional argument: `mapbox report "<message>"`, not `--feedback`.
+/// An operation with one takes no `--data`, the same as
+/// [`VARIADIC_BODY_ARRAY`]'s.
+const POSITIONAL_BODY_FIELDS: &[(&str, &str, &str, &str)] =
+    &[("report", "report", "feedback", "message")];
+
+/// A body property and the value always sent for it.
+type FixedBodyField = (&'static str, &'static str);
+
+/// JSON body properties sent with the same value on every request and never
+/// offered as a flag, for a property the API requires but the command has no
+/// use for. `report` sends feedback about the CLI, which has no place, and
+/// the API still requires `lat`/`lon` — see [`BODY_FIELD_FLAGS`] for why 0.
+const FIXED_BODY_FIELDS: &[(&str, &str, &[FixedBodyField])] =
+    &[("report", "report", &[("lat", "0"), ("lon", "0")])];
 
 /// (service, operationId, body field name, CLI positional name, max count)
 /// for an operation whose JSON body takes a single array field, exposed as
@@ -238,8 +265,14 @@ fn arg_name_override(service_name: &str, param_name: &str) -> Option<&'static st
 /// `generate-skills`, this file's own `command()` above — reads a
 /// [`FLATTENED_SERVICES`] service correctly for free, because they all go
 /// through `command()` rather than reconstructing the string themselves.
-pub const FLATTENED_SERVICES: &[&str] =
-    &["directions", "isochrone", "map-match", "matrix", "places"];
+pub const FLATTENED_SERVICES: &[&str] = &[
+    "directions",
+    "isochrone",
+    "map-match",
+    "matrix",
+    "places",
+    "report",
+];
 
 /// (service, path parameter name) pairs whose value is trusted to reach the
 /// URL unescaped, because every legitimate value already contains a
@@ -827,6 +860,10 @@ pub const CUSTOM_SPEC_ENTRIES: &[SpecEntry] = &[
         name: "places",
         yaml: include_str!("../custom-openapi/places/openapi/places.yaml"),
     },
+    SpecEntry {
+        name: "report",
+        yaml: include_str!("../custom-openapi/report/openapi/report.yaml"),
+    },
 ];
 
 /// The list the CLI actually generates commands from: [`MAPBOX_SPEC_ENTRIES`],
@@ -1170,6 +1207,30 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
                 None => None,
             };
 
+            let body_positional =
+                match operation_id.and_then(|id| positional_body_field_names(service_name, id)) {
+                    Some((field, arg_name)) => Some(
+                        positional_body_field_parameter(op, &doc, field, arg_name).with_context(
+                            || format!("{service_name} {}", operation_id.unwrap_or("")),
+                        )?,
+                    ),
+                    None => None,
+                };
+
+            let fixed_body_fields = match operation_id
+                .and_then(|id| fixed_body_field_values(service_name, id))
+            {
+                Some(values) => {
+                    let fields: Vec<BodyField> = values
+                        .iter()
+                        .map(|(name, value)| (*name, Some(*value)))
+                        .collect();
+                    body_field_parameters(op, &doc, &fields)
+                        .with_context(|| format!("{service_name} {}", operation_id.unwrap_or("")))?
+                }
+                None => vec![],
+            };
+
             let disabled_scope =
                 operation_id.and_then(|id| unsupported_scope_for(service_name, id));
 
@@ -1189,6 +1250,8 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
                 body,
                 body_fields,
                 variadic_body_array,
+                body_positional,
+                fixed_body_fields,
                 base_url: base_url.clone(),
                 disabled_scope,
                 detail: None,
@@ -1277,6 +1340,53 @@ fn body_field_names(service: &str, operation_id: &str) -> Option<&'static [BodyF
         .iter()
         .find(|(s, id, _)| *s == service && *id == operation_id)
         .map(|(_, _, names)| *names)
+}
+
+fn positional_body_field_names(
+    service: &str,
+    operation_id: &str,
+) -> Option<(&'static str, &'static str)> {
+    POSITIONAL_BODY_FIELDS
+        .iter()
+        .find(|(s, id, _, _)| *s == service && *id == operation_id)
+        .map(|(_, _, field, arg_name)| (*field, *arg_name))
+}
+
+fn fixed_body_field_values(service: &str, operation_id: &str) -> Option<&'static [FixedBodyField]> {
+    FIXED_BODY_FIELDS
+        .iter()
+        .find(|(s, id, _)| *s == service && *id == operation_id)
+        .map(|(_, _, values)| *values)
+}
+
+/// A [`POSITIONAL_BODY_FIELDS`] entry as a required string [`Parameter`],
+/// named for the positional rather than the property. Its description is
+/// the property's own: there is no `--data` to carry it instead.
+fn positional_body_field_parameter(
+    op: &Value,
+    full_spec: &Value,
+    field: &'static str,
+    arg_name: &str,
+) -> Result<Parameter> {
+    let parameter = body_field_parameters(op, full_spec, &[(field, None)])?.remove(0);
+    anyhow::ensure!(
+        parameter.numeric.is_none() && parameter.enum_values.is_empty(),
+        "body property `{field}` is listed in POSITIONAL_BODY_FIELDS but is not a free string \
+         in the spec"
+    );
+    let schema = &op["requestBody"]["content"]["application/json"]["schema"];
+    let schema = match schema["$ref"].as_str() {
+        Some(reference) => resolve_ref(full_spec, reference).unwrap_or(schema),
+        None => schema,
+    };
+    Ok(Parameter {
+        arg_name: arg_name.to_string(),
+        required: true,
+        description: schema["properties"][field]["description"]
+            .as_str()
+            .map(first_paragraph),
+        ..parameter
+    })
 }
 
 /// Nothing enforces `required`, since `--data` may carry the property; the
@@ -2052,6 +2162,75 @@ requestBody:
         assert_eq!(variadic.field, "ids");
         assert_eq!(variadic.arg_name, "mapbox-id");
         assert_eq!(variadic.max, 100);
+    }
+
+    /// `report`'s message is a positional and `lat`/`lon` are never flags:
+    /// the table entries have to reach the parsed operation, typed by the
+    /// spec, or the request goes out with strings where numbers belong.
+    #[test]
+    fn report_takes_its_message_as_a_positional_and_fixes_its_place() {
+        let spec = parse_spec(
+            "report",
+            include_str!("../custom-openapi/report/openapi/report.yaml"),
+        )
+        .expect("report.yaml parses");
+
+        assert!(FLATTENED_SERVICES.contains(&"report"));
+        let [op] = spec.operations.as_slice() else {
+            panic!("report.yaml describes exactly one operation");
+        };
+        assert_eq!(op.command(), "report");
+
+        let message = op.body_positional.as_ref().expect("a positional");
+        assert_eq!(
+            (message.name.as_str(), message.arg_name.as_str()),
+            ("feedback", "message")
+        );
+        assert!(message.required);
+        assert!(!message
+            .description
+            .as_deref()
+            .unwrap_or("")
+            .contains("--data"));
+
+        let flags: Vec<&str> = op.body_fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(flags, ["category"]);
+
+        let fixed: Vec<(&str, Option<&str>, Option<Numeric>)> = op
+            .fixed_body_fields
+            .iter()
+            .map(|f| (f.name.as_str(), f.default.as_deref(), f.numeric))
+            .collect();
+        assert_eq!(
+            fixed,
+            [
+                ("lat", Some("0"), Some(Numeric::Float)),
+                ("lon", Some("0"), Some(Numeric::Float)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_positional_body_field_needs_a_free_string() {
+        let op: Value = serde_yaml::from_str(
+            r#"
+requestBody:
+  content:
+    application/json:
+      schema:
+        type: object
+        required: [text]
+        properties:
+          text: { type: string, description: "The text." }
+          lat: { type: number }
+"#,
+        )
+        .unwrap();
+
+        let field = positional_body_field_parameter(&op, &op, "text", "message").unwrap();
+        assert_eq!(field.description.as_deref(), Some("The text."));
+        assert!(positional_body_field_parameter(&op, &op, "lat", "message").is_err());
+        assert!(positional_body_field_parameter(&op, &op, "missing", "message").is_err());
     }
 
     #[test]

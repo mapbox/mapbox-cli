@@ -1,8 +1,8 @@
 # Implemented commands
 
-Every command the CLI ships, including five auth commands, 40 API operations (35 across 9
-command groups, plus `directions`, `isochrone`, `map-match`, `matrix` and
-`places`), the tilesets-cli proxy, `completion` and `generate-skills`. Each is
+Every command the CLI ships, including five auth commands, 41 API operations (35 across 9
+command groups, plus `directions`, `isochrone`, `map-match`, `matrix`,
+`places` and `report`), the tilesets-cli proxy, `completion` and `generate-skills`. Each is
 shown in both of its renderings. Which one you get is decided by `--output`, whose default
 (`auto`) reads stdout: a terminal gets the left column, a pipe or redirect
 gets the right one. See
@@ -80,6 +80,8 @@ nests, and is typed `mapbox styles draft get`.
 **[Matrix](#matrix)** — [matrix](#mapbox-matrix)
 
 **[Places](#places)** — [places](#mapbox-places)
+
+**[Report](#report)** — [report](#mapbox-report)
 
 **[Search](#search)** — [search.forward](#mapbox-search-forward) ·
 [search.reverse](#mapbox-search-reverse) ·
@@ -462,10 +464,11 @@ No stored profiles. Run `mapbox auth login` to create one.
 
 ## API command groups
 
-35 operations across 9 command groups, plus five single-operation commands
-with no group: `directions`, `isochrone`, `map-match`, `matrix` and `places`.
+35 operations across 9 command groups, plus six single-operation commands
+with no group: `directions`, `isochrone`, `map-match`, `matrix`, `places`
+and `report`.
 Seven groups are generated from the OpenAPI specs vendored in `openapi/`;
-`search`, `feedback` and the five single commands are the exceptions —
+`search`, `feedback` and the six single commands are the exceptions —
 hand-authored specs versioned in this repo's own `custom-openapi/`, see
 `custom-openapi/README.md`.
 
@@ -490,7 +493,7 @@ moved to `tilesets` or `static`.
 | [`styles`](#styles) | **9** |
 | [`tilesets`](#tilesets) | **3** |
 
-The [Contents](#contents) list above names every one of the 40.
+The [Contents](#contents) list above names every one of the 41.
 
 **Everything else the Mapbox specs describe is not here at all.** Not
 hidden, not shipped as a command that refuses: absent from the spec content
@@ -598,8 +601,8 @@ Three things worth knowing about the read forms:
 
 A command that changes something takes `--dry-run`, which prints the request
 it would send, on stdout, and sends nothing. Which commands those are is not
-a list anyone keeps: it is every `POST`, `PUT`, `PATCH` and `DELETE` — 14 of
-the 40 operations — plus `auth login`, `auth logout`, `auth refresh` and
+a list anyone keeps: it is every `POST`, `PUT`, `PATCH` and `DELETE` — 15 of
+the 41 operations — plus `auth login`, `auth logout`, `auth refresh` and
 `generate-skills`. A read-only `GET` does not take it, so `mapbox styles
 list --dry-run` is a usage error rather than a no-op. It rehearses
 rather than describes: `--data` is parsed and every `--file` is read, so a
@@ -1999,6 +2002,47 @@ Error: No id resolved. See the ids above, or re-check them against a Search Box 
 $ echo $?
 1
 ```
+
+---
+
+## Report
+
+Feedback about the CLI itself — a bug, a missing command, anything else —
+sent to the Mapbox CLI team. It goes through an endpoint the Feedback API
+added for this CLI and doesn't document on docs.mapbox.com, so this
+section is its only description; see `custom-openapi/README.md` for how
+that spec is wired in.
+
+### `mapbox report`
+
+Sends one message. It is filed under a Mapbox account, not yours: any
+valid token works, no `user-feedback:write` scope is needed, and
+`mapbox feedback list` won't show it. There is no way to read it back or
+delete it, so `--dry-run` shows the body without sending it.
+
+#### Parameters
+
+`<message>` (positional, required) — what you want to tell the team.
+Quote it.
+
+| Flag | Effect |
+| --- | --- |
+| `--category <category>` | What kind of feedback this is, such as `bug` or `feature_request`. Free text. Defaults to `general`. |
+
+The API requires `lat` and `lon` as well; CLI feedback has no place, so
+both are always sent as `0`. The command takes no `--data`.
+
+#### Examples
+
+```sh
+mapbox report "I'd like support for optimization commands"
+mapbox report "tilesets query hangs behind my proxy" --category bug
+mapbox report "…" --dry-run
+```
+
+#### Outputs
+
+TODO(capture): live output pending.
 
 ---
 

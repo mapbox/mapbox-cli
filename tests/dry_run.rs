@@ -509,3 +509,62 @@ fn places_refuses_more_than_a_hundred_ids_before_sending() {
         stderr(&out)
     );
 }
+
+/// `report`'s message is its positional, `lat`/`lon` are sent without being
+/// typed, and it goes to the CLI endpoint, not the one `feedback create`
+/// files under the caller's account.
+#[test]
+fn report_sends_the_message_to_the_cli_endpoint() {
+    let config = config_dir("report");
+    let plan = |extra: &[&str]| {
+        let mut args = vec![
+            "-o",
+            "json",
+            "--token",
+            "sk.a-test-token",
+            "report",
+            "--dry-run",
+            "A test",
+        ];
+        args.extend_from_slice(extra);
+        let out = run(&config, &args);
+        assert!(out.status.success(), "{}", stderr(&out));
+        json(&stdout(&out))
+    };
+
+    let defaults = plan(&[]);
+    assert_eq!(
+        defaults["url"],
+        "https://api.mapbox.com/user-feedback/v1/cli-feedback"
+    );
+    assert_eq!(
+        defaults["body"]["json"],
+        serde_json::json!({ "feedback": "A test", "lat": 0, "lon": 0, "category": "general" })
+    );
+
+    let categorized = plan(&["--category", "bug"]);
+    assert_eq!(categorized["body"]["json"]["category"], "bug");
+}
+
+/// The positional is the whole body; a `--data` would be a second way to
+/// say it, or a way to send a place this endpoint has no use for.
+#[test]
+fn report_needs_a_message_and_takes_no_data() {
+    let config = config_dir("report-usage");
+    for args in [
+        &["--token", "sk.a-test-token", "report", "--dry-run"][..],
+        &[
+            "--token",
+            "sk.a-test-token",
+            "report",
+            "A test",
+            "--data",
+            "{}",
+            "--dry-run",
+        ][..],
+    ] {
+        let out = run(&config, args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stderr(&out));
+        assert!(stdout(&out).is_empty(), "{args:?}: {}", stdout(&out));
+    }
+}

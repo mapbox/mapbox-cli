@@ -1,0 +1,74 @@
+openapi: "3.0.0"
+# `parse_spec` turns `info.description` below into this service's clap
+# `long_about`, so it also reaches `mapbox report --help`, `--schema` and
+# `generate-skills` output. Keep it to API prose only — the provenance below
+# is for whoever edits this file, not for a CLI user:
+#
+# An undocumented Feedback API endpoint the Feedback API team added for this
+# CLI (AGI-1168): the same body as `POST /user-feedback/v1/feedback`, but
+# filed under Mapbox's own `locationai-mapbox` account rather than the
+# caller's, and needing no `user-feedback:write`. Not on docs.mapbox.com, so
+# this file is the only description of it. See `custom-openapi/README.md` for
+# how a file like this is wired in.
+#
+# One command, `mapbox report "<message>"`, via `FLATTENED_SERVICES`. The
+# message is `POSITIONAL_BODY_FIELDS`'s one entry and `lat`/`lon` are
+# `FIXED_BODY_FIELDS` (both in `src/spec.rs`): feedback about the CLI has no
+# place, and the API still requires the pair. `id`, `feature` and
+# `screenshot` are left out on purpose, so this command takes no `--data`.
+info:
+  title: "Mapbox CLI feedback"
+  description: >-
+    Send feedback about the Mapbox CLI itself — a bug, a missing command, or
+    anything else — to the team that builds it. It goes to Mapbox, not to
+    your account, so `mapbox feedback list` will not show it.
+  version: "0.0.0"
+servers:
+  - url: https://api.mapbox.com
+    description: Feedback API
+paths:
+  /user-feedback/v1/cli-feedback:
+    post:
+      operationId: report
+      summary: Send feedback about the Mapbox CLI.
+      description: >-
+        Sends one message to the Mapbox CLI team. Any valid token works; no
+        extra scope is needed. There is no way to read it back or delete it
+        afterwards.
+      parameters:
+        - name: "access_token"
+          in: query
+          required: true
+          description: "Mapbox API Access Token"
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["feedback", "lat", "lon", "category"]
+              properties:
+                feedback:
+                  type: string
+                  description: "What you want to tell the Mapbox CLI team."
+                lat:
+                  type: number
+                  description: "Latitude. Always 0: CLI feedback has no place."
+                lon:
+                  type: number
+                  description: "Longitude. Always 0: CLI feedback has no place."
+                category:
+                  type: string
+                  description: >-
+                    What kind of feedback this is, such as `bug` or
+                    `feature_request`. Free text.
+      responses:
+        "200":
+          description: The created feedback item.
+        "400":
+          description: Bad Request — a missing or invalid field.
+        "401":
+          description: Unauthorized

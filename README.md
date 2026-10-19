@@ -252,7 +252,7 @@ mapbox tilesets <operation>
 ```
 
 `mapbox directions`, `mapbox isochrone`, `mapbox map-match`,
-`mapbox matrix`, and `mapbox places` are the exceptions: each API has a
+`mapbox matrix`, `mapbox places` and `mapbox report` are the exceptions: each API has a
 single exposed operation, so there's a bare command with no subcommand at
 all, the same shape `mapbox usage` already has, see
 [docs/commands.md](./docs/commands.md) for their own parameters.
@@ -322,6 +322,17 @@ unexpectedly. It makes no request unless you pass `--verify`. See
 [Doctor](./docs/commands.md#doctor), [Usage](./docs/commands.md#usage) and
 [Config](./docs/commands.md#config) for details, and
 [Command history](#command-history) below.
+
+### Feedback about the CLI
+
+```sh
+mapbox report "I'd like support for optimization commands"
+mapbox report "tilesets query hangs behind my proxy" --category bug
+```
+
+The message goes to the Mapbox CLI team, not to your account, so
+`mapbox feedback list` won't show it. Any valid token works. See
+[Report](./docs/commands.md#report).
 
 ### Shell completion
 

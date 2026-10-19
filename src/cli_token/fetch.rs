@@ -1,9 +1,9 @@
 //! Where the CLI's token comes from: fetched from the release channel, and
-//! kept on disk until the API rejects it.
+//! kept on disk until the Tokens API calls it dead.
 //!
 //! The token is published at `https://cli.mapbox.com/config/token.json` as
 //! `{"token": "pk...."}`, so rotating it needs no release. It is fetched
-//! when there is none on disk or the one there was rejected, and saved to
+//! when there is none on disk or the one there is dead, and saved to
 //! `<config dir>/cli-token.json`.
 //!
 //! # When the endpoint has nothing new
@@ -63,35 +63,6 @@ const HOURLY_RETRIES: u32 = 3;
 /// Long enough for any `pk.` token; anything longer is not one.
 const MAX_TOKEN_LEN: usize = 512;
 
-/// Why there is no CLI token to use right now.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Unavailable {
-    /// The endpoint could not be reached. Asked again on the next run.
-    Unreachable(String),
-    /// The endpoint answered without a usable token, so it is not asked
-    /// again before `retry_at` (Unix seconds). `revoked` when there is a
-    /// dead token it has not replaced yet, rather than never a token at all.
-    Waiting { retry_at: u64, revoked: bool },
-}
-
-impl std::fmt::Display for Unavailable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unreachable(error) => write!(f, "fetching it failed: {error}"),
-            Self::Waiting { retry_at, revoked } => write!(
-                f,
-                "{}; trying again in {}",
-                if *revoked {
-                    "it is revoked and no new one is published yet"
-                } else {
-                    "the token endpoint did not return a usable token"
-                },
-                wait_text(retry_at.saturating_sub(now()))
-            ),
-        }
-    }
-}
-
 /// What a fetch got back, before [`acquire`] judges it.
 #[derive(Debug)]
 pub(crate) enum Fetched {
@@ -100,7 +71,7 @@ pub(crate) enum Fetched {
     /// An answer with no token in it: a bad status or a bad body.
     Nothing,
     /// No answer at all.
-    Failed(String),
+    Failed,
 }
 
 /// What is kept on disk between runs.
@@ -185,19 +156,43 @@ pub(crate) fn accepted(caller: &str, token: &str) {
     }
 }
 
-/// The CLI's token: the one on disk while it has not been rejected,
-/// otherwise a fresh one from the endpoint, fetched only when `fetch` is set.
-pub(crate) fn token() -> Result<String, Unavailable> {
+/// The CLI's token: the one on disk while it is not dead, otherwise a fresh
+/// one from the endpoint unless it is being waited for. `None` when there is
+/// none to be had right now.
+pub(crate) fn token() -> Option<String> {
     let mut state = read_state().unwrap_or_default();
     let before = state.clone();
-    let result = acquire(&mut state, now(), || get(&endpoint()));
-    // Read again: the fetch can take seconds, and another run may have
-    // written meanwhile — a new token, a count, a cooldown — which this must
-    // not write over. That run's state stands.
-    if state != before && read_state().unwrap_or_default() == before {
+    let token = acquire(&mut state, now(), || get(&endpoint()));
+    if state != before {
+        save_fetch(&before, state);
+    }
+    token
+}
+
+/// Writes what a fetch decided, unless another run decided first. The fetch
+/// can take seconds: if the token, its verdict or the count changed on disk
+/// meanwhile, that run's answer stands. Cooldowns another run added are
+/// kept, unless this fetch brought a new token, which ends them all.
+fn save_fetch(before: &State, state: State) {
+    if let Some(state) = merged(before, state, read_state().unwrap_or_default()) {
         write_state(&state);
     }
-    result
+}
+
+/// [`save_fetch`]'s decision: what to write, given the state the fetch
+/// started from, what it decided, and what is on disk now.
+fn merged(before: &State, mut state: State, disk: State) -> Option<State> {
+    let same_fetch = disk.token == before.token
+        && disk.rejected == before.rejected
+        && disk.failures == before.failures
+        && disk.retry_at == before.retry_at;
+    if !same_fetch {
+        return None;
+    }
+    if state.token == before.token {
+        state.cooldowns = disk.cooldowns;
+    }
+    Some(state)
 }
 
 /// Whether [`token`] could have one, judged without the network.
@@ -214,7 +209,9 @@ pub(crate) enum Refusal {
     Dead,
     /// The token is fine; this API does not accept it.
     Forbidden,
-    /// The Tokens API could not say. Nothing is changed.
+    /// The Tokens API could not say. The token is kept, and the caller rests
+    /// as for [`Refusal::Forbidden`]: sending it again at once would most
+    /// likely be refused again, and cost another check.
     Unknown,
     /// Not the fetched token, so not checked: `MAPBOX_CLI_TOKEN`, which a
     /// developer set and a fetch cannot replace, and which may not even be a
@@ -224,7 +221,7 @@ pub(crate) enum Refusal {
 
 /// Asks the Tokens API, at once, why `caller`'s request with the fetched
 /// `token` was refused. A dead token is marked, so the next [`token`]
-/// fetches a new one; a valid one starts or extends `caller`'s cooldown.
+/// fetches a new one; otherwise `caller`'s cooldown starts or extends.
 pub(crate) fn refused(caller: &str, token: &str) -> Refusal {
     let now = now();
     if read_state()
@@ -237,14 +234,13 @@ pub(crate) fn refused(caller: &str, token: &str) -> Refusal {
     // Read again: the check can take seconds, and another run may have
     // saved a new token meanwhile, which this must not write over.
     if let Some(mut state) = read_state().filter(|state| state.token.as_deref() == Some(token)) {
-        match refusal {
-            Refusal::Dead => state.rejected = true,
-            Refusal::Forbidden => {
-                let cooldown = state.cooldowns.entry(caller.to_owned()).or_default();
-                cooldown.failures += 1;
-                cooldown.until = now + backoff(cooldown.failures);
-            }
-            Refusal::Unknown | Refusal::NotFetched => return refusal,
+        // `verdict` never answers `NotFetched`; that was returned above.
+        if refusal == Refusal::Dead {
+            state.rejected = true;
+        } else {
+            let cooldown = state.cooldowns.entry(caller.to_owned()).or_default();
+            cooldown.failures += 1;
+            cooldown.until = now + backoff(cooldown.failures);
         }
         write_state(&state);
     }
@@ -270,22 +266,15 @@ fn verdict(code: Option<&str>) -> Refusal {
 }
 
 /// The decision, with the clock and the network passed in.
-fn acquire(
-    state: &mut State,
-    now: u64,
-    get: impl FnOnce() -> Fetched,
-) -> Result<String, Unavailable> {
+fn acquire(state: &mut State, now: u64, get: impl FnOnce() -> Fetched) -> Option<String> {
     if let Some(token) = state.usable_token() {
-        return Ok(token.to_owned());
+        return Some(token.to_owned());
     }
     if holds(state.retry_at, now) {
-        return Err(Unavailable::Waiting {
-            retry_at: state.retry_at,
-            revoked: state.rejected,
-        });
+        return None;
     }
     match get() {
-        Fetched::Failed(error) => Err(Unavailable::Unreachable(error)),
+        Fetched::Failed => None,
         Fetched::Token(token)
             if is_plausible(&token)
                 && !(state.rejected && state.token.as_deref() == Some(token.as_str())) =>
@@ -294,16 +283,13 @@ fn acquire(
                 token: Some(token.clone()),
                 ..State::default()
             };
-            Ok(token)
+            Some(token)
         }
         // The rejected token again, something that is not a `pk.` token, or
         // no token at all.
         Fetched::Token(_) | Fetched::Nothing => {
             state.fail(now);
-            Err(Unavailable::Waiting {
-                retry_at: state.retry_at,
-                revoked: state.rejected,
-            })
+            None
         }
     }
 }
@@ -331,13 +317,11 @@ fn endpoint() -> String {
 }
 
 fn get(url: &str) -> Fetched {
-    let client = match http::client() {
-        Ok(client) => client,
-        Err(error) => return Fetched::Failed(error.to_string()),
+    let Ok(client) = http::client() else {
+        return Fetched::Failed;
     };
-    let response = match http::send(client.get(url).timeout(FETCH_TIMEOUT)) {
-        Ok(response) => response,
-        Err(error) => return Fetched::Failed(http::failure(&error)),
+    let Ok(response) = http::send(client.get(url).timeout(FETCH_TIMEOUT)) else {
+        return Fetched::Failed;
     };
     if !response.status().is_success() {
         return Fetched::Nothing;
@@ -400,22 +384,6 @@ fn now() -> u64 {
         .unwrap_or_default()
 }
 
-fn wait_text(seconds: u64) -> String {
-    let minutes = seconds.div_ceil(60).max(1);
-    match minutes {
-        1 => "1 minute".to_owned(),
-        m if m < 60 => format!("{m} minutes"),
-        m => {
-            let hours = m.div_ceil(60);
-            if hours == 1 {
-                "1 hour".to_owned()
-            } else {
-                format!("{hours} hours")
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,7 +400,7 @@ mod tests {
 
     /// Runs [`acquire`] with an endpoint that answers `answer`, and says
     /// whether it was asked.
-    fn run(state: &mut State, now: u64, answer: Fetched) -> (Result<String, Unavailable>, bool) {
+    fn run(state: &mut State, now: u64, answer: Fetched) -> (Option<String>, bool) {
         let mut asked = false;
         let result = acquire(state, now, || {
             asked = true;
@@ -449,7 +417,7 @@ mod tests {
     fn a_saved_token_is_used_without_asking() {
         let mut state = saved("pk.saved", false);
         let (result, asked) = run(&mut state, NOW, token("pk.new"));
-        assert_eq!(result, Ok("pk.saved".to_owned()));
+        assert_eq!(result, Some("pk.saved".to_owned()));
         assert!(!asked);
     }
 
@@ -457,7 +425,7 @@ mod tests {
     fn no_saved_token_fetches_one_and_keeps_it() {
         let mut state = State::default();
         let (result, asked) = run(&mut state, NOW, token("pk.new"));
-        assert_eq!(result, Ok("pk.new".to_owned()));
+        assert_eq!(result, Some("pk.new".to_owned()));
         assert!(asked);
         assert_eq!(state, saved("pk.new", false));
     }
@@ -466,7 +434,7 @@ mod tests {
     fn a_rejected_token_is_replaced_by_a_new_one() {
         let mut state = saved("pk.old", true);
         let (result, _) = run(&mut state, NOW, token("pk.new"));
-        assert_eq!(result, Ok("pk.new".to_owned()));
+        assert_eq!(result, Some("pk.new".to_owned()));
         assert_eq!(state, saved("pk.new", false));
     }
 
@@ -478,13 +446,7 @@ mod tests {
         for _ in 0..8 {
             let (result, asked) = run(&mut state, now, token("pk.old"));
             assert!(asked);
-            assert_eq!(
-                result,
-                Err(Unavailable::Waiting {
-                    retry_at: state.retry_at,
-                    revoked: true,
-                })
-            );
+            assert_eq!(result, None);
             waits.push(state.retry_at - now);
             now = state.retry_at;
         }
@@ -503,16 +465,10 @@ mod tests {
         };
         let (result, asked) = run(&mut state, NOW + HOUR - 1, token("pk.new"));
         assert!(!asked);
-        assert_eq!(
-            result,
-            Err(Unavailable::Waiting {
-                retry_at: NOW + HOUR,
-                revoked: true,
-            })
-        );
+        assert_eq!(result, None);
         let (result, asked) = run(&mut state, NOW + HOUR, token("pk.new"));
         assert!(asked);
-        assert_eq!(result, Ok("pk.new".to_owned()));
+        assert_eq!(result, Some("pk.new".to_owned()));
         assert_eq!(state.failures, 0, "a new token starts the count again");
     }
 
@@ -526,13 +482,8 @@ mod tests {
         ] {
             let mut state = State::default();
             let (result, _) = run(&mut state, NOW, answer);
-            assert_eq!(
-                result,
-                Err(Unavailable::Waiting {
-                    retry_at: NOW + HOUR,
-                    revoked: false,
-                })
-            );
+            assert_eq!(result, None);
+            assert_eq!(state.retry_at, NOW + HOUR);
             assert_eq!(state.token, None, "nothing unusable is kept");
         }
     }
@@ -540,8 +491,8 @@ mod tests {
     #[test]
     fn no_answer_at_all_is_tried_again_next_run() {
         let mut state = saved("pk.old", true);
-        let (result, _) = run(&mut state, NOW, Fetched::Failed("offline".to_owned()));
-        assert_eq!(result, Err(Unavailable::Unreachable("offline".to_owned())));
+        let (result, _) = run(&mut state, NOW, Fetched::Failed);
+        assert_eq!(result, None);
         assert_eq!(state, saved("pk.old", true), "the schedule is untouched");
     }
 
@@ -553,7 +504,7 @@ mod tests {
         };
         let (result, asked) = run(&mut state, NOW, token("pk.new"));
         assert!(asked);
-        assert_eq!(result, Ok("pk.new".to_owned()));
+        assert_eq!(result, Some("pk.new".to_owned()));
     }
 
     #[test]
@@ -561,7 +512,7 @@ mod tests {
         let mut state = saved("sk.edited-in", false);
         let (result, asked) = run(&mut state, NOW, token("pk.new"));
         assert!(asked);
-        assert_eq!(result, Ok("pk.new".to_owned()));
+        assert_eq!(result, Some("pk.new".to_owned()));
     }
 
     #[test]
@@ -582,6 +533,42 @@ mod tests {
             !holds(edited.until, NOW),
             "a wait beyond a day is not honored"
         );
+    }
+
+    #[test]
+    fn a_fetch_keeps_what_another_run_wrote_meanwhile() {
+        let resting = |failures| State {
+            cooldowns: BTreeMap::from([(
+                "telemetry".to_owned(),
+                Cooldown {
+                    failures,
+                    until: NOW + HOUR,
+                },
+            )]),
+            ..saved("pk.old", true)
+        };
+        let before = saved("pk.old", true);
+
+        // A cooldown added meanwhile is kept by a fetch that only failed...
+        let mut failed = before.clone();
+        failed.fail(NOW);
+        let written = merged(&before, failed.clone(), resting(1)).expect("written");
+        assert_eq!(written.failures, 1);
+        assert_eq!(written.cooldowns, resting(1).cooldowns);
+
+        // ...and ended by one that brought a new token.
+        let fresh = saved("pk.new", false);
+        let written = merged(&before, fresh.clone(), resting(1)).expect("written");
+        assert_eq!(written, fresh);
+
+        // A token or a count another run saved meanwhile stands.
+        assert_eq!(
+            merged(&before, fresh.clone(), saved("pk.other", false)),
+            None
+        );
+        let mut counted = before.clone();
+        counted.fail(NOW);
+        assert_eq!(merged(&before, failed, counted), None);
     }
 
     #[test]
@@ -621,34 +608,5 @@ mod tests {
             serde_json::from_str::<State>(r#"{"token":"pk.a"}"#).unwrap(),
             saved("pk.a", false)
         );
-    }
-
-    #[test]
-    fn a_wait_says_whether_a_token_was_ever_revoked() {
-        let waiting = |revoked| {
-            Unavailable::Waiting {
-                retry_at: 0,
-                revoked,
-            }
-            .to_string()
-        };
-        assert!(
-            waiting(true).starts_with("it is revoked"),
-            "{}",
-            waiting(true)
-        );
-        assert!(
-            waiting(false).starts_with("the token endpoint did not return"),
-            "{}",
-            waiting(false)
-        );
-    }
-
-    #[test]
-    fn the_wait_reads_in_minutes_or_hours() {
-        assert_eq!(wait_text(0), "1 minute");
-        assert_eq!(wait_text(59 * 60), "59 minutes");
-        assert_eq!(wait_text(HOUR), "1 hour");
-        assert_eq!(wait_text(DAY), "24 hours");
     }
 }

@@ -1155,3 +1155,35 @@ fn a_failed_send_does_not_end_a_cooldown() {
     .expect("the state is JSON");
     assert_eq!(state["cooldowns"]["telemetry"]["failures"], 2, "{state}");
 }
+
+/// A refusal the Tokens API cannot explain still rests telemetry: sending
+/// the same token on the next run would most likely be refused again, and
+/// cost another check that may take seconds.
+#[test]
+fn an_unexplained_refusal_starts_a_cooldown_too() {
+    let home = scratch("send-unknown");
+    std::fs::write(
+        config_dir(&home).join("cli-token.json"),
+        r#"{"token":"pk.kept","overridden":true}"#,
+    )
+    .expect("write the state");
+    let (_, events_url) = answer_once("403 Forbidden", r#"{"message":"Forbidden"}"#);
+    let (checked, tokens_url) = answer_once("500 Internal Server Error", "{}");
+    let out = command(&home)
+        .env(
+            "MAPBOX_INTERNAL_TELEMETRY_URL",
+            events_url.replace("/config/token.json", "/events/v2"),
+        )
+        .env("MAPBOX_INTERNAL_TOKENS_URL", &tokens_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    checked
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the token was checked");
+    let state = cli_token_state(&home, "cooldowns");
+    assert_eq!(state["token"], "pk.kept");
+    assert_eq!(state["rejected"], false);
+    assert_eq!(state["cooldowns"]["telemetry"]["failures"], 1);
+}

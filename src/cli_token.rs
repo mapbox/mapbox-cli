@@ -12,7 +12,8 @@
 //! 3. `MAPBOX_CLI_TOKEN` at run time, the CLI's token for someone with none
 //!    of their own, such as a developer pointing at staging.
 //! 4. The token published on the release channel, fetched and kept on disk
-//!    until the API rejects it. See [`fetch`] for when it is fetched again.
+//!    until the Tokens API calls it dead. See [`fetch`] for when it is
+//!    fetched again.
 //!
 //! A `401` moves on to the next token; any other answer is the caller's.
 //! [`send`]'s callers never see the token, so every one of them gets the same
@@ -123,7 +124,7 @@ pub(crate) fn send(
     };
     let fetch = || {
         // A caller resting from the CLI's token sends nothing with it.
-        let token = (!fetch::cooling(caller)).then(|| fetch::token().ok())??;
+        let token = (!fetch::cooling(caller)).then(fetch::token)??;
         *fetched.borrow_mut() = Some(token.clone());
         Some(token)
     };
@@ -142,7 +143,7 @@ pub(crate) fn send(
     match dead.take() {
         Some(dead) if matches!(&answer, Some(Ok(r)) if is_refusal(r.status())) => {
             match fetch::token() {
-                Ok(fresh) if fresh != dead => {
+                Some(fresh) if fresh != dead => {
                     *fetched.borrow_mut() = Some(fresh.clone());
                     Some(attempt(&fresh))
                 }
@@ -499,6 +500,17 @@ mod tests {
             user_token_for(&["mapbox", "--use-login", "auth", "whoami"]),
             None
         );
+    }
+
+    #[test]
+    fn the_override_is_trimmed_before_it_is_sent() {
+        let (answer, sent, _) = run(
+            sources(None, Some(" pk.override\n"), None),
+            None,
+            &["pk.override"],
+        );
+        assert_eq!(answer, Some(200));
+        assert_eq!(sent, ["pk.override"]);
     }
 
     #[test]

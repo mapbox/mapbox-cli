@@ -311,10 +311,11 @@ fn is_mapbox_host(host: &str) -> bool {
 }
 
 /// A URL from the environment variable `name`, unless this build is a
-/// production release. A release ignores every such override, so an injected
-/// variable cannot point a request, or the token it carries, at a host of its
-/// choosing. Builds that are not releases honor it, which is how the tests
-/// reach loopback servers.
+/// production release, which ignores it, so an injected variable cannot point
+/// a request, or the token it carries, at a host of its choosing. Builds that
+/// are not releases honor it, which is how the tests reach loopback servers.
+/// For a request that carries a token; `update_check`'s, which carries none,
+/// keeps its override in a release too.
 pub(crate) fn url_override(name: &str) -> Option<String> {
     override_unless_production(is_production_build(), std::env::var(name).ok())
 }

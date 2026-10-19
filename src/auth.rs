@@ -1330,7 +1330,7 @@ fn verify_token(token: &str, debug: bool, timeout: Option<Duration>) -> Result<V
 /// The request behind [`verify_token`]: the endpoint's answer,
 /// whose `code` is the verdict.
 fn check_token(token: &str, timeout: Duration) -> Result<Value> {
-    let (status, request_id, body) = send_token_check(VALIDATION_ENDPOINT, token, timeout)?;
+    let (status, request_id, body) = send_token_check(VALIDATION_ENDPOINT, token, None, timeout)?;
     if !status.is_success() {
         return Err(CliError::http(status.as_u16(), &body)
             .with_request_id(request_id)
@@ -1344,8 +1344,15 @@ fn check_token(token: &str, timeout: Duration) -> Result<Value> {
 /// one an API merely refuses. Observed answering `200` for every verdict, but
 /// a dead token's `code` must not be lost if that ever changes, or the token
 /// would never be replaced.
-pub(crate) fn token_code(url: &str, token: &str, timeout: Duration) -> Option<String> {
-    let (_, _, body) = send_token_check(url, token, timeout).ok()?;
+///
+/// `referer` is sent along, for a token restricted to a URL.
+pub(crate) fn token_code(
+    url: &str,
+    token: &str,
+    referer: Option<&str>,
+    timeout: Duration,
+) -> Option<String> {
+    let (_, _, body) = send_token_check(url, token, referer, timeout).ok()?;
     let answer: Value = serde_json::from_str(&body).ok()?;
     Some(answer.get("code")?.as_str()?.to_owned())
 }
@@ -1353,16 +1360,19 @@ pub(crate) fn token_code(url: &str, token: &str, timeout: Duration) -> Option<St
 fn send_token_check(
     url: &str,
     token: &str,
+    referer: Option<&str>,
     timeout: Duration,
 ) -> Result<(reqwest::StatusCode, Option<String>, String)> {
-    let response = crate::http::send(
-        crate::http::client()?
-            .get(url)
-            .query(&[("access_token", token)])
-            .timeout(timeout),
-    )
-    // `reqwest::Error`'s `Display` appends the URL, and the token is in it.
-    .map_err(|e| crate::executor::transport_failure("Token check failed", e))?;
+    let mut request = crate::http::client()?
+        .get(url)
+        .query(&[("access_token", token)])
+        .timeout(timeout);
+    if let Some(referer) = referer {
+        request = request.header(reqwest::header::REFERER, referer);
+    }
+    let response = crate::http::send(request)
+        // `reqwest::Error`'s `Display` appends the URL, and the token is in it.
+        .map_err(|e| crate::executor::transport_failure("Token check failed", e))?;
 
     let status = response.status();
     // Before `text()` consumes the response — see `executor::request_id`.

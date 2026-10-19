@@ -231,7 +231,9 @@ pub(crate) fn refused(caller: &str, token: &str) -> Refusal {
     {
         return Refusal::NotFetched;
     }
-    let refusal = verdict(auth::token_code(&tokens_url(), token, FETCH_TIMEOUT).as_deref());
+    let refusal = verdict(
+        auth::token_code(&tokens_url(), token, Some(super::REFERER), FETCH_TIMEOUT).as_deref(),
+    );
     // Read again: the check can take seconds, and another run may have
     // saved a new token meanwhile, which this must not write over.
     if let Some(mut state) = read_state().filter(|state| state.token.as_deref() == Some(token)) {

@@ -46,6 +46,13 @@ mod fetch;
 
 use fetch::Refusal;
 
+/// The `Referer` every request with the CLI's token carries. The published
+/// token is restricted to this URL, so that a web page elsewhere cannot use
+/// it; without the header, the API answers `401`. It keeps nothing out of a
+/// program that sets the header itself, which is all the restriction can do
+/// for a token anyone can read.
+pub(crate) const REFERER: &str = "https://cli.mapbox.com/";
+
 /// One place [`send`] may take a token from. A caller passes them in the
 /// order to try.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,7 +117,15 @@ pub(crate) fn send(
     let fetched = RefCell::new(None);
     let dead = RefCell::new(None);
     let mut attempt = |token: &str| {
-        let response = http::send(request().query(&[("access_token", token)]));
+        let is_cli_token = fetched.borrow().as_deref() == Some(token)
+            || usable(override_token.as_deref()) == Some(token);
+        let request = request().query(&[("access_token", token)]);
+        let request = if is_cli_token {
+            request.header(reqwest::header::REFERER, REFERER)
+        } else {
+            request
+        };
+        let response = http::send(request);
         // Only the fetched token's answers are kept: the user's tokens, and
         // `MAPBOX_CLI_TOKEN`, are never checked or counted.
         if let (Ok(r), true) = (&response, fetched.borrow().as_deref() == Some(token)) {

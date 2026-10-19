@@ -601,6 +601,20 @@ fn the_clis_token_sends_the_event_for_someone_with_none() {
         request.head.lines().next().unwrap_or_default(),
         "POST /events/v2?access_token=pk.cli HTTP/1.1"
     );
+    assert_eq!(
+        referer(&request.head).as_deref(),
+        Some("https://cli.mapbox.com/"),
+        "the CLI's token is restricted to that URL"
+    );
+}
+
+/// The `Referer` header a request carried, if any.
+fn referer(head: &str) -> Option<String> {
+    head.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("referer")
+            .then(|| value.trim().to_string())
+    })
 }
 
 #[test]
@@ -646,7 +660,19 @@ fn the_users_token_comes_before_the_clis() {
         .output()
         .expect("run mapbox");
     assert!(out.status.success());
-    assert_eq!(sent_with(&received), "pk.typed");
+    let request = received
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the event was posted");
+    assert!(
+        request.head.contains("access_token=pk.typed "),
+        "{}",
+        request.head
+    );
+    assert_eq!(
+        referer(&request.head),
+        None,
+        "the user's token carries no Referer"
+    );
 }
 
 /// `--version`, help and usage errors return before the arguments are parsed,
@@ -951,6 +977,11 @@ fn a_revoked_token_is_replaced_and_the_event_resent() {
             let head = heads
                 .recv_timeout(Duration::from_secs(10))
                 .expect("an event was posted");
+            assert_eq!(
+                referer(&head).as_deref(),
+                Some("https://cli.mapbox.com/"),
+                "{head}"
+            );
             head.split("access_token=")
                 .nth(1)
                 .and_then(|rest| rest.split([' ', '&']).next())

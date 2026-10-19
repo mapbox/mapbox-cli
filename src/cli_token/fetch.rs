@@ -77,9 +77,6 @@ pub(crate) enum Unavailable {
     Waiting { retry_at: u64, revoked: bool },
     /// None on disk, and the caller asked not to fetch, as a dry run does.
     NotFetched,
-    /// This caller's API refused the token lately, so it rests from it
-    /// until `until` (Unix seconds).
-    Resting { until: u64 },
 }
 
 impl std::fmt::Display for Unavailable {
@@ -97,11 +94,6 @@ impl std::fmt::Display for Unavailable {
                 wait_text(retry_at.saturating_sub(now()))
             ),
             Self::NotFetched => write!(f, "it has not been fetched yet"),
-            Self::Resting { until } => write!(
-                f,
-                "this API refused it recently; trying it again in {}",
-                wait_text(until.saturating_sub(now()))
-            ),
         }
     }
 }
@@ -183,18 +175,16 @@ fn backoff(failures: u32) -> u64 {
     }
 }
 
-/// Whether `caller` — `telemetry`, or a command's name — is resting from the
+/// Whether `caller` — today only `telemetry` — is resting from the
 /// CLI's token. While it is, it sends nothing with it, so nothing is
 /// refused, and nothing is checked.
 pub(crate) fn cooling(caller: &str) -> bool {
-    resting_until(caller).is_some()
-}
-
-/// When `caller`'s cooldown ends, while it has one.
-pub(crate) fn resting_until(caller: &str) -> Option<u64> {
-    let state = read_state()?;
-    let cooldown = state.cooldowns.get(caller)?;
-    holds(cooldown.until, now()).then_some(cooldown.until)
+    read_state().is_some_and(|state| {
+        state
+            .cooldowns
+            .get(caller)
+            .is_some_and(|cooldown| holds(cooldown.until, now()))
+    })
 }
 
 /// Records that `caller`'s request with the saved `token` went through, which
@@ -235,6 +225,20 @@ pub(crate) fn token() -> Result<String, Unavailable> {
         save_fetch(&before, state);
     }
     token.ok_or(why)
+}
+
+/// [`token`], but asking the endpoint now, whatever the backoff says and
+/// even with a token on disk: for a command someone is waiting on whose
+/// request was just refused, so that a token republished or reconfigured is
+/// picked up at once. `None` when the endpoint has nothing usable.
+pub(crate) fn token_now() -> Option<String> {
+    let mut state = read_state().unwrap_or_default();
+    let before = state.clone();
+    let token = judge(&mut state, now(), get(&endpoint()), check);
+    if state != before {
+        save_fetch(&before, state);
+    }
+    token
 }
 
 /// The token on disk while it is not dead, without asking the endpoint, for
@@ -298,7 +302,11 @@ pub(crate) enum Refusal {
 /// `token` was refused. A dead token is marked, so the next [`token`]
 /// fetches a new one; otherwise `caller`'s refusals are counted, and the
 /// third in a row rests it for an hour.
-pub(crate) fn refused(caller: &str, token: &str) -> Refusal {
+///
+/// Only a caller that `rests` is paced: one in the background, such as
+/// telemetry. A command someone is waiting on is never held back; it tries
+/// a fresh token instead ([`token_now`]).
+pub(crate) fn refused(caller: &str, token: &str, rests: bool) -> Refusal {
     let now = now();
     if read_state()
         .filter(|state| state.token.as_deref() == Some(token))
@@ -313,6 +321,8 @@ pub(crate) fn refused(caller: &str, token: &str) -> Refusal {
         // `verdict` never answers `NotFetched`; that was returned above.
         if refusal == Refusal::Dead {
             state.rejected = true;
+        } else if !rests {
+            return refusal;
         } else {
             let cooldown = state.cooldowns.entry(caller.to_owned()).or_default();
             cooldown.failures += 1;
@@ -359,17 +369,31 @@ fn acquire(
     if holds(state.retry_at, now) {
         return None;
     }
-    match get() {
+    judge(state, now, get(), check)
+}
+
+/// What a fetch's answer does to the state. A token that is new, or the dead
+/// one taken back, replaces what is kept, cooldowns and counts with it; the
+/// kept token again, not dead, leaves it as it is.
+fn judge(
+    state: &mut State,
+    now: u64,
+    fetched: Fetched,
+    check: impl FnOnce(&str) -> Refusal,
+) -> Option<String> {
+    match fetched {
         Fetched::Failed => None,
         Fetched::Token(token)
             if is_plausible(&token)
                 && (!(state.rejected && state.token.as_deref() == Some(token.as_str()))
                     || check(&token) == Refusal::Forbidden) =>
         {
-            *state = State {
-                token: Some(token.clone()),
-                ..State::default()
-            };
+            if state.rejected || state.token.as_deref() != Some(token.as_str()) {
+                *state = State {
+                    token: Some(token.clone()),
+                    ..State::default()
+                };
+            }
             Some(token)
         }
         // The rejected token again and still not valid, something that is
@@ -656,6 +680,31 @@ mod tests {
     }
 
     #[test]
+    fn a_forced_fetch_of_the_kept_token_keeps_what_is_known() {
+        let mut state = State {
+            cooldowns: BTreeMap::from([(
+                "telemetry".to_owned(),
+                Cooldown {
+                    failures: 1,
+                    until: NOW,
+                },
+            )]),
+            ..saved("pk.kept", false)
+        };
+        let before = state.clone();
+        assert_eq!(
+            judge(&mut state, NOW, token("pk.kept"), |_| Refusal::Dead),
+            Some("pk.kept".to_owned())
+        );
+        assert_eq!(state, before);
+        assert_eq!(
+            judge(&mut state, NOW, token("pk.new"), |_| Refusal::Dead),
+            Some("pk.new".to_owned())
+        );
+        assert_eq!(state, saved("pk.new", false), "a new token starts over");
+    }
+
+    #[test]
     fn a_wait_beyond_an_hour_is_not_honored() {
         let mut state = State {
             retry_at: u64::MAX,
@@ -754,7 +803,7 @@ mod tests {
         assert_eq!(wait_text(0), "1 minute");
         assert_eq!(wait_text(59 * 60), "59 minutes");
         assert_eq!(wait_text(HOUR), "1 hour");
-        assert_eq!(wait_text(DAY), "24 hours");
+        assert_eq!(wait_text(2 * HOUR), "2 hours");
     }
 
     #[test]

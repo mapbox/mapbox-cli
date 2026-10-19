@@ -1635,7 +1635,7 @@ fn try_cli_token(
     let sent = cli_token::send_with_cli_token(
         command,
         token,
-        &mut cli_token::Disk,
+        &mut cli_token::Disk::Command,
         |token| {
             let result = execute(token, flags);
             // Confirmed once already, if the command asks.
@@ -1679,14 +1679,12 @@ fn try_cli_token(
 }
 
 /// Why there was no CLI token to try, as the error a command fails with
-/// when the user has no token of their own either. Resting is this API's
-/// doing, so it shares the code of the refusal that started it.
+/// when the user has no token of their own either.
 fn cli_token_unavailable(why: &cli_token::Unavailable) -> CliError {
-    let code = match why {
-        cli_token::Unavailable::Resting { .. } => "cli_token_forbidden",
-        _ => "cli_token_unavailable",
-    };
-    CliError::new(code, format!("Can't use the CLI's token: {why}."))
+    CliError::new(
+        "cli_token_unavailable",
+        format!("Can't use the CLI's token: {why}."),
+    )
 }
 
 #[cfg(test)]

@@ -123,23 +123,22 @@ fn use_for(command: &str) -> Option<Use> {
 /// token already on disk is returned then.
 pub(crate) fn for_command(command: &str, fetch: bool) -> Option<Result<String, Unavailable>> {
     match use_for(command)? {
-        Use::Preferred => Some(preferred_token(command, fetch)),
+        Use::Preferred => Some(preferred_token(fetch)),
     }
 }
 
-fn preferred_token(command: &str, fetch: bool) -> Result<String, Unavailable> {
-    // A developer's override is not the fetched token, whose cooldown does
-    // not apply to it.
+fn preferred_token(fetch: bool) -> Result<String, Unavailable> {
     if let Some(token) = usable(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref()) {
         return Ok(token.to_owned());
     }
-    if let Some(until) = fetch::resting_until(command) {
-        return Err(Unavailable::Resting { until });
+    if !fetch {
+        return fetch::saved_token().ok_or(Unavailable::NotFetched);
     }
-    if fetch {
-        fetch::token()
-    } else {
-        fetch::saved_token().ok_or(Unavailable::NotFetched)
+    // A command is not held by the backoff, which paces background fetches:
+    // someone is waiting, and the endpoint may have a new token by now.
+    match fetch::token() {
+        Err(why @ Unavailable::Waiting { .. }) => fetch::token_now().ok_or(why),
+        answer => answer,
     }
 }
 
@@ -199,9 +198,13 @@ pub(crate) fn send(
                 send(token)
             };
         }
-        match send_with_cli_token(caller, token.to_owned(), &mut Disk, send_cli, |answer| {
-            answer.as_ref().ok().map(|r| r.status().as_u16())
-        }) {
+        match send_with_cli_token(
+            caller,
+            token.to_owned(),
+            &mut Disk::Background,
+            send_cli,
+            |answer| answer.as_ref().ok().map(|r| r.status().as_u16()),
+        ) {
             Sent::Answered(answer) | Sent::Refused(answer, _) => answer,
         }
     };
@@ -238,21 +241,42 @@ pub(crate) enum Sent<R> {
 pub(crate) trait Ledger {
     fn refused(&mut self, caller: &str, token: &str) -> Refusal;
     fn accepted(&mut self, caller: &str, token: &str);
+    /// Whether a request refused for `refusal` is worth sending again with
+    /// a [`fresh`](Ledger::fresh) token.
+    fn retries(&self, refusal: Refusal) -> bool;
     fn fresh(&mut self) -> Option<String>;
 }
 
-/// `<config dir>/cli-token.json`, through [`fetch`].
-pub(crate) struct Disk;
+/// `<config dir>/cli-token.json`, through [`fetch`], as one of two kinds of
+/// caller.
+pub(crate) enum Disk {
+    /// Nobody is waiting, as for telemetry: paced, and a new token is tried
+    /// only for a dead one, when the backoff allows.
+    Background,
+    /// Someone ran it and is waiting: never paced, and any refusal tries a
+    /// token fetched there and then, so a token republished or fixed in the
+    /// Console works on the next try.
+    Command,
+}
 
 impl Ledger for Disk {
     fn refused(&mut self, caller: &str, token: &str) -> Refusal {
-        fetch::refused(caller, token)
+        fetch::refused(caller, token, matches!(self, Disk::Background))
     }
     fn accepted(&mut self, caller: &str, token: &str) {
         fetch::accepted(caller, token);
     }
+    fn retries(&self, refusal: Refusal) -> bool {
+        match self {
+            Disk::Background => refusal == Refusal::Dead,
+            Disk::Command => true,
+        }
+    }
     fn fresh(&mut self) -> Option<String> {
-        fetch::token().ok()
+        match self {
+            Disk::Background => fetch::token().ok(),
+            Disk::Command => fetch::token_now(),
+        }
     }
 }
 
@@ -260,10 +284,11 @@ impl Ledger for Disk {
 /// rules for using it live, for telemetry and commands alike.
 ///
 /// A `2xx` ends `caller`'s cooldown. A `401` or `403` is checked with the
-/// Tokens API at once ([`fetch::refused`]): a dead token is replaced and the
-/// request sent once more, since a refused request was not acted on; any
-/// other refusal starts `caller`'s cooldown and is handed back. `status` is
-/// an answer's HTTP status, or `None` when there was no answer.
+/// Tokens API at once ([`fetch::refused`]); when the ledger says it is worth
+/// it ([`Ledger::retries`]) and a different token is to be had, the request
+/// is sent once more with it, since a refused request was not acted on.
+/// Otherwise the refusal is handed back. `status` is an answer's HTTP status,
+/// or `None` when there was no answer.
 pub(crate) fn send_with_cli_token<R>(
     caller: &str,
     mut token: String,
@@ -277,7 +302,7 @@ pub(crate) fn send_with_cli_token<R>(
         match status(&answer) {
             Some(401 | 403) => {
                 let refusal = ledger.refused(caller, &token);
-                if refusal == Refusal::Dead && !replaced {
+                if ledger.retries(refusal) && !replaced {
                     if let Some(fresh) = ledger.fresh().filter(|fresh| *fresh != token) {
                         token = fresh;
                         replaced = true;
@@ -681,6 +706,9 @@ mod tests {
     /// to hand out once, and records what it was told.
     #[derive(Default)]
     struct FakeLedger {
+        /// Retries after any refusal, as [`Disk::Command`] does, rather than
+        /// only a dead token, as [`Disk::Background`] does.
+        command: bool,
         verdict: Option<Refusal>,
         fresh: Option<String>,
         refused: Vec<String>,
@@ -694,6 +722,9 @@ mod tests {
         }
         fn accepted(&mut self, _: &str, token: &str) {
             self.accepted.push(token.to_owned());
+        }
+        fn retries(&self, refusal: Refusal) -> bool {
+            self.command || refusal == Refusal::Dead
         }
         fn fresh(&mut self) -> Option<String> {
             self.fresh.take()
@@ -771,6 +802,34 @@ mod tests {
             assert_eq!(sent, ["pk.old"]);
             assert!(ledger.fresh.is_some(), "{verdict:?} fetched a new token");
         }
+    }
+
+    #[test]
+    fn a_command_tries_a_fresh_token_after_any_refusal() {
+        for verdict in [Refusal::Forbidden, Refusal::Unknown, Refusal::NotFetched] {
+            let mut ledger = FakeLedger {
+                command: true,
+                verdict: Some(verdict),
+                fresh: Some("pk.new".to_owned()),
+                ..FakeLedger::default()
+            };
+            let (outcome, sent) = send_cli(&mut ledger, &[Some(403), Some(200)]);
+            assert_eq!(outcome, Sent::Answered(Some(200)), "{verdict:?}");
+            assert_eq!(sent, ["pk.old", "pk.new"], "{verdict:?}");
+        }
+    }
+
+    #[test]
+    fn a_command_gets_the_same_token_back_and_does_not_resend_it() {
+        let mut ledger = FakeLedger {
+            command: true,
+            verdict: Some(Refusal::Forbidden),
+            fresh: Some("pk.old".to_owned()),
+            ..FakeLedger::default()
+        };
+        let (outcome, sent) = send_cli(&mut ledger, &[Some(403)]);
+        assert_eq!(outcome, Sent::Refused(Some(403), Refusal::Forbidden));
+        assert_eq!(sent, ["pk.old"]);
     }
 
     #[test]

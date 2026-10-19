@@ -2021,11 +2021,14 @@ needed. There is no way to read it back or delete it, so `--dry-run` shows
 the body without sending it.
 
 It is sent with the CLI's own token, not yours, so it works without a
-login; `--token` and `--use-login` are noted as unused. While the CLI's
-token can't be used — it can't be fetched, it is revoked with no new one
-yet, or this API refused it recently — your own token is used instead, and
-with none the command fails with `cli_token_unavailable` or
-`cli_token_forbidden`, saying when it will try the CLI's again.
+login; `--token` and `--use-login` are noted as unused. If this API refuses
+the CLI's token, a fresh one is fetched there and then and the message sent
+again with it, so a token that was republished or fixed works at once.
+When the CLI's token still can't be used — it can't be fetched, it is
+revoked with no new one yet, or this API refuses it — your own token is
+used instead, and with none the command fails with `cli_token_unavailable`
+or `cli_token_forbidden`. Each run tries the CLI's token again; nothing
+here is put off for later.
 
 #### Parameters
 
@@ -5134,7 +5137,7 @@ faults and are not:
 | `missing_subcommand` | A command group was named with no operation. |
 | `cancelled` | A delete was declined at the confirmation prompt. Nothing was sent. |
 | `cli_token_unavailable` | A command that prefers the CLI's own token (`report`) could not use it — it could not be fetched, or it is revoked and no new one is published yet — and you have no token of your own to fall back to. |
-| `cli_token_forbidden` | The CLI's own token works, but this API refused it, now or recently enough that it is not tried again yet, and you have no token of your own to fall back to. |
+| `cli_token_forbidden` | The CLI's own token works, but this API refused it, even after fetching it afresh, and you have no token of your own to fall back to. |
 | `usage` | Anything else clap rejected. Exit code 2, not 1. |
 | `error` | Unclassified. |
 

@@ -574,21 +574,18 @@ fn report_needs_a_message_and_takes_no_data() {
 /// is a dead port, and a cooldown is written to disk.
 mod report_token {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
 
-    /// A saved CLI token whose cooldown for `report` runs for another hour.
-    fn resting(config: &Path) {
-        let until = std::time::SystemTime::now()
+    fn now() -> u64 {
+        std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("a clock after 1970")
             .as_secs()
-            + 3600;
-        std::fs::write(
-            config.join("cli-token.json"),
-            format!(
-                r#"{{"token":"pk.saved","overridden":true,"cooldowns":{{"report":{{"failures":1,"until":{until}}}}}}}"#
-            ),
-        )
-        .expect("write the state");
+    }
+
+    fn write_state(config: &Path, state: &str) {
+        std::fs::write(config.join("cli-token.json"), state).expect("write the state");
     }
 
     fn error_code(out: &Output) -> String {
@@ -596,6 +593,47 @@ mod report_token {
             .as_str()
             .unwrap_or_default()
             .to_owned()
+    }
+
+    /// A token endpoint on loopback that hands out `token` once.
+    fn token_endpoint(token: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+        let addr = listener.local_addr().expect("the bound address");
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") {
+                match stream.read(&mut byte) {
+                    Ok(1) => head.push(byte[0]),
+                    _ => break,
+                }
+            }
+            let body = format!(r#"{{"token":"{token}"}}"#);
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        });
+        format!("http://{addr}/config/token.json")
+    }
+
+    /// A request that goes nowhere: the proxy is a dead port, so `--debug`
+    /// shows what was about to be sent without anything reaching Mapbox.
+    fn sent_nowhere(config: &Path, args: &[&str]) -> Command {
+        let mut cmd = command(config);
+        cmd.env("HTTPS_PROXY", "http://127.0.0.1:9")
+            .env_remove("https_proxy")
+            .env_remove("ALL_PROXY")
+            .env_remove("all_proxy")
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
+            .args(args);
+        cmd
     }
 
     #[test]
@@ -607,61 +645,15 @@ mod report_token {
         assert_eq!(error_code(&out), "cli_token_unavailable");
     }
 
-    #[test]
-    fn while_resting_with_no_token_it_says_the_api_refused_it() {
-        let config = config_dir("report-resting");
-        resting(&config);
-        let out = run(&config, &["-o", "json", "report", "A test"]);
-        assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-        assert_eq!(error_code(&out), "cli_token_forbidden");
-        assert!(
-            stderr(&out).contains("refused it recently"),
-            "{}",
-            stderr(&out)
-        );
-    }
-
-    /// `MAPBOX_CLI_TOKEN` is a developer's, not the fetched token, so the
-    /// fetched token's cooldown does not hold it back.
-    #[test]
-    fn a_cooldown_does_not_hold_back_the_override() {
-        let config = config_dir("report-resting-override");
-        resting(&config);
-        let out = command(&config)
-            .env("MAPBOX_CLI_TOKEN", "pk.cli")
-            .args(["--token", "sk.mine", "report", "--dry-run", "A test"])
-            .output()
-            .expect("run mapbox");
-        assert!(out.status.success(), "{}", stderr(&out));
-        assert!(
-            stderr(&out).contains("`--token` was not used"),
-            "{}",
-            stderr(&out)
-        );
-    }
-
-    /// A request that goes nowhere: the proxy is a dead port, so `--debug`
-    /// shows what was about to be sent without anything reaching Mapbox.
-    fn sent_nowhere(config: &Path, cli_token: Option<&str>, args: &[&str]) -> Output {
-        let mut cmd = command(config);
-        cmd.env("HTTPS_PROXY", "http://127.0.0.1:9")
-            .env_remove("https_proxy")
-            .env_remove("ALL_PROXY")
-            .env_remove("all_proxy")
-            .env_remove("NO_PROXY")
-            .env_remove("no_proxy");
-        if let Some(token) = cli_token {
-            cmd.env("MAPBOX_CLI_TOKEN", token);
-        }
-        cmd.args(args).output().expect("run mapbox")
-    }
-
     /// The CLI's token is restricted to its URL, so a request with it says
     /// it comes from there.
     #[test]
     fn the_clis_token_goes_with_its_referer() {
         let config = config_dir("report-referer");
-        let out = sent_nowhere(&config, Some("pk.cli"), &["--debug", "report", "A test"]);
+        let out = sent_nowhere(&config, &["--debug", "report", "A test"])
+            .env("MAPBOX_CLI_TOKEN", "pk.cli")
+            .output()
+            .expect("run mapbox");
         let err = stderr(&out);
         assert!(
             err.contains("[debug] Referer: https://cli.mapbox.com/"),
@@ -669,28 +661,76 @@ mod report_token {
         );
     }
 
+    /// Someone ran it, so a rest telemetry might take does not hold it back:
+    /// it sends with the CLI's token.
+    #[test]
+    fn a_cooldown_does_not_hold_report_back() {
+        let config = config_dir("report-not-resting");
+        write_state(
+            &config,
+            &format!(
+                r#"{{"token":"pk.saved","overridden":true,"cooldowns":{{"report":{{"failures":3,"until":{}}}}}}}"#,
+                now() + 3600
+            ),
+        );
+        let out = sent_nowhere(&config, &["--debug", "report", "A test"])
+            .output()
+            .expect("run mapbox");
+        let err = stderr(&out);
+        assert!(
+            err.contains("[debug] Referer: https://cli.mapbox.com/"),
+            "{err}"
+        );
+        assert!(!err.contains("recently"), "{err}");
+    }
+
+    /// Nor does the endpoint's backoff: with the kept token dead, it asks
+    /// for a new one there and then, and sends with it.
+    #[test]
+    fn report_fetches_through_the_backoff() {
+        let config = config_dir("report-through-backoff");
+        write_state(
+            &config,
+            &format!(
+                r#"{{"token":"pk.dead","rejected":true,"overridden":true,"failures":3,"retry_at":{}}}"#,
+                now() + 3600
+            ),
+        );
+        let out = sent_nowhere(&config, &["--debug", "report", "A test"])
+            .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", token_endpoint("pk.fresh"))
+            .output()
+            .expect("run mapbox");
+        let err = stderr(&out);
+        assert!(
+            err.contains("[debug] Referer: https://cli.mapbox.com/"),
+            "{err}"
+        );
+        let state = std::fs::read_to_string(config.join("cli-token.json")).expect("the state");
+        assert!(state.contains(r#""token":"pk.fresh""#), "{state}");
+    }
+
     /// The user's own token is not restricted to anything of ours, and goes
-    /// without it.
+    /// without the CLI token's Referer when it stands in.
     #[test]
     fn the_users_token_goes_without_a_referer() {
         let config = config_dir("report-no-referer");
-        resting(&config);
         let out = sent_nowhere(
             &config,
-            None,
             &["--debug", "--token", "sk.mine", "report", "A test"],
-        );
+        )
+        .output()
+        .expect("run mapbox");
         let err = stderr(&out);
+        assert!(err.contains("Using your own token instead"), "{err}");
         assert!(err.contains("[debug] POST"), "{err}");
         assert!(!err.contains("Referer"), "{err}");
     }
 
-    /// While the CLI's token cannot be used, the user's is: the plan goes
-    /// out with it, and a typed `--token` is not reported as ignored.
+    /// A dry run fetches nothing, so with no CLI token kept the plan goes out
+    /// with the user's, and a typed `--token` is not reported as ignored.
     #[test]
-    fn while_resting_a_dry_run_plans_with_the_users_token() {
-        let config = config_dir("report-resting-user");
-        resting(&config);
+    fn a_dry_run_with_no_kept_token_plans_with_the_users() {
+        let config = config_dir("report-dry-user");
         let out = run(
             &config,
             &["--token", "sk.mine", "report", "--dry-run", "A test"],

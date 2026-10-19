@@ -13,9 +13,9 @@
 //! the token itself, and only a revoked, invalid, expired or malformed one is
 //! replaced. A fetch right after a
 //! rotation can still return the revoked token: the edge caches the file for
-//! a few minutes, and the secret may not be republished yet. So when a fetch
-//! answers with nothing usable, the next one waits an hour, three times,
-//! then a day, and the cycle starts again. A fetch that never got an answer
+//! a few minutes, and the secret may not be republished yet. So when fetches
+//! answer with nothing usable three times running, the next waits an hour
+//! ([`backoff`]). A fetch that never got an answer
 //! does not count: that is this machine being offline, not the endpoint
 //! being stale, and it is asked again on the next run.
 //!
@@ -56,9 +56,8 @@ const STATE_FILE: &str = "cli-token.json";
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 
 const HOUR: u64 = 60 * 60;
-const DAY: u64 = 24 * HOUR;
 /// Hourly retries after a fetch that found nothing new, before waiting a day.
-const HOURLY_RETRIES: u32 = 3;
+const TRIES_BEFORE_WAITING: u32 = 3;
 
 /// Long enough for any `pk.` token; anything longer is not one.
 const MAX_TOKEN_LEN: usize = 512;
@@ -114,23 +113,28 @@ impl State {
     }
 }
 
-/// One caller's rest from the CLI's token, after an API refused a token the
-/// Tokens API called valid.
+/// One caller's rest from the CLI's token, after an API refused it and the
+/// Tokens API could not call it dead, paced as the fetch is ([`backoff`]).
+/// Never longer than an hour: a token that is valid but refused is a
+/// configuration someone can fix in the Console without the token changing,
+/// and a fix should not wait long to be seen.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Cooldown {
-    /// Consecutive refusals, which pace the rest as [`backoff`] does.
+    /// Consecutive refusals.
+    #[serde(default)]
     failures: u32,
     /// Unix seconds before which it is not used again.
+    #[serde(default)]
     until: u64,
 }
 
-/// The wait after `failures` consecutive misses: an hour three times, then
-/// a day, and again.
+/// The wait after `failures` consecutive misses: an hour after every third,
+/// none otherwise, so a miss that was only bad timing costs nothing.
 fn backoff(failures: u32) -> u64 {
-    if failures.is_multiple_of(HOURLY_RETRIES + 1) {
-        DAY
-    } else {
+    if failures.is_multiple_of(TRIES_BEFORE_WAITING) {
         HOUR
+    } else {
+        0
     }
 }
 
@@ -222,7 +226,8 @@ pub(crate) enum Refusal {
 
 /// Asks the Tokens API, at once, why `caller`'s request with the fetched
 /// `token` was refused. A dead token is marked, so the next [`token`]
-/// fetches a new one; otherwise `caller`'s cooldown starts or extends.
+/// fetches a new one; otherwise `caller`'s refusals are counted, and the
+/// third in a row rests it for an hour.
 pub(crate) fn refused(caller: &str, token: &str) -> Refusal {
     let now = now();
     if read_state()
@@ -298,10 +303,10 @@ fn acquire(state: &mut State, now: u64, get: impl FnOnce() -> Fetched) -> Option
 }
 
 /// Whether a wait until `until` still holds at `now`: the endpoint's, or a
-/// caller's cooldown. One further out than the longest wait is a clock that
-/// went backwards or an edited file, and is not honored.
+/// caller's cooldown. One further out than the longest wait, an hour, is a
+/// clock that went backwards or an edited file, and is not honored.
 fn holds(until: u64, now: u64) -> bool {
-    now < until && until <= now + DAY
+    now < until && until <= now + HOUR
 }
 
 /// Whether `value` looks like a public token and nothing else. Checked on
@@ -455,8 +460,8 @@ mod tests {
         }
         assert_eq!(
             waits,
-            [HOUR, HOUR, HOUR, DAY, HOUR, HOUR, HOUR, DAY],
-            "an hour three times, then a day, and again"
+            [0, 0, HOUR, 0, 0, HOUR, 0, 0],
+            "an hour after every third failure in a row"
         );
     }
 
@@ -486,7 +491,8 @@ mod tests {
             let mut state = State::default();
             let (result, _) = run(&mut state, NOW, answer);
             assert_eq!(result, None);
-            assert_eq!(state.retry_at, NOW + HOUR);
+            assert_eq!(state.failures, 1);
+            assert_eq!(state.retry_at, NOW, "the first failure waits for nothing");
             assert_eq!(state.token, None, "nothing unusable is kept");
         }
     }
@@ -519,17 +525,15 @@ mod tests {
     }
 
     #[test]
-    fn a_cooldown_rests_as_the_fetch_does_and_not_beyond_a_day() {
-        let waits: Vec<u64> = (1..=8).map(backoff).collect();
-        assert_eq!(waits, [HOUR, HOUR, HOUR, DAY, HOUR, HOUR, HOUR, DAY]);
+    fn a_cooldown_holds_for_its_hour_and_not_beyond_a_day() {
         let cooldown = Cooldown {
-            failures: 1,
+            failures: 3,
             until: NOW + HOUR,
         };
         assert!(holds(cooldown.until, NOW));
         assert!(!holds(cooldown.until, NOW + HOUR));
         let edited = Cooldown {
-            failures: 1,
+            failures: 3,
             until: u64::MAX,
         };
         assert!(
@@ -540,11 +544,11 @@ mod tests {
 
     #[test]
     fn a_fetch_keeps_what_another_run_wrote_meanwhile() {
-        let resting = |failures| State {
+        let resting = || State {
             cooldowns: BTreeMap::from([(
                 "telemetry".to_owned(),
                 Cooldown {
-                    failures,
+                    failures: 3,
                     until: NOW + HOUR,
                 },
             )]),
@@ -555,13 +559,13 @@ mod tests {
         // A cooldown added meanwhile is kept by a fetch that only failed...
         let mut failed = before.clone();
         failed.fail(NOW);
-        let written = merged(&before, failed.clone(), resting(1)).expect("written");
+        let written = merged(&before, failed.clone(), resting()).expect("written");
         assert_eq!(written.failures, 1);
-        assert_eq!(written.cooldowns, resting(1).cooldowns);
+        assert_eq!(written.cooldowns, resting().cooldowns);
 
         // ...and ended by one that brought a new token.
         let fresh = saved("pk.new", false);
-        let written = merged(&before, fresh.clone(), resting(1)).expect("written");
+        let written = merged(&before, fresh.clone(), resting()).expect("written");
         assert_eq!(written, fresh);
 
         // A token or a count another run saved meanwhile stands.

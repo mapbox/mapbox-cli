@@ -994,13 +994,15 @@ fn a_revoked_token_is_replaced_and_the_event_resent() {
 }
 
 /// A `401` to a token the Tokens API calls valid is this API refusing it,
-/// not the token being dead, so it is kept.
+/// not the token being dead, so it is kept; the third such refusal in a row
+/// rests telemetry for an hour.
 #[test]
 fn a_token_an_api_refuses_is_kept() {
     let home = scratch("send-forbidden");
     std::fs::write(
         config_dir(&home).join("cli-token.json"),
-        r#"{"token":"pk.kept","overridden":true}"#,
+        // Refused twice before: this is the third in a row.
+        r#"{"token":"pk.kept","overridden":true,"cooldowns":{"telemetry":{"failures":2}}}"#,
     )
     .expect("write the state");
     let (_, events_url) = answer_once("401 Unauthorized", r#"{"message":"Not Authorized"}"#);
@@ -1024,7 +1026,7 @@ fn a_token_an_api_refuses_is_kept() {
     let state = cli_token_state(&home, "cooldowns");
     assert_eq!(state["token"], "pk.kept");
     assert_eq!(state["rejected"], false);
-    assert_eq!(state["cooldowns"]["telemetry"]["failures"], 1);
+    assert!(state["cooldowns"]["telemetry"]["until"].is_u64(), "{state}");
 
     // Resting: the next run sends nothing with it, and checks nothing.
     let (sent, events_url) = answer_once("401 Unauthorized", r#"{"message":"Not Authorized"}"#);
@@ -1052,14 +1054,15 @@ fn a_token_an_api_refuses_is_kept() {
     );
 }
 
-/// The endpoint still serving the rejected token is not asked again for an
-/// hour, and the event is dropped meanwhile.
+/// The endpoint serving the rejected token a third time in a row is not
+/// asked again for an hour, and the event is dropped meanwhile.
 #[test]
 fn the_rejected_token_served_again_waits_before_asking() {
     let home = scratch("send-still-rejected");
     std::fs::write(
         config_dir(&home).join("cli-token.json"),
-        r#"{"token":"pk.old","rejected":true,"overridden":true}"#,
+        // Two fetches already found it: this is the third in a row.
+        r#"{"token":"pk.old","rejected":true,"overridden":true,"failures":2}"#,
     )
     .expect("write the state");
     let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.old"}"#);
@@ -1074,7 +1077,7 @@ fn the_rejected_token_served_again_waits_before_asking() {
         .expect("run mapbox");
     assert!(out.status.success());
     let state = cli_token_state(&home, "retry_at");
-    assert_eq!(state["failures"], 1);
+    assert_eq!(state["failures"], 3);
 
     // Nothing listens at the endpoint now, and nothing should try it.
     let out = command(&home)
@@ -1155,14 +1158,13 @@ fn keeping_a_fetched_token_leaves_the_directory_mode_alone() {
 }
 
 /// Only an answer that went through ends a cooldown: a `500` after one
-/// expired says nothing about whether the API takes the token now, and must
-/// not reset the count that paces the next one.
+/// expired says nothing about whether the API takes the token now.
 #[test]
 fn a_failed_send_does_not_end_a_cooldown() {
     let home = scratch("send-cooldown-500");
     std::fs::write(
         config_dir(&home).join("cli-token.json"),
-        r#"{"token":"pk.kept","overridden":true,"cooldowns":{"telemetry":{"failures":2,"until":1}}}"#,
+        r#"{"token":"pk.kept","overridden":true,"cooldowns":{"telemetry":{"until":1}}}"#,
     )
     .expect("write the state");
     let (sent, events_url) = answer_once("500 Internal Server Error", "{}");
@@ -1184,7 +1186,7 @@ fn a_failed_send_does_not_end_a_cooldown() {
         &std::fs::read_to_string(config_dir(&home).join("cli-token.json")).expect("the state"),
     )
     .expect("the state is JSON");
-    assert_eq!(state["cooldowns"]["telemetry"]["failures"], 2, "{state}");
+    assert_eq!(state["cooldowns"]["telemetry"]["until"], 1, "{state}");
 }
 
 /// A refusal the Tokens API cannot explain still rests telemetry: sending
@@ -1216,5 +1218,5 @@ fn an_unexplained_refusal_starts_a_cooldown_too() {
     let state = cli_token_state(&home, "cooldowns");
     assert_eq!(state["token"], "pk.kept");
     assert_eq!(state["rejected"], false);
-    assert_eq!(state["cooldowns"]["telemetry"]["failures"], 1);
+    assert!(state["cooldowns"]["telemetry"]["until"].is_u64(), "{state}");
 }

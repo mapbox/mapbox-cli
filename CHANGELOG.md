@@ -29,10 +29,9 @@ that may never merge. They are not releases and are not listed here.
   - Keeping the token creates `~/.mapbox` if it is missing, even on a run
     whose only network use is telemetry.
   - When an API refuses the token, the Tokens API is asked why. Only a
-    revoked, invalid, expired or malformed token is replaced, at once. If
-    the endpoint still serves the dead token, it is asked again hourly
-    three times, then daily. A valid token that an API refuses is not used
-    for that API on the same schedule.
+    revoked, invalid, expired or malformed token is replaced, at once.
+    Three fetches in a row that find no usable token, or three refusals
+    in a row of a valid one, pause that for an hour.
 
 - `tilesets query` renders as a numbered list under `-o text` again, as
   documented. It had printed pretty JSON since 0.2.0, when the command moved

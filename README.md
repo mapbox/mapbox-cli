@@ -483,8 +483,9 @@ login. Only when you have none does it use the CLI's token:
 `https://cli.mapbox.com/config/token.json` and kept in
 `~/.mapbox/cli-token.json`. It is replaced only when the Tokens API says it
 is revoked, invalid, expired or malformed, not when one API refuses it. A
-refusal of a valid token, or one the Tokens API cannot explain, pauses
-sending with it: an hour, three times, then a day, and again. The token is
+refusal of a valid token, or one the Tokens API cannot explain, counts; the
+third in a row pauses telemetry's sending with it for an hour, as three
+fetches in a row that find no usable token pause fetching. The token is
 restricted to `https://cli.mapbox.com/`, so every request with it carries
 that as its `Referer`. The CLI's token is only used for what
 `src/cli_token.rs` lists for it, today just telemetry.

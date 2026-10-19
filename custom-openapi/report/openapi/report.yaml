@@ -32,9 +32,12 @@ paths:
       operationId: report
       summary: Send feedback about the Mapbox CLI.
       description: >-
-        Sends one message to the Mapbox CLI team. Any valid token works; no
-        extra scope is needed. There is no way to read it back or delete it
-        afterwards.
+        Sends one message to the Mapbox CLI team, with the CLI's version and
+        OS appended. It is sent with a token the CLI provides, so it needs no
+        login; while that token can't be used, or with `--token` or
+        `--use-login`, it is sent with yours. Either way it is filed under
+        Mapbox's account, not yours. Any valid token works; no extra scope is
+        needed. There is no way to read it back or delete it afterward.
       parameters:
         - name: "access_token"
           in: query

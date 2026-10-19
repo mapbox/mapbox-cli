@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use clap::ArgMatches;
 
+use crate::cli_token;
 use crate::confirm;
 use crate::http;
 use crate::link;
@@ -221,7 +222,7 @@ fn dispatch(
         .iter()
         .chain(&op.body_positional)
         .chain(&op.fixed_body_fields);
-    let merged_body = merge_body_fields(body_fields, matches, data)?;
+    let merged_body = merge_body_fields(body_fields, matches, data, op.signed_body_field)?;
     let variadic_body = variadic_body_array_json(&op.variadic_body_array, matches);
     let data = variadic_body.as_deref().or(merged_body.as_deref()).or(data);
     let files: Vec<&str> = matches
@@ -250,7 +251,8 @@ fn dispatch(
                 "Note: no access token was resolved, so the real request would be unauthenticated.",
             );
         }
-        return describe_request(op, mode, &url, &query, body_source.as_ref());
+        let sent_with = token.is_some().then_some(referer);
+        return describe_request(op, mode, &url, &query, body_source.as_ref(), sent_with);
     }
 
     // Placed after the dry-run branch deliberately: a dry run sends
@@ -707,20 +709,40 @@ fn shown_value<'a>(name: &str, value: &'a str) -> &'a str {
 /// a note about it. So `-o json` gives a script an object to check before
 /// letting a real delete run, and a terminal gets one readable request
 /// line.
+///
+/// `sent_with` is the token's `referer`, when there is a token: `Some(Some(_))`
+/// for the CLI's own, `Some(None)` for the user's.
 fn describe_request(
     op: &Operation,
     mode: Mode,
     url: &str,
     query: &[(String, String)],
     body: Option<&BodySource<'_>>,
+    sent_with: Option<Option<&str>>,
 ) -> Result<()> {
     let method = op.method.to_ascii_uppercase();
-    let described = body.map(describe_body).transpose()?.flatten();
+    // A positional body is the whole body, typed as an argument: there is
+    // no `--data` it came from, and nothing else shows the text a person
+    // is about to send.
+    let from_arguments = op.body_positional.is_some();
+    let described = body
+        .map(|body| describe_body(body, from_arguments))
+        .transpose()?
+        .flatten();
+    // Only for a command that may go out on either token, where which one
+    // is not obvious from what was typed.
+    let token = sent_with.filter(|_| cli_token::may_use(&op.command()));
 
     let mut text = format!(
         "Dry run — nothing was sent.\n{method} {}",
         redacted_url(url, query)
     );
+    if let Some(referer) = token {
+        text.push_str(&match referer {
+            Some(referer) => format!("\nToken: the CLI's own, sent with Referer {referer}"),
+            None => "\nToken: yours".to_owned(),
+        });
+    }
     if let Some(described) = &described {
         text.push('\n');
         text.push_str(&described.text);
@@ -738,21 +760,21 @@ fn describe_request(
         })
         .collect();
 
-    output::emit(
-        mode,
-        &text,
-        serde_json::json!({
-            "dry_run": true,
-            "command": op.command(),
-            "method": method,
-            // No query string here — `query` carries that separately.
-            // Rejoining them would produce a URL nobody can use, since the
-            // token in it is redacted.
-            "url": url,
-            "query": shown_query,
-            "body": described.map(|described| described.json),
-        }),
-    )
+    let mut json = serde_json::json!({
+        "dry_run": true,
+        "command": op.command(),
+        "method": method,
+        // No query string here — `query` carries that separately.
+        // Rejoining them would produce a URL nobody can use, since the
+        // token in it is redacted.
+        "url": url,
+        "query": shown_query,
+        "body": described.map(|described| described.json),
+    });
+    if let Some(referer) = token {
+        json["token"] = serde_json::json!(if referer.is_some() { "cli" } else { "user" });
+    }
+    output::emit(mode, &text, json)
 }
 
 /// A request body, as the dry run reports it.
@@ -771,13 +793,30 @@ struct DescribedBody {
 /// call — exactly the surprise `--dry-run` is meant to rule out. The
 /// operations that take `--file` (sprites, upload chunks) are small, so
 /// the read costs nothing worth skipping.
-fn describe_body(source: &BodySource<'_>) -> Result<Option<DescribedBody>> {
+///
+/// `from_arguments` when a JSON body was built from the command's arguments
+/// alone, with no `--data`: it is then shown in full, in text as well.
+fn describe_body(source: &BodySource<'_>, from_arguments: bool) -> Result<Option<DescribedBody>> {
     Ok(match source {
         BodySource::Empty => None,
         BodySource::Json(data) => {
             let json: serde_json::Value = serde_json::from_str(data).map_err(|e| {
                 CliError::new("invalid_data", format!("Invalid JSON for --data: {e}"))
             })?;
+            if from_arguments {
+                return Ok(Some(DescribedBody {
+                    text: format!(
+                        "Body ({JSON_CONTENT_TYPE}):\n{}",
+                        serde_json::to_string_pretty(&json)?
+                    ),
+                    json: serde_json::json!({
+                        "source": "arguments",
+                        "content_type": JSON_CONTENT_TYPE,
+                        "bytes": data.len(),
+                        "json": json,
+                    }),
+                }));
+            }
             Some(DescribedBody {
                 text: format!(
                     "Body: {} bytes of {JSON_CONTENT_TYPE} from --data",
@@ -1017,10 +1056,12 @@ fn variadic_body_array_json(
 
 /// `--data` with the body-field flags set on it, or `None` if nothing was
 /// set. A flag wins over `--data`; a default fills only what neither set.
+/// The `signed` property, when one was set, carries [`signature`].
 fn merge_body_fields<'a>(
     fields: impl IntoIterator<Item = &'a Parameter>,
     matches: &ArgMatches,
     data: Option<&str>,
+    signed: Option<&str>,
 ) -> Result<Option<String>> {
     let mut fields = fields.into_iter().peekable();
     if fields.peek().is_none() {
@@ -1058,6 +1099,9 @@ fn merge_body_fields<'a>(
             (None, _) => continue,
         };
         let value = match field.numeric {
+            None if signed == Some(field.name.as_str()) => {
+                serde_json::Value::String(format!("{raw}{}", signature()))
+            }
             None => serde_json::Value::String(raw.clone()),
             Some(_) => serde_json::from_str::<serde_json::Number>(raw)
                 .map(serde_json::Value::Number)
@@ -1074,6 +1118,17 @@ fn merge_body_fields<'a>(
     }
 
     Ok(changed.then(|| serde_json::Value::Object(body).to_string()))
+}
+
+/// What a [`crate::spec::Operation::signed_body_field`] ends with: the CLI's
+/// version and OS, which a report about the CLI needs and the Feedback API
+/// has no field for.
+fn signature() -> String {
+    format!(
+        "\n\n— mapbox-cli {} on {}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS
+    )
 }
 
 /// Picks between `--data` and `--file` for an operation that takes a body.
@@ -2034,7 +2089,8 @@ mod tests {
     /// let it pass and fail later.
     #[test]
     fn a_dry_run_rejects_the_json_that_sending_would_reject() {
-        let err = describe_body(&BodySource::Json("{oops")).expect_err("invalid JSON is refused");
+        let err =
+            describe_body(&BodySource::Json("{oops"), false).expect_err("invalid JSON is refused");
         assert_eq!(refusal(err).code, "invalid_data");
     }
 
@@ -2042,10 +2098,13 @@ mod tests {
     /// a metadata check would wave an unreadable file through.
     #[test]
     fn a_dry_run_rejects_a_file_that_cannot_be_read() {
-        let err = describe_body(&BodySource::Raw {
-            path: "/nonexistent/zz-clitest.svg",
-            content_type: "image/svg+xml",
-        })
+        let err = describe_body(
+            &BodySource::Raw {
+                path: "/nonexistent/zz-clitest.svg",
+                content_type: "image/svg+xml",
+            },
+            false,
+        )
         .expect_err("an unreadable file is refused");
         assert_eq!(refusal(err).code, "invalid_file");
     }
@@ -2053,7 +2112,7 @@ mod tests {
     /// A "Body:" line on every `delete` would just be noise.
     #[test]
     fn a_body_that_was_never_given_is_not_described() {
-        assert!(describe_body(&BodySource::Empty)
+        assert!(describe_body(&BodySource::Empty, false)
             .expect("an absent body is not an error")
             .is_none());
     }
@@ -2071,10 +2130,13 @@ mod tests {
         std::fs::write(&icon, b"<svg/>").expect("write icon");
         let path = icon.to_str().expect("utf-8 temp path");
 
-        let described = describe_body(&BodySource::Multipart {
-            paths: vec![path],
-            field: "images",
-        })
+        let described = describe_body(
+            &BodySource::Multipart {
+                paths: vec![path],
+                field: "images",
+            },
+            false,
+        )
         .expect("a readable file describes")
         .expect("a multipart body is described");
 
@@ -2318,12 +2380,31 @@ mod tests {
             .arg(clap::Arg::new("lat").long("lat"))
             .arg(clap::Arg::new("category").long("category"))
             .get_matches_from(std::iter::once("create").chain(args.iter().copied()));
-        merge_body_fields(&fields, &matches, data)
+        merge_body_fields(&fields, &matches, data, None)
     }
 
     #[test]
     fn nothing_to_set_leaves_data_as_typed() {
         assert_eq!(merge(&[], Some(r#"{"lat": 1.50}"#)).unwrap(), None);
+    }
+
+    #[test]
+    fn a_signed_field_ends_with_the_version_and_os() {
+        let matches = clap::Command::new("report")
+            .arg(clap::Arg::new("category").long("category"))
+            .get_matches_from(["report", "--category", "bug"]);
+        let body = merge_body_fields(&[param("category")], &matches, None, Some("category"))
+            .unwrap()
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            body["category"],
+            format!(
+                "bug\n\n— mapbox-cli {} on {}",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS
+            )
+        );
     }
 
     #[test]

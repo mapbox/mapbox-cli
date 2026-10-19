@@ -110,6 +110,11 @@ const CLI_TOKEN_COMMANDS: &[(&str, Use, &str)] = &[(
      logged in.",
 )];
 
+/// Whether `command` may run on the CLI's token at all.
+pub(crate) fn may_use(command: &str) -> bool {
+    use_for(command).is_some()
+}
+
 fn use_for(command: &str) -> Option<Use> {
     CLI_TOKEN_COMMANDS
         .iter()

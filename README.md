@@ -330,10 +330,12 @@ mapbox report "I'd like support for optimization commands"
 mapbox report "tilesets query hangs behind my proxy" --category bug
 ```
 
-The message goes to the Mapbox CLI team, not to your account, so
+The message goes to the Mapbox CLI team, with the CLI's version and OS
+appended, and is filed under Mapbox's account, not yours, so
 `mapbox feedback list` won't show it. It is sent with the CLI's own token,
 so it needs no login; yours stands in while the CLI's can't be used, or
-when you pass `--token` or `--use-login`. See
+when you pass `--token` or `--use-login`, and the request then carries your
+token. See
 [Report](./docs/commands.md#report).
 
 ### Shell completion
@@ -489,9 +491,10 @@ and `--dry-run` show it alongside everything else on the request.
 
 ### The CLI's own requests
 
-Requests the CLI makes for itself rather than for your commands use your own
-token whenever you have one: `--token` or `MAPBOX_ACCESS_TOKEN`, then your
-login. Only when you have none does it use the CLI's token:
+The CLI has a token of its own, for requests it makes for itself. Telemetry
+uses your own token whenever you have one: `--token` or
+`MAPBOX_ACCESS_TOKEN`, then your login. Only when you have none does it use
+the CLI's token:
 `MAPBOX_CLI_TOKEN`, or a public token fetched from
 `https://cli.mapbox.com/config/token.json` and kept in
 `~/.mapbox/cli-token.json`. It is replaced only when the Tokens API says it
@@ -501,8 +504,9 @@ third in a row pauses telemetry's sending with it for an hour, as three
 fetches in a row that find no usable token pause fetching. The token is
 restricted to `https://cli.mapbox.com/`, so every request with it carries
 that as its `Referer`. The CLI's token is only used for what
-`src/cli_token.rs` lists for it: telemetry, and `mapbox report`, which
-prefers it to yours and falls back to yours while it can't be used.
+`src/cli_token.rs` lists for it: telemetry, and `mapbox report`, which is
+the other way around: it prefers the CLI's token to yours and falls back to
+yours while the CLI's can't be used.
 
 ### Proxies
 

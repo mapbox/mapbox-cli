@@ -537,22 +537,110 @@ fn report_sends_the_message_to_the_cli_endpoint() {
         defaults["url"],
         "https://api.mapbox.com/user-feedback/v1/cli-feedback"
     );
+    let feedback = format!(
+        "A test\n\n— mapbox-cli {} on {}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS
+    );
     assert_eq!(
         defaults["body"]["json"],
-        serde_json::json!({ "feedback": "A test", "lat": 0, "lon": 0, "category": "general" })
+        serde_json::json!({ "feedback": feedback, "lat": 0, "lon": 0, "category": "general" })
     );
+    assert_eq!(defaults["body"]["source"], "arguments");
+    assert_eq!(defaults["token"], "user");
 
     let categorized = plan(&["--category", "bug"]);
     assert_eq!(categorized["body"]["json"]["category"], "bug");
 }
 
+/// A terminal's dry run shows the message as it would be sent, and which
+/// token it would go with, rather than only the body's size.
+#[test]
+fn report_dry_run_shows_the_body_and_token_in_text() {
+    let config = config_dir("report-text");
+    let out = run(
+        &config,
+        &[
+            "-o",
+            "text",
+            "--token",
+            "sk.a-test-token",
+            "report",
+            "--dry-run",
+            "A test",
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("Token: yours"), "{text}");
+    assert!(
+        text.contains(r#""feedback": "A test\n\n— mapbox-cli "#),
+        "{text}"
+    );
+    assert!(!text.contains("--data"), "{text}");
+}
+
+/// Clap names only `-x` of `"-x is broken"` and would have it passed alone;
+/// the tip quotes the whole message.
+#[test]
+fn report_says_how_to_send_a_message_starting_with_a_dash() {
+    let config = config_dir("report-dash");
+    let out = run(
+        &config,
+        &[
+            "-o",
+            "json",
+            "--token",
+            "sk.a-test-token",
+            "report",
+            "--dry-run",
+            "-x is broken",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    let fix = json(&stderr(&out))["fix"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        fix.contains("'-x is broken'") && fix.contains("'--'"),
+        "{fix}"
+    );
+
+    let out = run(
+        &config,
+        &[
+            "-o",
+            "json",
+            "--token",
+            "sk.a-test-token",
+            "report",
+            "--dry-run",
+            "--",
+            "-x is broken",
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let feedback = json(&stdout(&out))["body"]["json"]["feedback"].clone();
+    assert!(
+        feedback
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("-x is broken\n"),
+        "{feedback}"
+    );
+}
+
 /// The positional is the whole body; a `--data` would be a second way to
-/// say it, or a way to send a place this endpoint has no use for.
+/// say it, or a way to send a place this endpoint has no use for. An empty
+/// message is refused before anything is sent.
 #[test]
 fn report_needs_a_message_and_takes_no_data() {
     let config = config_dir("report-usage");
     for args in [
         &["--token", "sk.a-test-token", "report", "--dry-run"][..],
+        &["--token", "sk.a-test-token", "report", "--dry-run", ""][..],
+        &["--token", "sk.a-test-token", "report", "--dry-run", " \n "][..],
         &[
             "--token",
             "sk.a-test-token",
@@ -643,6 +731,22 @@ mod report_token {
         assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
         assert!(stdout(&out).is_empty(), "{}", stdout(&out));
         assert_eq!(error_code(&out), "cli_token_unavailable");
+        let error = json(&stderr(&out));
+        assert!(
+            error["fix"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("--token"),
+            "{error}"
+        );
+        assert_eq!(error["next_actions"][0], "mapbox auth login");
+        assert!(
+            !error["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("CLI's token"),
+            "{error}"
+        );
     }
 
     /// The CLI's token is restricted to its URL, so a request with it says

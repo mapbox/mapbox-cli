@@ -2015,10 +2015,12 @@ that spec is wired in.
 
 ### `mapbox report`
 
-Sends one message. It is filed under a Mapbox account, not yours, so
-`mapbox feedback list` won't show it, and no `user-feedback:write` scope is
-needed. There is no way to read it back or delete it, so `--dry-run` shows
-the body without sending it.
+Sends one message, with the CLI's version and OS appended to it
+(`— mapbox-cli <version> on <os>`). It is filed under a Mapbox account, not
+yours, so `mapbox feedback list` won't show it, and no `user-feedback:write`
+scope is needed. There is no way to read it back or delete it, so
+`--dry-run` shows the body, and which token it would go with, without
+sending it.
 
 It is sent with the CLI's own token, not yours, so it works without a
 login. A typed `--token` or `--use-login` sends with yours instead, and the
@@ -2027,15 +2029,19 @@ the CLI's token, a fresh one is fetched there and then and the message sent
 again with it, so a token that was republished or fixed works at once.
 A `MAPBOX_CLI_TOKEN` override is sent as it is and never replaced.
 When the CLI's token still can't be used — it can't be fetched, it is
-revoked with no new one yet, or this API refuses it — your own token is
-used instead, and with none the command fails with `cli_token_unavailable`
-or `cli_token_forbidden`. Each run tries the CLI's token again; nothing
-here is put off for later.
+revoked with no new one yet, this API refuses it, or it is rate-limited
+(`429`) — your own token is used instead, so the request then carries
+your token, though the message is still filed under Mapbox's account. With
+none of your own, the command fails with `cli_token_unavailable` or
+`cli_token_forbidden`, or with the `429` itself. Each run tries the CLI's
+token again; nothing here is put off for later.
 
 #### Parameters
 
 `<message>` (positional, required) — what you want to tell the team.
-Quote it.
+Quote it. An empty one is refused. One that starts with `-` goes after
+`--`, with every flag before it: `mapbox report --category bug -- "-x is
+ignored"`.
 
 | Flag | Effect |
 | --- | --- |

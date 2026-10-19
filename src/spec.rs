@@ -39,6 +39,9 @@ pub struct Operation {
     /// JSON body properties sent with a fixed value and never typed. See
     /// [`FIXED_BODY_FIELDS`].
     pub fixed_body_fields: Vec<Parameter>,
+    /// A string body property sent with the CLI's version and OS appended.
+    /// See [`SIGNED_BODY_FIELDS`].
+    pub signed_body_field: Option<&'static str>,
     pub base_url: String,
     /// Set when the operation needs a scope that isn't registrable as OAuth
     /// (see `UNSUPPORTED_OPERATIONS` below). A `mapbox auth login` token can
@@ -120,6 +123,12 @@ type FixedBodyField = (&'static str, &'static str);
 /// the API still requires `lat`/`lon` — see [`BODY_FIELD_FLAGS`] for why 0.
 const FIXED_BODY_FIELDS: &[(&str, &str, &[FixedBodyField])] =
     &[("report", "report", &[("lat", "0"), ("lon", "0")])];
+
+/// (service, operationId, body field name) for a string body property sent
+/// with the CLI's version and OS appended. A report about the CLI is little
+/// use without them, and the Feedback API has no field of its own for
+/// either, so they go in the text, where `--dry-run` shows them too.
+const SIGNED_BODY_FIELDS: &[(&str, &str, &str)] = &[("report", "report", "feedback")];
 
 /// (service, operationId, body field name, CLI positional name, max count)
 /// for an operation whose JSON body takes a single array field, exposed as
@@ -1252,6 +1261,8 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
                 variadic_body_array,
                 body_positional,
                 fixed_body_fields,
+                signed_body_field: operation_id
+                    .and_then(|id| signed_body_field_name(service_name, id)),
                 base_url: base_url.clone(),
                 disabled_scope,
                 detail: None,
@@ -1350,6 +1361,13 @@ fn positional_body_field_names(
         .iter()
         .find(|(s, id, _, _)| *s == service && *id == operation_id)
         .map(|(_, _, field, arg_name)| (*field, *arg_name))
+}
+
+fn signed_body_field_name(service: &str, operation_id: &str) -> Option<&'static str> {
+    SIGNED_BODY_FIELDS
+        .iter()
+        .find(|(s, id, _)| *s == service && *id == operation_id)
+        .map(|(_, _, field)| *field)
 }
 
 fn fixed_body_field_values(service: &str, operation_id: &str) -> Option<&'static [FixedBodyField]> {
@@ -2195,6 +2213,7 @@ requestBody:
 
         let flags: Vec<&str> = op.body_fields.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(flags, ["category"]);
+        assert_eq!(op.signed_body_field, Some("feedback"));
 
         let fixed: Vec<(&str, Option<&str>, Option<Numeric>)> = op
             .fixed_body_fields

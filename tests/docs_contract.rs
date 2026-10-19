@@ -72,6 +72,7 @@ fn schema() -> Value {
         .env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env_remove("MAPBOX_CLI_TOKEN")
         .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/")
         .env_remove("MAPBOX_ACCESS_TOKEN")
         .env_remove("MapboxAccessToken")
         .env_remove("MAPBOX_USERNAME")

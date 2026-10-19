@@ -85,6 +85,7 @@ fn command(home: &Path) -> Command {
         // Telemetry stays on, as it is for a user, but goes nowhere.
         .env_remove("MAPBOX_CLI_TOKEN")
         .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/")
         .env("MAPBOX_INTERNAL_TELEMETRY_URL", "http://127.0.0.1:9/")
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
@@ -449,6 +450,7 @@ fn under_a_pty(
             .env_remove("MAPBOX_CLI_NO_TELEMETRY")
             .env_remove("MAPBOX_CLI_TOKEN")
             .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+            .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/")
             .env("MAPBOX_INTERNAL_TELEMETRY_URL", "http://127.0.0.1:9/")
             .env("HOME", home)
             .env("MAPBOX_CONFIG_DIR", config_dir(home))

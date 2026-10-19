@@ -482,8 +482,10 @@ login. Only when you have none does it use the CLI's token:
 `MAPBOX_CLI_TOKEN`, or a public token fetched from
 `https://cli.mapbox.com/config/token.json` and kept in
 `~/.mapbox/cli-token.json`. It is replaced only when the Tokens API says it
-is revoked, invalid or expired, not when one API refuses it. The CLI's token
-is only used for what `src/cli_token.rs` lists for it, today just telemetry.
+is revoked, invalid, expired or malformed, not when one API refuses it; an
+API that refuses a valid one is not sent it again for an hour at first, and
+for a day after repeated refusals. The CLI's token is only used for what
+`src/cli_token.rs` lists for it, today just telemetry.
 
 ### Proxies
 

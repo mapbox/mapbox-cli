@@ -32,6 +32,7 @@
 //! the CLI's token, or only fails to reach the endpoint, still leaves no
 //! trace. See [`write_state`].
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -73,6 +74,9 @@ pub(crate) enum Unavailable {
     Waiting { retry_at: u64, revoked: bool },
     /// None on disk, and the caller asked not to fetch, as a dry run does.
     NotFetched,
+    /// This caller's API refused the token while the Tokens API called it
+    /// valid, so it rests from it until `until` (Unix seconds).
+    Resting { until: u64 },
 }
 
 impl std::fmt::Display for Unavailable {
@@ -90,6 +94,11 @@ impl std::fmt::Display for Unavailable {
                 wait_text(retry_at.saturating_sub(now()))
             ),
             Self::NotFetched => write!(f, "it has not been fetched yet"),
+            Self::Resting { until } => write!(
+                f,
+                "this API refused it recently; trying it again in {}",
+                wait_text(until.saturating_sub(now()))
+            ),
         }
     }
 }
@@ -114,12 +123,16 @@ struct State {
     /// never sets it: the API may only be refusing it for one endpoint.
     #[serde(default)]
     rejected: bool,
-    /// Unix seconds when the Tokens API last called `token` valid after an
-    /// API refused it. For an hour after, a refusal is taken to mean the same
-    /// without asking again, so telemetry refused by Events on every run
-    /// does not cost a check on every run too.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    valid_at: u64,
+    /// Who is resting from using `token`, by the name [`cooling`] takes:
+    /// an API refused it while the Tokens API called it valid. Cleared with
+    /// a new token, which that API may accept.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    cooldowns: BTreeMap<String, Cooldown>,
+    /// Whether it was written with an endpoint overridden ([`overridden`]).
+    /// A dev build pointed at staging and an installed release share this
+    /// file, and neither is to trust the other's token or verdicts.
+    #[serde(default)]
+    overridden: bool,
     /// Consecutive fetches that found nothing usable.
     #[serde(default)]
     failures: u32,
@@ -137,12 +150,57 @@ impl State {
 
     fn fail(&mut self, now: u64) {
         self.failures += 1;
-        let wait = if self.failures.is_multiple_of(HOURLY_RETRIES + 1) {
-            DAY
-        } else {
-            HOUR
-        };
-        self.retry_at = now + wait;
+        self.retry_at = now + backoff(self.failures);
+    }
+}
+
+/// One caller's rest from the CLI's token, after an API refused a token the
+/// Tokens API called valid.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Cooldown {
+    /// Consecutive refusals, which pace the rest as [`backoff`] does.
+    failures: u32,
+    /// Unix seconds before which it is not used again.
+    until: u64,
+}
+
+/// The wait after `failures` consecutive misses: an hour three times, then
+/// a day, and again.
+fn backoff(failures: u32) -> u64 {
+    if failures.is_multiple_of(HOURLY_RETRIES + 1) {
+        DAY
+    } else {
+        HOUR
+    }
+}
+
+/// Whether `caller` — `telemetry`, or a command's name — is resting from the
+/// CLI's token. While it is, it sends nothing with it, so nothing is
+/// refused, and nothing is checked.
+pub(crate) fn cooling(caller: &str) -> bool {
+    resting_until(caller).is_some()
+}
+
+/// When `caller`'s cooldown ends, while it has one.
+pub(crate) fn resting_until(caller: &str) -> Option<u64> {
+    let state = read_state()?;
+    let cooldown = state.cooldowns.get(caller)?;
+    rests(cooldown, now()).then_some(cooldown.until)
+}
+
+/// Whether a cooldown still holds at `now`. One further out than the longest
+/// wait is a clock that went backwards or an edited file, and is not honored.
+fn rests(cooldown: &Cooldown, now: u64) -> bool {
+    now < cooldown.until && cooldown.until <= now + DAY
+}
+
+/// Records that `caller`'s request with the saved `token` went through, which
+/// ends any cooldown it was counting.
+pub(crate) fn accepted(caller: &str, token: &str) {
+    if let Some(mut state) = read_state().filter(|state| state.token.as_deref() == Some(token)) {
+        if state.cooldowns.remove(caller).is_some() {
+            write_state(&state);
+        }
     }
 }
 
@@ -164,11 +222,6 @@ pub(crate) fn may_have_token() -> bool {
     state.usable_token().is_some() || !waiting(&state, now())
 }
 
-/// Whether `token` is the one kept on disk.
-pub(crate) fn is_saved(token: &str) -> bool {
-    read_state().is_some_and(|state| state.token.as_deref() == Some(token))
-}
-
 /// What a `401` or `403` to the CLI's token meant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Refusal {
@@ -179,31 +232,49 @@ pub(crate) enum Refusal {
     Forbidden,
     /// The Tokens API could not say. Nothing is changed.
     Unknown,
+    /// Not the fetched token, so not checked: `MAPBOX_CLI_TOKEN`, which a
+    /// developer set and a fetch cannot replace, and which may not even be a
+    /// production token.
+    NotFetched,
 }
 
-/// Asks the Tokens API why `token` was refused, and marks it when it is
-/// dead. A token other than the saved one is never marked.
-pub(crate) fn refused(token: &str) -> Refusal {
+/// Asks the Tokens API, at once, why `caller`'s request with the fetched
+/// `token` was refused. A dead token is marked, so the next [`token`]
+/// fetches a new one; a valid one starts or extends `caller`'s cooldown.
+pub(crate) fn refused(caller: &str, token: &str) -> Refusal {
     let now = now();
-    let saved = read_state().filter(|state| state.token.as_deref() == Some(token));
-    if saved
-        .as_ref()
-        .is_some_and(|state| recently_valid(state, now))
+    if read_state()
+        .filter(|state| state.token.as_deref() == Some(token))
+        .is_none()
     {
-        return Refusal::Forbidden;
+        return Refusal::NotFetched;
     }
-    let url =
-        http::url_override(TOKENS_URL_ENV).unwrap_or_else(|| auth::VALIDATION_ENDPOINT.to_owned());
-    let refusal = verdict(auth::token_code(&url, token, FETCH_TIMEOUT).as_deref());
-    if let Some(mut state) = saved {
+    let refusal = verdict(auth::token_code(&tokens_url(), token, FETCH_TIMEOUT).as_deref());
+    // Read again: the check can take seconds, and another run may have
+    // saved a new token meanwhile, which this must not write over.
+    if let Some(mut state) = read_state().filter(|state| state.token.as_deref() == Some(token)) {
         match refusal {
             Refusal::Dead => state.rejected = true,
-            Refusal::Forbidden => state.valid_at = now,
-            Refusal::Unknown => return refusal,
+            Refusal::Forbidden => {
+                let cooldown = state.cooldowns.entry(caller.to_owned()).or_default();
+                cooldown.failures += 1;
+                cooldown.until = now + backoff(cooldown.failures);
+            }
+            Refusal::Unknown | Refusal::NotFetched => return refusal,
         }
         write_state(&state);
     }
     refusal
+}
+
+fn tokens_url() -> String {
+    http::url_override(TOKENS_URL_ENV).unwrap_or_else(|| auth::VALIDATION_ENDPOINT.to_owned())
+}
+
+/// Whether either endpoint is overridden from the environment, as only a
+/// build that is not a production release allows.
+fn overridden() -> bool {
+    http::url_override(URL_ENV).is_some() || http::url_override(TOKENS_URL_ENV).is_some()
 }
 
 fn verdict(code: Option<&str>) -> Refusal {
@@ -212,16 +283,6 @@ fn verdict(code: Option<&str>) -> Refusal {
         Some("TokenRevoked" | "TokenInvalid" | "TokenExpired" | "TokenMalformed") => Refusal::Dead,
         _ => Refusal::Unknown,
     }
-}
-
-/// Whether the Tokens API called the saved token valid within the hour. A
-/// time in the future is a clock that went backwards, and is not trusted.
-fn recently_valid(state: &State, now: u64) -> bool {
-    state.valid_at != 0 && state.valid_at <= now && now - state.valid_at < HOUR
-}
-
-fn is_zero(value: &u64) -> bool {
-    *value == 0
 }
 
 /// The decision, with the clock and the network passed in.
@@ -316,7 +377,8 @@ fn state_path() -> Option<PathBuf> {
 /// file costs one fetch, which is not worth failing anything over.
 fn read_state() -> Option<State> {
     let text = std::fs::read_to_string(state_path()?).ok()?;
-    serde_json::from_str(&text).ok()
+    let state: State = serde_json::from_str(&text).ok()?;
+    (state.overridden == overridden()).then_some(state)
 }
 
 /// Best-effort: a read-only home directory costs a fetch per run, not an
@@ -329,6 +391,10 @@ fn read_state() -> Option<State> {
 /// file where the directory belongs leaves nothing to write into, and each
 /// run then fetches as if for the first time.
 fn write_state(state: &State) {
+    let state = &State {
+        overridden: overridden(),
+        ..state.clone()
+    };
     let Some(dir) = auth::config_dir_path() else {
         return;
     };
@@ -526,19 +592,20 @@ mod tests {
     }
 
     #[test]
-    fn a_valid_verdict_is_trusted_for_an_hour() {
-        let state = State {
-            valid_at: NOW,
-            ..saved("pk.a", false)
+    fn a_cooldown_rests_as_the_fetch_does_and_not_beyond_a_day() {
+        let waits: Vec<u64> = (1..=8).map(backoff).collect();
+        assert_eq!(waits, [HOUR, HOUR, HOUR, DAY, HOUR, HOUR, HOUR, DAY]);
+        let cooldown = Cooldown {
+            failures: 1,
+            until: NOW + HOUR,
         };
-        assert!(recently_valid(&state, NOW));
-        assert!(recently_valid(&state, NOW + HOUR - 1));
-        assert!(!recently_valid(&state, NOW + HOUR));
-        assert!(
-            !recently_valid(&state, NOW - 1),
-            "a clock that went backwards"
-        );
-        assert!(!recently_valid(&saved("pk.a", false), NOW), "never checked");
+        assert!(rests(&cooldown, NOW));
+        assert!(!rests(&cooldown, NOW + HOUR));
+        let edited = Cooldown {
+            failures: 1,
+            until: u64::MAX,
+        };
+        assert!(!rests(&edited, NOW), "a wait beyond a day is not honored");
     }
 
     #[test]
@@ -563,7 +630,14 @@ mod tests {
             rejected: true,
             failures: 2,
             retry_at: 7,
-            valid_at: 0,
+            cooldowns: BTreeMap::from([(
+                "telemetry".to_owned(),
+                Cooldown {
+                    failures: 1,
+                    until: 9,
+                },
+            )]),
+            overridden: true,
         };
         let text = serde_json::to_string(&state).unwrap();
         assert_eq!(serde_json::from_str::<State>(&text).unwrap(), state);

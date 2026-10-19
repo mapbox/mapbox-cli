@@ -106,8 +106,9 @@ may write to stdout, which must carry a request id into an error, that every
 telemetry marker is disclosed in README.md, that every end-to-end test file
 that runs the binary either sets `MAPBOX_CLI_NO_TELEMETRY=1` or points
 `MAPBOX_INTERNAL_TELEMETRY_URL` at loopback (so CI can't fire a real event by
-accident), that every such file points `MAPBOX_INTERNAL_CLI_TOKEN_URL` at
-loopback (so CI can't fetch the CLI's token), and that the prose is American
+accident), that every such file points `MAPBOX_INTERNAL_CLI_TOKEN_URL` and
+`MAPBOX_INTERNAL_TOKENS_URL` at loopback (so CI can't fetch or check the
+CLI's token), and that the prose is American
 English.
 
 They read `src/` recursively and name a file by its path under it

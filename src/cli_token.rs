@@ -48,7 +48,7 @@ use crate::{auth, http};
 
 mod fetch;
 
-pub(crate) use fetch::{refused, Refusal, Unavailable};
+pub(crate) use fetch::{accepted, refused, Refusal, Unavailable};
 
 /// One place [`send`] may take a token from. A caller passes them in the
 /// order to try.
@@ -62,6 +62,9 @@ pub(crate) enum Fallback {
     /// CLI's account, so it only ever comes after every token of the user's.
     CliToken,
 }
+
+/// Telemetry's name as a caller of the CLI's token, for its cooldown.
+pub(crate) const TELEMETRY_CALLER: &str = "telemetry";
 
 /// Telemetry's order. The CLI's own usage data, so there is no user's
 /// account to bill when the user has no token.
@@ -104,10 +107,10 @@ fn use_for(command: &str) -> Option<Use> {
 /// already at hand is returned then.
 pub(crate) fn for_command(command: &str, fetch: bool) -> Option<Result<String, Unavailable>> {
     match use_for(command)? {
-        Use::Preferred => Some(cli_token(
-            std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref(),
-            fetch,
-        )),
+        Use::Preferred => Some(match fetch::resting_until(command) {
+            Some(until) => Err(Unavailable::Resting { until }),
+            None => cli_token(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref(), fetch),
+        }),
     }
 }
 
@@ -147,31 +150,47 @@ pub(crate) fn user_token(matches: &clap::ArgMatches) -> Option<String> {
 /// request could not be sent at all; otherwise the first answer that was not
 /// a `401`, or the last `401` when every token was rejected.
 pub(crate) fn send(
+    caller: &str,
     order: &[Fallback],
     user_token: Option<&str>,
     profile: Option<&str>,
     request: impl Fn() -> RequestBuilder,
 ) -> Option<reqwest::Result<Response>> {
     let override_token = std::env::var("MAPBOX_CLI_TOKEN").ok();
-    resolve(
+    let dead = std::cell::RefCell::new(None);
+    let mut attempt = |token: &str| {
+        let response = http::send(request().query(&[("access_token", token)]));
+        if let Ok(r) = &response {
+            if !is_refusal(r.status()) {
+                fetch::accepted(caller, token);
+            } else if fetch::refused(caller, token) == Refusal::Dead {
+                *dead.borrow_mut() = Some(token.to_owned());
+            }
+        }
+        response
+    };
+    let answer = resolve(
         order,
         Sources {
             user: user_token,
             override_token: override_token.as_deref(),
         },
         || login_token(profile),
-        || fetch::token(true).ok(),
-        |token| {
-            let response = http::send(request().query(&[("access_token", token)]));
-            if let Ok(r) = &response {
-                if is_refusal(r.status()) && is_cli_token(token) {
-                    fetch::refused(token);
-                }
-            }
-            response
-        },
+        // A caller resting from the CLI's token sends nothing with it.
+        || (!fetch::cooling(caller)).then(|| fetch::token(true).ok())?,
+        &mut attempt,
         |response| response.status() == StatusCode::UNAUTHORIZED,
-    )
+    );
+    // A dead token is replaced at once, and the request sent once more.
+    match dead.take() {
+        Some(dead) if matches!(&answer, Some(Ok(r)) if is_refusal(r.status())) => {
+            match fetch::token(true) {
+                Ok(fresh) if fresh != dead => Some(attempt(&fresh)),
+                _ => answer,
+            }
+        }
+        _ => answer,
+    }
 }
 
 /// Whether [`send`] has a token it could try in `order`, judged without the
@@ -179,6 +198,7 @@ pub(crate) fn send(
 /// find nothing to send with. A login counts by being there: it may still turn
 /// out expired and unrefreshable, and then nothing is sent.
 pub(crate) fn has_token_for(
+    caller: &str,
     order: &[Fallback],
     user_token: Option<&str>,
     profile: Option<&str>,
@@ -188,7 +208,7 @@ pub(crate) fn has_token_for(
         Fallback::Login => auth::load_credentials_readonly(profile).is_some(),
         Fallback::CliToken => {
             usable(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref()).is_some()
-                || fetch::may_have_token()
+                || (!fetch::cooling(caller) && fetch::may_have_token())
         }
     })
 }
@@ -276,13 +296,6 @@ fn resolve<R, E>(
 /// A `401` or `403`: the answers [`refused`] can explain.
 pub(crate) fn is_refusal(status: StatusCode) -> bool {
     status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN
-}
-
-/// Whether `token` is the CLI's rather than one of the user's, which must
-/// never be sent to the Tokens API on the CLI's behalf.
-fn is_cli_token(token: &str) -> bool {
-    usable(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref()) == Some(token)
-        || fetch::is_saved(token)
 }
 
 fn usable(token: Option<&str>) -> Option<&str> {

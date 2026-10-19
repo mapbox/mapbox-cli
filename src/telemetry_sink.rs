@@ -170,7 +170,12 @@ pub(crate) fn deliver(line: &str, profile: Option<&str>) {
         None if std::env::args_os().any(|arg| arg == "--use-login") => None,
         None => auth::environment_token().map(|(_, token)| token),
     };
-    if cli_token::has_token_for(cli_token::TELEMETRY, user_token.as_deref(), profile) {
+    if cli_token::has_token_for(
+        cli_token::TELEMETRY_CALLER,
+        cli_token::TELEMETRY,
+        user_token.as_deref(),
+        profile,
+    ) {
         HttpSink {
             url,
             user_token,
@@ -232,6 +237,7 @@ fn post(url: &str, envelope: &Envelope) -> Result<(u16, Duration), String> {
     let client = http::client().map_err(|err| err.to_string())?;
     let started = Instant::now();
     let response = cli_token::send(
+        cli_token::TELEMETRY_CALLER,
         cli_token::TELEMETRY,
         envelope.user_token.as_deref(),
         envelope.profile.as_deref(),

@@ -86,7 +86,8 @@ fn run(stub: &Path, marker: &Path, get_exit: &str, add_exit: &str, args: &[&str]
     // Telemetry is not under test here, and would post to Mapbox.
     cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env_remove("MAPBOX_CLI_TOKEN")
-        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/");
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/");
     isolate_every_client(&mut cmd);
     cmd.arg("mcp")
         .args(args)
@@ -252,7 +253,8 @@ fn a_client_not_on_path_is_skipped_and_named() {
     // Telemetry is not under test here, and would post to Mapbox.
     cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env_remove("MAPBOX_CLI_TOKEN")
-        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/");
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/");
     isolate_every_client(&mut cmd);
     let output = cmd
         .args(["mcp", "install"])
@@ -347,7 +349,8 @@ fn run_codex(
     // Telemetry is not under test here, and would post to Mapbox.
     cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env_remove("MAPBOX_CLI_TOKEN")
-        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/");
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/");
     isolate_every_client(&mut cmd);
     cmd.arg("mcp")
         .args(args)
@@ -493,7 +496,8 @@ fn run_vscode(
     // Telemetry is not under test here, and would post to Mapbox.
     cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env_remove("MAPBOX_CLI_TOKEN")
-        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/");
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/");
     isolate_every_client(&mut cmd);
     cmd.arg("mcp")
         .args(args)
@@ -720,7 +724,8 @@ fn cursor_reads_its_own_settings_json_shape() {
     // Telemetry is not under test here, and would post to Mapbox.
     cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env_remove("MAPBOX_CLI_TOKEN")
-        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/");
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/");
     isolate_every_client(&mut cmd);
     let output = cmd
         .arg("mcp")

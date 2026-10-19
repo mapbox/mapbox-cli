@@ -22,11 +22,20 @@ that may never merge. They are not releases and are not listed here.
 - The CLI's own token, used for telemetry when you have no token of your
   own, is now fetched from `https://cli.mapbox.com/config/token.json` and
   kept in `~/.mapbox/cli-token.json` instead of being built into the binary,
-  so it can be rotated without a release. It is replaced only when the
-  Tokens API says it is revoked, invalid or expired; a single API refusing
-  it is not enough. If the endpoint still serves the dead token, it is asked
-  again hourly three times, then daily. A build from source now fetches it
-  too.
+  so it can be rotated without a release. What changes for an existing
+  setup:
+  - `MAPBOX_CLI_BUNDLED_TOKEN` is no longer read at build time. A build
+    from source fetches the token like a release does.
+  - Keeping the token creates `~/.mapbox` if it is missing, even on a run
+    whose only network use is telemetry.
+  - When an API refuses the token, the Tokens API is asked why. Only a
+    revoked, invalid, expired or malformed token is replaced, at once. If
+    the endpoint still serves the dead token, it is asked again hourly
+    three times, then daily. A valid token that an API refuses is not used
+    for that API on the same schedule.
+  - Two new error codes, for commands that use the CLI's token:
+    `cli_token_unavailable` and `cli_token_forbidden`. See
+    [Errors](docs/commands.md#errors).
 
 - `tilesets query` renders as a numbered list under `-o text` again, as
   documented. It had printed pretty JSON since 0.2.0, when the command moved

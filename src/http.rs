@@ -326,28 +326,10 @@ fn override_unless_production(production: bool, value: Option<String>) -> Option
 }
 
 /// `MAPBOX_CLI_BUILD_ENV` is how the release pipeline marks a production
-/// build; see `update_check`.
-const fn is_production_build() -> bool {
-    match option_env!("MAPBOX_CLI_BUILD_ENV") {
-        Some(env) => same(env, "production"),
-        None => false,
-    }
-}
-
-/// `==` on `&str`, which is not available in a `const` context.
-const fn same(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
+/// build, read at compile time, so outside a release this is a constant
+/// `false`.
+pub(crate) fn is_production_build() -> bool {
+    option_env!("MAPBOX_CLI_BUILD_ENV") == Some("production")
 }
 
 #[cfg(test)]

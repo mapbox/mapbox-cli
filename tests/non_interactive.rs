@@ -36,7 +36,8 @@ fn command(home: &Path) -> Command {
     // Telemetry is not under test here, and would post to Mapbox.
     cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env_remove("MAPBOX_CLI_TOKEN")
-        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/");
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/");
     cmd.env_remove("MAPBOX_ACCESS_TOKEN")
         .env_remove("MapboxAccessToken")
         .env_remove("MAPBOX_USERNAME")
@@ -353,6 +354,7 @@ fn under_a_pty(home: &Path, out_path: &Path, args: &str, expect: &str) -> Option
             .env_remove("MAPBOX_YES")
             .env_remove("MAPBOX_CLI_TOKEN")
             .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+            .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/")
             .env("MAPBOX_CLI_NO_TELEMETRY", "1")
             .env("HOME", home)
             .env("MAPBOX_CONFIG_DIR", home.join("config"))

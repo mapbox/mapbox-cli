@@ -48,7 +48,8 @@ fn command() -> Command {
     // Telemetry is not under test here, and would post to Mapbox.
     cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env_remove("MAPBOX_CLI_TOKEN")
-        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/");
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/");
     cmd.env_remove("MAPBOX_ACCESS_TOKEN")
         .env_remove("MapboxAccessToken")
         .env_remove("MAPBOX_USERNAME")
@@ -107,6 +108,7 @@ fn a_file_where_the_credential_directory_goes_fails_before_the_browser() {
         .env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env_remove("MAPBOX_CLI_TOKEN")
         .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/")
         .args(["-o", "text", "auth", "login"])
         .env_remove("MAPBOX_ACCESS_TOKEN")
         .env_remove("MapboxAccessToken")
@@ -165,6 +167,7 @@ fn a_command_that_is_not_about_credentials_warns_in_one_line() {
         .env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env_remove("MAPBOX_CLI_TOKEN")
         .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/")
         .args(["-o", "text", "styles", "list"])
         .env_remove("MAPBOX_ACCESS_TOKEN")
         .env_remove("MapboxAccessToken")
@@ -475,6 +478,7 @@ fn without_an_agent_the_help_has_no_hint() {
     cmd.env_clear()
         .env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/")
         .env("HOME", &home)
         .env("MAPBOX_CONFIG_DIR", home.join(".mapbox"));
     // Windows processes expect this one; nothing reads it as an agent.

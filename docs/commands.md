@@ -2034,7 +2034,9 @@ revoked with no new one yet, this API refuses it, or it is rate-limited
 your token, though the message is still filed under Mapbox's account. With
 none of your own, the command fails with `cli_token_unavailable` or
 `cli_token_forbidden`, or with the `429` itself. Each run tries the CLI's
-token again; nothing here is put off for later.
+token again; nothing here is put off for later. Telemetry settings don't
+apply: the token is shared and public, and fetching it sends nothing about
+you.
 
 #### Parameters
 

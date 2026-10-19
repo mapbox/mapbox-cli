@@ -13,9 +13,12 @@
 //! the token itself, and only a revoked, invalid, expired or malformed one is
 //! replaced. A fetch right after a
 //! rotation can still return the revoked token: the edge caches the file for
-//! a few minutes, and the secret may not be republished yet. So when fetches
-//! answer with nothing usable three times running, the next waits an hour
-//! ([`backoff`]). A fetch that never got an answer
+//! a few minutes, and the secret may not be republished yet. So the dead
+//! token served again is checked once more, since a token called invalid for
+//! something fixed in the Console stays the same string; it is taken back if
+//! the Tokens API now calls it valid. When fetches answer with nothing usable
+//! three times running, the next waits an hour ([`backoff`]). A fetch that
+//! never got an answer
 //! does not count: that is this machine being offline, not the endpoint
 //! being stale, and it is asked again on the next run.
 //!
@@ -56,7 +59,7 @@ const STATE_FILE: &str = "cli-token.json";
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 
 const HOUR: u64 = 60 * 60;
-/// Hourly retries after a fetch that found nothing new, before waiting a day.
+/// Misses in a row before an hour's wait.
 const TRIES_BEFORE_WAITING: u32 = 3;
 
 /// Long enough for any `pk.` token; anything longer is not one.
@@ -80,6 +83,7 @@ struct State {
     token: Option<String>,
     /// Whether the Tokens API called `token` dead. A `401` or `403` alone
     /// never sets it: the API may only be refusing it for one endpoint.
+    /// Cleared if the endpoint serves it again and it now checks valid.
     #[serde(default)]
     rejected: bool,
     /// Who is resting from using `token`, by the name [`cooling`] takes:
@@ -166,7 +170,7 @@ pub(crate) fn accepted(caller: &str, token: &str) {
 pub(crate) fn token() -> Option<String> {
     let mut state = read_state().unwrap_or_default();
     let before = state.clone();
-    let token = acquire(&mut state, now(), || get(&endpoint()));
+    let token = acquire(&mut state, now(), || get(&endpoint()), check);
     if state != before {
         save_fetch(&before, state);
     }
@@ -236,9 +240,7 @@ pub(crate) fn refused(caller: &str, token: &str) -> Refusal {
     {
         return Refusal::NotFetched;
     }
-    let refusal = verdict(
-        auth::token_code(&tokens_url(), token, Some(super::REFERER), FETCH_TIMEOUT).as_deref(),
-    );
+    let refusal = check(token);
     // Read again: the check can take seconds, and another run may have
     // saved a new token meanwhile, which this must not write over.
     if let Some(mut state) = read_state().filter(|state| state.token.as_deref() == Some(token)) {
@@ -253,6 +255,11 @@ pub(crate) fn refused(caller: &str, token: &str) -> Refusal {
         write_state(&state);
     }
     refusal
+}
+
+/// What the Tokens API says about `token`. Never [`Refusal::NotFetched`].
+fn check(token: &str) -> Refusal {
+    verdict(auth::token_code(&tokens_url(), token, Some(super::REFERER), FETCH_TIMEOUT).as_deref())
 }
 
 fn tokens_url() -> String {
@@ -273,8 +280,13 @@ fn verdict(code: Option<&str>) -> Refusal {
     }
 }
 
-/// The decision, with the clock and the network passed in.
-fn acquire(state: &mut State, now: u64, get: impl FnOnce() -> Fetched) -> Option<String> {
+/// The decision, with the clock, the endpoint and the Tokens API passed in.
+fn acquire(
+    state: &mut State,
+    now: u64,
+    get: impl FnOnce() -> Fetched,
+    check: impl FnOnce(&str) -> Refusal,
+) -> Option<String> {
     if let Some(token) = state.usable_token() {
         return Some(token.to_owned());
     }
@@ -285,7 +297,8 @@ fn acquire(state: &mut State, now: u64, get: impl FnOnce() -> Fetched) -> Option
         Fetched::Failed => None,
         Fetched::Token(token)
             if is_plausible(&token)
-                && !(state.rejected && state.token.as_deref() == Some(token.as_str())) =>
+                && (!(state.rejected && state.token.as_deref() == Some(token.as_str()))
+                    || check(&token) == Refusal::Forbidden) =>
         {
             *state = State {
                 token: Some(token.clone()),
@@ -293,8 +306,8 @@ fn acquire(state: &mut State, now: u64, get: impl FnOnce() -> Fetched) -> Option
             };
             Some(token)
         }
-        // The rejected token again, something that is not a `pk.` token, or
-        // no token at all.
+        // The rejected token again and still not valid, something that is
+        // not a `pk.` token, or no token at all.
         Fetched::Token(_) | Fetched::Nothing => {
             state.fail(now);
             None
@@ -406,15 +419,36 @@ mod tests {
         }
     }
 
-    /// Runs [`acquire`] with an endpoint that answers `answer`, and says
-    /// whether it was asked.
+    /// Runs [`acquire`] with an endpoint that answers `answer` and a Tokens
+    /// API that still calls the token dead, and says whether the endpoint was
+    /// asked.
     fn run(state: &mut State, now: u64, answer: Fetched) -> (Option<String>, bool) {
-        let mut asked = false;
-        let result = acquire(state, now, || {
-            asked = true;
-            answer
-        });
+        let (result, asked, _) = run_checked(state, now, answer, Refusal::Dead);
         (result, asked)
+    }
+
+    /// [`run`] with the Tokens API answering `verdict`, and also says whether
+    /// it was asked.
+    fn run_checked(
+        state: &mut State,
+        now: u64,
+        answer: Fetched,
+        verdict: Refusal,
+    ) -> (Option<String>, bool, bool) {
+        let (mut asked, mut checked) = (false, false);
+        let result = acquire(
+            state,
+            now,
+            || {
+                asked = true;
+                answer
+            },
+            |_| {
+                checked = true;
+                verdict
+            },
+        );
+        (result, asked, checked)
     }
 
     fn token(value: &str) -> Fetched {
@@ -447,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn the_rejected_token_again_waits_an_hour_three_times_then_a_day() {
+    fn the_rejected_token_again_waits_an_hour_after_every_third_time() {
         let mut state = saved("pk.old", true);
         let mut now = NOW;
         let mut waits = Vec::new();
@@ -463,6 +497,40 @@ mod tests {
             [0, 0, HOUR, 0, 0, HOUR, 0, 0],
             "an hour after every third failure in a row"
         );
+    }
+
+    #[test]
+    fn the_rejected_token_again_is_taken_back_once_it_checks_valid() {
+        let mut state = State {
+            failures: 2,
+            ..saved("pk.old", true)
+        };
+        let (result, _, checked) =
+            run_checked(&mut state, NOW, token("pk.old"), Refusal::Forbidden);
+        assert!(checked);
+        assert_eq!(result, Some("pk.old".to_owned()));
+        assert_eq!(state, saved("pk.old", false), "the count starts again");
+
+        for verdict in [Refusal::Dead, Refusal::Unknown] {
+            let mut state = saved("pk.old", true);
+            let (result, _, _) = run_checked(&mut state, NOW, token("pk.old"), verdict);
+            assert_eq!(result, None, "{verdict:?}");
+            assert!(state.rejected, "{verdict:?}");
+            assert_eq!(state.failures, 1, "{verdict:?}");
+        }
+    }
+
+    #[test]
+    fn only_the_rejected_token_served_again_is_checked() {
+        for (mut state, answer) in [
+            (State::default(), token("pk.new")),
+            (saved("pk.old", true), token("pk.new")),
+            (saved("pk.old", true), Fetched::Nothing),
+            (saved("pk.old", true), Fetched::Failed),
+        ] {
+            let (_, _, checked) = run_checked(&mut state, NOW, answer, Refusal::Forbidden);
+            assert!(!checked);
+        }
     }
 
     #[test]
@@ -506,7 +574,7 @@ mod tests {
     }
 
     #[test]
-    fn a_wait_beyond_a_day_is_not_honored() {
+    fn a_wait_beyond_an_hour_is_not_honored() {
         let mut state = State {
             retry_at: u64::MAX,
             ..saved("pk.old", true)
@@ -525,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cooldown_holds_for_its_hour_and_not_beyond_a_day() {
+    fn a_cooldown_holds_for_its_hour_and_not_beyond() {
         let cooldown = Cooldown {
             failures: 3,
             until: NOW + HOUR,
@@ -538,7 +606,7 @@ mod tests {
         };
         assert!(
             !holds(edited.until, NOW),
-            "a wait beyond a day is not honored"
+            "a wait beyond an hour is not honored"
         );
     }
 

@@ -1095,6 +1095,62 @@ fn the_rejected_token_served_again_waits_before_asking() {
     assert_eq!(lines.last().expect("a delivery line")["stage"], "no_token");
 }
 
+/// A token called invalid for something fixed in the Console stays the same
+/// string, so the dead token served again is checked once more, and taken
+/// back once it checks valid.
+#[test]
+fn the_rejected_token_served_again_is_taken_back_once_valid() {
+    let home = scratch("send-taken-back");
+    std::fs::write(
+        config_dir(&home).join("cli-token.json"),
+        r#"{"token":"pk.fixed","rejected":true,"overridden":true}"#,
+    )
+    .expect("write the state");
+    let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.fixed"}"#);
+    let (checked, tokens_url) = answer_once("200 OK", r#"{"code":"TokenValid"}"#);
+    let (received, url) = events_server(true);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .env("MAPBOX_INTERNAL_TOKENS_URL", &tokens_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    checked
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the token was checked");
+    assert_eq!(sent_with(&received), "pk.fixed");
+    assert_eq!(cli_token_state(&home, "pk.fixed")["rejected"], false);
+}
+
+/// `config set telemetry off` covers the token fetch as
+/// `MAPBOX_CLI_NO_TELEMETRY` does: telemetry is its only user.
+#[test]
+fn telemetry_off_fetches_no_token() {
+    let home = scratch("send-off-no-fetch");
+    let (asked, token_url) = answer_once("200 OK", r#"{"token":"pk.fetched"}"#);
+    let (received, url) = events_server(true);
+    for args in [
+        &["config", "set", "telemetry", "off"][..],
+        &["config", "list"],
+    ] {
+        let out = command(&home)
+            .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+            .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+            .args(args)
+            .output()
+            .expect("run mapbox");
+        assert!(out.status.success());
+    }
+    assert!(
+        asked.recv_timeout(Duration::from_secs(3)).is_err(),
+        "`telemetry off` still fetched the CLI's token"
+    );
+    assert!(received.recv_timeout(Duration::from_millis(100)).is_err());
+    assert!(!config_dir(&home).join("cli-token.json").exists());
+}
+
 /// With no config directory, a fetched token still has to be kept, or a dead
 /// one is never marked and nothing backs off; so the directory is created.
 #[test]

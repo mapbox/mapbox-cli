@@ -640,6 +640,51 @@ mod report_token {
         );
     }
 
+    /// A request that goes nowhere: the proxy is a dead port, so `--debug`
+    /// shows what was about to be sent without anything reaching Mapbox.
+    fn sent_nowhere(config: &Path, cli_token: Option<&str>, args: &[&str]) -> Output {
+        let mut cmd = command(config);
+        cmd.env("HTTPS_PROXY", "http://127.0.0.1:9")
+            .env_remove("https_proxy")
+            .env_remove("ALL_PROXY")
+            .env_remove("all_proxy")
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy");
+        if let Some(token) = cli_token {
+            cmd.env("MAPBOX_CLI_TOKEN", token);
+        }
+        cmd.args(args).output().expect("run mapbox")
+    }
+
+    /// The CLI's token is restricted to its URL, so a request with it says
+    /// it comes from there.
+    #[test]
+    fn the_clis_token_goes_with_its_referer() {
+        let config = config_dir("report-referer");
+        let out = sent_nowhere(&config, Some("pk.cli"), &["--debug", "report", "A test"]);
+        let err = stderr(&out);
+        assert!(
+            err.contains("[debug] Referer: https://cli.mapbox.com/"),
+            "{err}"
+        );
+    }
+
+    /// The user's own token is not restricted to anything of ours, and goes
+    /// without it.
+    #[test]
+    fn the_users_token_goes_without_a_referer() {
+        let config = config_dir("report-no-referer");
+        resting(&config);
+        let out = sent_nowhere(
+            &config,
+            None,
+            &["--debug", "--token", "sk.mine", "report", "A test"],
+        );
+        let err = stderr(&out);
+        assert!(err.contains("[debug] POST"), "{err}");
+        assert!(!err.contains("Referer"), "{err}");
+    }
+
     /// While the CLI's token cannot be used, the user's is: the plan goes
     /// out with it, and a typed `--token` is not reported as ignored.
     #[test]

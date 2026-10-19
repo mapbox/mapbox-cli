@@ -1478,6 +1478,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                 // one in front of `generate-skills`, which sends nothing,
                 // would be a note about a request that is not happening.
                 timeout: http::requested(matches),
+                referer: None,
             };
             let command = op.command();
 
@@ -1622,6 +1623,9 @@ fn try_cli_token(
             }
         }
     };
+    // Only for the CLI's token: the user's, which may stand in after, goes
+    // out without it.
+    flags.referer = Some(cli_token::REFERER);
     let execute =
         |token: &str, flags| executor::execute(op, op_matches, Some(token), username, flags, mode);
     // Sends nothing, so there is nothing to be refused, or to count.

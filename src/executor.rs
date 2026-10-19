@@ -107,6 +107,9 @@ pub struct RunFlags {
     /// it means "nobody said"; [`crate::http::budget`] then falls back to
     /// whatever default fits the request.
     pub timeout: Option<Duration>,
+    /// Sent as the request's `Referer`, for a token restricted to a URL:
+    /// the CLI's own ([`crate::cli_token::REFERER`]). `None` for the user's.
+    pub referer: Option<&'static str>,
 }
 
 /// Runs one generated command — the request it would make, either sent or
@@ -142,6 +145,7 @@ fn dispatch(
         assume_yes,
         dry_run,
         timeout,
+        referer,
     } = flags;
     let client = http::client_for(Some(op.service.as_str()))?;
 
@@ -264,6 +268,9 @@ fn dispatch(
     // request actually went out — never one that only looks like it did.
     if debug {
         eprintln!("[debug] {} {}", op.method, redacted_url(&url, &query));
+        if let Some(referer) = referer {
+            eprintln!("[debug] Referer: {referer}");
+        }
     }
 
     let method = op.method.as_str();
@@ -293,6 +300,9 @@ fn dispatch(
         ),
     ));
 
+    if let Some(referer) = referer {
+        req = req.header(reqwest::header::REFERER, referer);
+    }
     if let Some(source) = body_source {
         req = attach_body(req, source)?;
     }

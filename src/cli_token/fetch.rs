@@ -134,7 +134,7 @@ fn backoff(failures: u32) -> u64 {
     }
 }
 
-/// Whether `caller` — `telemetry`, or a command's name — is resting from the
+/// Whether `caller` — today only `telemetry` — is resting from the
 /// CLI's token. While it is, it sends nothing with it, so nothing is
 /// refused, and nothing is checked.
 pub(crate) fn cooling(caller: &str) -> bool {
@@ -213,9 +213,10 @@ pub(crate) enum Refusal {
     /// as for [`Refusal::Forbidden`]: sending it again at once would most
     /// likely be refused again, and cost another check.
     Unknown,
-    /// Not the fetched token, so not checked: `MAPBOX_CLI_TOKEN`, which a
-    /// developer set and a fetch cannot replace, and which may not even be a
-    /// production token.
+    /// Not checked: `token` is not the one on disk. Another run saved a new
+    /// one meanwhile, or the state cannot be written at all, in which case
+    /// nothing is marked or paced and each run fetches as if for the first
+    /// time (see [`write_state`]).
     NotFetched,
 }
 

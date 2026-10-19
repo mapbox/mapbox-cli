@@ -235,13 +235,16 @@ fn send(url: &str, envelope: &Envelope) {
 fn post(url: &str, envelope: &Envelope) -> Result<(u16, Duration), String> {
     let body = serde_json::to_string(&[&envelope.event]).map_err(|err| err.to_string())?;
     let client = http::client().map_err(|err| err.to_string())?;
-    let started = Instant::now();
+    // Reset by every attempt, so the time is the POST that answered alone,
+    // not the token fetch or check that may come before it.
+    let started = std::cell::Cell::new(Instant::now());
     let response = cli_token::send(
         cli_token::TELEMETRY_CALLER,
         cli_token::TELEMETRY,
         envelope.user_token.as_deref(),
         envelope.profile.as_deref(),
         || {
+            started.set(Instant::now());
             client
                 .post(url)
                 .header(USER_AGENT, telemetry::PRODUCT_TOKEN)
@@ -252,7 +255,7 @@ fn post(url: &str, envelope: &Envelope) -> Result<(u16, Duration), String> {
     )
     .ok_or_else(|| "no token to send with".to_string())?
     .map_err(|err| http::failure(&err))?;
-    Ok((response.status().as_u16(), started.elapsed()))
+    Ok((response.status().as_u16(), started.get().elapsed()))
 }
 
 /// Appends one line to the delivery log, when [`DELIVERY_LOG_ENV`] is set.

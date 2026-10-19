@@ -1322,16 +1322,15 @@ fn verify_token(token: &str, debug: bool, timeout: Option<Duration>) -> Result<V
     // other three — refresh, registration, code exchange — carry a few
     // hundred bytes each and keep the client's own budget.
     check_token(
-        VALIDATION_ENDPOINT,
         token,
         crate::http::budget(timeout, crate::http::Payload::Bounded),
     )
 }
 
-/// The request behind [`verify_token`], at `url`: the endpoint's answer,
+/// The request behind [`verify_token`]: the endpoint's answer,
 /// whose `code` is the verdict.
-fn check_token(url: &str, token: &str, timeout: Duration) -> Result<Value> {
-    let (status, request_id, body) = send_token_check(url, token, timeout)?;
+fn check_token(token: &str, timeout: Duration) -> Result<Value> {
+    let (status, request_id, body) = send_token_check(VALIDATION_ENDPOINT, token, timeout)?;
     if !status.is_success() {
         return Err(CliError::http(status.as_u16(), &body)
             .with_request_id(request_id)

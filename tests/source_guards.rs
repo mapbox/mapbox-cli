@@ -572,9 +572,8 @@ fn only_telemetry_and_doctor_read_the_env_opt_out_alone() {
 /// fetch and check off the network.
 ///
 /// Every build fetches the CLI's token from cli.mapbox.com when it needs one,
-/// a test build included: telemetry's child does, and so does a command that
-/// prefers the CLI's token. A refusal of it is checked with the Tokens API
-/// at api.mapbox.com. Pointing `MAPBOX_INTERNAL_CLI_TOKEN_URL` and
+/// a test build included: telemetry's child does. A refusal of it is checked
+/// with the Tokens API at api.mapbox.com. Pointing `MAPBOX_INTERNAL_CLI_TOKEN_URL` and
 /// `MAPBOX_INTERNAL_TOKENS_URL` at loopback is the decision this asks for, on
 /// every command a file builds.
 #[test]

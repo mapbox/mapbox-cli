@@ -254,7 +254,7 @@ fn resolve<R, E>(
     last.map(Ok)
 }
 
-/// A `401` or `403`: the answers [`refused`] can explain.
+/// A `401` or `403`: the answers [`fetch::refused`] can explain.
 pub(crate) fn is_refusal(status: StatusCode) -> bool {
     status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN
 }

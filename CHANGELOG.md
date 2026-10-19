@@ -33,9 +33,6 @@ that may never merge. They are not releases and are not listed here.
     the endpoint still serves the dead token, it is asked again hourly
     three times, then daily. A valid token that an API refuses is not used
     for that API on the same schedule.
-  - Two new error codes, for commands that use the CLI's token:
-    `cli_token_unavailable` and `cli_token_forbidden`. See
-    [Errors](docs/commands.md#errors).
 
 - `tilesets query` renders as a numbered list under `-o text` again, as
   documented. It had printed pretty JSON since 0.2.0, when the command moved

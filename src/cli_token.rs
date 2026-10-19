@@ -24,22 +24,17 @@
 //! billed to the account that owns it. So it is decided by what the request
 //! is for, not where it goes: a request the CLI makes for itself passes
 //! [`send`] an order that ends in [`Fallback::CliToken`], and every such order
-//! is defined in this file (today only [`TELEMETRY`]); a command must be in
-//! [`CLI_TOKEN_COMMANDS`], which also says how it uses it ([`Use`]). Where
-//! the request is sent does not matter, so a URL overridden from the
+//! is defined in this file (today only [`TELEMETRY`]). No command uses it.
+//! Where the request is sent does not matter, so a URL overridden from the
 //! environment keeps the same fallback.
-//!
-//! A command that tries the CLI's token and cannot use it falls back to the
-//! user's. Why it could not is kept apart, since the user sees it when they
-//! have no token either: the token is unavailable right now
-//! ([`Unavailable`]), or it works but this API refuses it
-//! ([`Refusal::Forbidden`]).
 //!
 //! # The token is public
 //!
 //! It is served from a public URL, so it must be a dedicated `pk.` token with
 //! the minimum scopes, and nothing may ever treat it as a secret. [`fetch`]
 //! refuses anything that is not `pk.`.
+
+use std::cell::RefCell;
 
 use reqwest::blocking::{RequestBuilder, Response};
 use reqwest::StatusCode;
@@ -48,7 +43,7 @@ use crate::{auth, http};
 
 mod fetch;
 
-pub(crate) use fetch::{accepted, refused, Refusal, Unavailable};
+use fetch::Refusal;
 
 /// One place [`send`] may take a token from. A caller passes them in the
 /// order to try.
@@ -75,52 +70,6 @@ pub(crate) const TELEMETRY: &[Fallback] =
 /// An order that uses it belongs in this file and in this list.
 #[cfg(test)]
 const ORDERS: &[&[Fallback]] = &[TELEMETRY];
-
-/// How a command listed in [`CLI_TOKEN_COMMANDS`] uses the CLI's token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Use {
-    /// The CLI's token first, and the user's own only while the CLI's cannot
-    /// be used: unavailable, dead with no new one yet, or refused by this
-    /// API.
-    // No command is listed yet.
-    #[allow(dead_code)]
-    Preferred,
-}
-
-/// Commands that may run on the CLI's token, by the name `--schema` reports,
-/// each with how and with the reason the CLI's account should carry their
-/// use. Command names are a compatibility promise, so an entry does not
-/// quietly move to another API when a spec changes its URL.
-const CLI_TOKEN_COMMANDS: &[(&str, Use, &str)] = &[];
-
-/// How `command` uses the CLI's token, or `None` when it may not.
-fn use_for(command: &str) -> Option<Use> {
-    CLI_TOKEN_COMMANDS
-        .iter()
-        .find(|(name, _, _)| *name == command)
-        .map(|(_, how, _)| *how)
-}
-
-/// The CLI's token for `command`, or `None` when the command is not listed
-/// for it. The only way to ask, so an unlisted command never gets one.
-/// `fetch` is false where nothing may be sent, as in a dry run: only a token
-/// already at hand is returned then.
-pub(crate) fn for_command(command: &str, fetch: bool) -> Option<Result<String, Unavailable>> {
-    match use_for(command)? {
-        Use::Preferred => Some(match fetch::resting_until(command) {
-            Some(until) => Err(Unavailable::Resting { until }),
-            None => cli_token(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref(), fetch),
-        }),
-    }
-}
-
-/// `MAPBOX_CLI_TOKEN` at run time, then the fetched token.
-fn cli_token(override_token: Option<&str>, fetch: bool) -> Result<String, Unavailable> {
-    match usable(override_token) {
-        Some(token) => Ok(token.to_owned()),
-        None => fetch::token(fetch),
-    }
-}
 
 /// The token the user gave this run, ranked as a command ranks it: with
 /// `--use-login` only a typed `--token` counts, otherwise the environment
@@ -157,17 +106,26 @@ pub(crate) fn send(
     request: impl Fn() -> RequestBuilder,
 ) -> Option<reqwest::Result<Response>> {
     let override_token = std::env::var("MAPBOX_CLI_TOKEN").ok();
-    let dead = std::cell::RefCell::new(None);
+    let fetched = RefCell::new(None);
+    let dead = RefCell::new(None);
     let mut attempt = |token: &str| {
         let response = http::send(request().query(&[("access_token", token)]));
-        if let Ok(r) = &response {
-            if !is_refusal(r.status()) {
+        // Only the fetched token's answers are kept: the user's tokens, and
+        // `MAPBOX_CLI_TOKEN`, are never checked or counted.
+        if let (Ok(r), true) = (&response, fetched.borrow().as_deref() == Some(token)) {
+            if r.status().is_success() {
                 fetch::accepted(caller, token);
-            } else if fetch::refused(caller, token) == Refusal::Dead {
+            } else if is_refusal(r.status()) && fetch::refused(caller, token) == Refusal::Dead {
                 *dead.borrow_mut() = Some(token.to_owned());
             }
         }
         response
+    };
+    let fetch = || {
+        // A caller resting from the CLI's token sends nothing with it.
+        let token = (!fetch::cooling(caller)).then(|| fetch::token().ok())??;
+        *fetched.borrow_mut() = Some(token.clone());
+        Some(token)
     };
     let answer = resolve(
         order,
@@ -176,16 +134,18 @@ pub(crate) fn send(
             override_token: override_token.as_deref(),
         },
         || login_token(profile),
-        // A caller resting from the CLI's token sends nothing with it.
-        || (!fetch::cooling(caller)).then(|| fetch::token(true).ok())?,
+        fetch,
         &mut attempt,
         |response| response.status() == StatusCode::UNAUTHORIZED,
     );
     // A dead token is replaced at once, and the request sent once more.
     match dead.take() {
         Some(dead) if matches!(&answer, Some(Ok(r)) if is_refusal(r.status())) => {
-            match fetch::token(true) {
-                Ok(fresh) if fresh != dead => Some(attempt(&fresh)),
+            match fetch::token() {
+                Ok(fresh) if fresh != dead => {
+                    *fetched.borrow_mut() = Some(fresh.clone());
+                    Some(attempt(&fresh))
+                }
                 _ => answer,
             }
         }
@@ -542,31 +502,6 @@ mod tests {
     }
 
     #[test]
-    fn every_cli_token_command_exists_and_says_why() {
-        let specs = crate::spec::effective_services().expect("the bundled specs parse");
-        let commands: Vec<String> = specs
-            .iter()
-            .flat_map(|svc| &svc.operations)
-            .map(|op| op.command())
-            .collect();
-        for (name, _, reason) in CLI_TOKEN_COMMANDS {
-            assert!(
-                commands.iter().any(|c| c == name),
-                "`{name}` is in CLI_TOKEN_COMMANDS but is not a command"
-            );
-            assert!(!reason.trim().is_empty(), "`{name}` needs a reason");
-        }
-    }
-
-    #[test]
-    fn the_runtime_override_is_used_without_a_fetch() {
-        assert_eq!(
-            cli_token(Some(" pk.override "), false).as_deref(),
-            Ok("pk.override")
-        );
-    }
-
-    #[test]
     fn an_accepted_override_never_fetches() {
         let fetched = Cell::new(false);
         let answer = resolve(
@@ -582,10 +517,5 @@ mod tests {
         );
         assert_eq!(answer, Some(Ok(200)));
         assert!(!fetched.get());
-    }
-
-    #[test]
-    fn an_unlisted_command_never_gets_the_clis_token() {
-        assert_eq!(for_command("styles list", true), None);
     }
 }

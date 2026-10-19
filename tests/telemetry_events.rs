@@ -1122,3 +1122,36 @@ fn keeping_a_fetched_token_leaves_the_directory_mode_alone() {
         "the write changed the directory's mode"
     );
 }
+
+/// Only an answer that went through ends a cooldown: a `500` after one
+/// expired says nothing about whether the API takes the token now, and must
+/// not reset the count that paces the next one.
+#[test]
+fn a_failed_send_does_not_end_a_cooldown() {
+    let home = scratch("send-cooldown-500");
+    std::fs::write(
+        config_dir(&home).join("cli-token.json"),
+        r#"{"token":"pk.kept","overridden":true,"cooldowns":{"telemetry":{"failures":2,"until":1}}}"#,
+    )
+    .expect("write the state");
+    let (sent, events_url) = answer_once("500 Internal Server Error", "{}");
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
+        .env(
+            "MAPBOX_INTERNAL_TELEMETRY_URL",
+            events_url.replace("/config/token.json", "/events/v2"),
+        )
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    sent.recv_timeout(Duration::from_secs(10))
+        .expect("the expired cooldown let the event go");
+    let lines = deliveries(&home, 2);
+    assert_eq!(lines[1]["status"], 500, "{lines:?}");
+    let state: Value = serde_json::from_str(
+        &std::fs::read_to_string(config_dir(&home).join("cli-token.json")).expect("the state"),
+    )
+    .expect("the state is JSON");
+    assert_eq!(state["cooldowns"]["telemetry"]["failures"], 2, "{state}");
+}

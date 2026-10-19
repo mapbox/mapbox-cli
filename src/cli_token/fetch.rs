@@ -72,11 +72,6 @@ pub(crate) enum Unavailable {
     /// again before `retry_at` (Unix seconds). `revoked` when there is a
     /// dead token it has not replaced yet, rather than never a token at all.
     Waiting { retry_at: u64, revoked: bool },
-    /// None on disk, and the caller asked not to fetch, as a dry run does.
-    NotFetched,
-    /// This caller's API refused the token while the Tokens API called it
-    /// valid, so it rests from it until `until` (Unix seconds).
-    Resting { until: u64 },
 }
 
 impl std::fmt::Display for Unavailable {
@@ -92,12 +87,6 @@ impl std::fmt::Display for Unavailable {
                     "the token endpoint did not return a usable token"
                 },
                 wait_text(retry_at.saturating_sub(now()))
-            ),
-            Self::NotFetched => write!(f, "it has not been fetched yet"),
-            Self::Resting { until } => write!(
-                f,
-                "this API refused it recently; trying it again in {}",
-                wait_text(until.saturating_sub(now()))
             ),
         }
     }
@@ -178,20 +167,12 @@ fn backoff(failures: u32) -> u64 {
 /// CLI's token. While it is, it sends nothing with it, so nothing is
 /// refused, and nothing is checked.
 pub(crate) fn cooling(caller: &str) -> bool {
-    resting_until(caller).is_some()
-}
-
-/// When `caller`'s cooldown ends, while it has one.
-pub(crate) fn resting_until(caller: &str) -> Option<u64> {
-    let state = read_state()?;
-    let cooldown = state.cooldowns.get(caller)?;
-    rests(cooldown, now()).then_some(cooldown.until)
-}
-
-/// Whether a cooldown still holds at `now`. One further out than the longest
-/// wait is a clock that went backwards or an edited file, and is not honored.
-fn rests(cooldown: &Cooldown, now: u64) -> bool {
-    now < cooldown.until && cooldown.until <= now + DAY
+    read_state().is_some_and(|state| {
+        state
+            .cooldowns
+            .get(caller)
+            .is_some_and(|cooldown| holds(cooldown.until, now()))
+    })
 }
 
 /// Records that `caller`'s request with the saved `token` went through, which
@@ -206,11 +187,14 @@ pub(crate) fn accepted(caller: &str, token: &str) {
 
 /// The CLI's token: the one on disk while it has not been rejected,
 /// otherwise a fresh one from the endpoint, fetched only when `fetch` is set.
-pub(crate) fn token(fetch: bool) -> Result<String, Unavailable> {
+pub(crate) fn token() -> Result<String, Unavailable> {
     let mut state = read_state().unwrap_or_default();
     let before = state.clone();
-    let result = acquire(&mut state, now(), fetch, || get(&endpoint()));
-    if state != before {
+    let result = acquire(&mut state, now(), || get(&endpoint()));
+    // Read again: the fetch can take seconds, and another run may have
+    // written meanwhile — a new token, a count, a cooldown — which this must
+    // not write over. That run's state stands.
+    if state != before && read_state().unwrap_or_default() == before {
         write_state(&state);
     }
     result
@@ -219,7 +203,7 @@ pub(crate) fn token(fetch: bool) -> Result<String, Unavailable> {
 /// Whether [`token`] could have one, judged without the network.
 pub(crate) fn may_have_token() -> bool {
     let state = read_state().unwrap_or_default();
-    state.usable_token().is_some() || !waiting(&state, now())
+    state.usable_token().is_some() || !holds(state.retry_at, now())
 }
 
 /// What a `401` or `403` to the CLI's token meant.
@@ -289,16 +273,12 @@ fn verdict(code: Option<&str>) -> Refusal {
 fn acquire(
     state: &mut State,
     now: u64,
-    fetch: bool,
     get: impl FnOnce() -> Fetched,
 ) -> Result<String, Unavailable> {
     if let Some(token) = state.usable_token() {
         return Ok(token.to_owned());
     }
-    if !fetch {
-        return Err(Unavailable::NotFetched);
-    }
-    if waiting(state, now) {
+    if holds(state.retry_at, now) {
         return Err(Unavailable::Waiting {
             retry_at: state.retry_at,
             revoked: state.rejected,
@@ -328,11 +308,11 @@ fn acquire(
     }
 }
 
-/// Whether the endpoint is still to be left alone. A `retry_at` further out
-/// than the longest wait is a clock that went backwards or an edited file,
-/// and is not honored.
-fn waiting(state: &State, now: u64) -> bool {
-    now < state.retry_at && state.retry_at <= now + DAY
+/// Whether a wait until `until` still holds at `now`: the endpoint's, or a
+/// caller's cooldown. One further out than the longest wait is a clock that
+/// went backwards or an edited file, and is not honored.
+fn holds(until: u64, now: u64) -> bool {
+    now < until && until <= now + DAY
 }
 
 /// Whether `value` looks like a public token and nothing else. Checked on
@@ -454,7 +434,7 @@ mod tests {
     /// whether it was asked.
     fn run(state: &mut State, now: u64, answer: Fetched) -> (Result<String, Unavailable>, bool) {
         let mut asked = false;
-        let result = acquire(state, now, true, || {
+        let result = acquire(state, now, || {
             asked = true;
             answer
         });
@@ -566,13 +546,6 @@ mod tests {
     }
 
     #[test]
-    fn without_fetch_only_a_saved_token_is_used() {
-        let mut state = State::default();
-        let result = acquire(&mut state, NOW, false, || unreachable!());
-        assert_eq!(result, Err(Unavailable::NotFetched));
-    }
-
-    #[test]
     fn a_wait_beyond_a_day_is_not_honored() {
         let mut state = State {
             retry_at: u64::MAX,
@@ -599,13 +572,16 @@ mod tests {
             failures: 1,
             until: NOW + HOUR,
         };
-        assert!(rests(&cooldown, NOW));
-        assert!(!rests(&cooldown, NOW + HOUR));
+        assert!(holds(cooldown.until, NOW));
+        assert!(!holds(cooldown.until, NOW + HOUR));
         let edited = Cooldown {
             failures: 1,
             until: u64::MAX,
         };
-        assert!(!rests(&edited, NOW), "a wait beyond a day is not honored");
+        assert!(
+            !holds(edited.until, NOW),
+            "a wait beyond a day is not honored"
+        );
     }
 
     #[test]

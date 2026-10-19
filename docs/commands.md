@@ -5082,8 +5082,6 @@ faults and are not:
 | `binary_response` | The response was bytes and stdout is a terminal. Redirect it to a file. |
 | `missing_subcommand` | A command group was named with no operation. |
 | `cancelled` | A delete was declined at the confirmation prompt. Nothing was sent. |
-| `cli_token_unavailable` | A command that prefers the CLI's own token could not use it — it could not be fetched, or it is revoked and no new one is published yet — and you have no token of your own to fall back to. |
-| `cli_token_forbidden` | The CLI's own token is valid, but this API does not accept it, or refused it recently and is not sent it again yet, and you have no token of your own to fall back to. |
 | `usage` | Anything else clap rejected. Exit code 2, not 1. |
 | `error` | Unclassified. |
 

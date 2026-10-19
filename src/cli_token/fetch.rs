@@ -71,10 +71,10 @@ const MAX_TOKEN_LEN: usize = 512;
 pub(crate) enum Unavailable {
     /// The endpoint could not be reached. Asked again on the next run.
     Unreachable,
-    /// The endpoint answered without a usable token, so it is not asked
-    /// again before `retry_at` (Unix seconds). `revoked` when there is a
-    /// dead token it has not replaced yet, rather than never a token at all.
-    Waiting { retry_at: u64, revoked: bool },
+    /// The endpoint answered without a usable token. `revoked` when there
+    /// is a dead token it has not replaced yet, rather than never a token at
+    /// all.
+    NoToken { revoked: bool },
     /// None on disk, and the caller asked not to fetch, as a dry run does.
     NotFetched,
 }
@@ -83,16 +83,12 @@ impl std::fmt::Display for Unavailable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unreachable => write!(f, "the token endpoint could not be reached"),
-            Self::Waiting { retry_at, revoked } => write!(
-                f,
-                "{}; trying again in {}",
-                if *revoked {
-                    "it is revoked and no new one is published yet"
-                } else {
-                    "the token endpoint did not return a usable token"
-                },
-                wait_text(retry_at.saturating_sub(now()))
-            ),
+            Self::NoToken { revoked: true } => {
+                write!(f, "it is revoked and no new one is published yet")
+            }
+            Self::NoToken { revoked: false } => {
+                write!(f, "the token endpoint did not return a usable token")
+            }
             Self::NotFetched => write!(f, "it has not been fetched yet"),
         }
     }
@@ -198,47 +194,39 @@ pub(crate) fn accepted(caller: &str, token: &str) {
 }
 
 /// The CLI's token: the one on disk while it is not dead, otherwise a fresh
-/// one from the endpoint unless it is being waited for.
-pub(crate) fn token() -> Result<String, Unavailable> {
+/// one from the endpoint unless it is being waited for. `None` when there is
+/// none to be had right now.
+pub(crate) fn token() -> Option<String> {
     let mut state = read_state().unwrap_or_default();
     let before = state.clone();
-    let mut unreachable = false;
-    let token = acquire(
-        &mut state,
-        now(),
-        || {
-            let fetched = get(&endpoint());
-            unreachable = matches!(fetched, Fetched::Failed);
-            fetched
-        },
-        check,
-    );
-    let why = if unreachable {
-        Unavailable::Unreachable
-    } else {
-        Unavailable::Waiting {
-            retry_at: state.retry_at,
-            revoked: state.rejected,
-        }
-    };
-    if state != before {
-        save_fetch(&before, state);
-    }
-    token.ok_or(why)
-}
-
-/// [`token`], but asking the endpoint now, whatever the backoff says and
-/// even with a token on disk: for a command someone is waiting on whose
-/// request was just refused, so that a token republished or reconfigured is
-/// picked up at once. `None` when the endpoint has nothing usable.
-pub(crate) fn token_now() -> Option<String> {
-    let mut state = read_state().unwrap_or_default();
-    let before = state.clone();
-    let token = judge(&mut state, now(), get(&endpoint()), check);
+    let token = acquire(&mut state, now(), || get(&endpoint()), check);
     if state != before {
         save_fetch(&before, state);
     }
     token
+}
+
+/// [`token`], but asking the endpoint now, whatever the backoff says and
+/// even with a token on disk: for a command someone is waiting on, so that a
+/// token republished or reconfigured is picked up at once.
+///
+/// Only a token it gets is saved. A miss is not counted: the backoff paces
+/// background fetches, and a command retried by hand must not lengthen it.
+pub(crate) fn token_now() -> Result<String, Unavailable> {
+    let mut state = read_state().unwrap_or_default();
+    let before = state.clone();
+    let fetched = get(&endpoint());
+    let why = match fetched {
+        Fetched::Failed => Unavailable::Unreachable,
+        _ => Unavailable::NoToken {
+            revoked: state.rejected,
+        },
+    };
+    let token = judge(&mut state, now(), fetched, check).ok_or(why)?;
+    if state != before {
+        save_fetch(&before, state);
+    }
+    Ok(token)
 }
 
 /// The token on disk while it is not dead, without asking the endpoint, for
@@ -493,22 +481,6 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or_default()
-}
-
-fn wait_text(seconds: u64) -> String {
-    let minutes = seconds.div_ceil(60).max(1);
-    match minutes {
-        1 => "1 minute".to_owned(),
-        m if m < 60 => format!("{m} minutes"),
-        m => {
-            let hours = m.div_ceil(60);
-            if hours == 1 {
-                "1 hour".to_owned()
-            } else {
-                format!("{hours} hours")
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -778,32 +750,18 @@ mod tests {
     }
 
     #[test]
-    fn a_wait_says_whether_a_token_was_ever_revoked() {
-        let waiting = |revoked| {
-            Unavailable::Waiting {
-                retry_at: 0,
-                revoked,
-            }
-            .to_string()
-        };
+    fn no_token_says_whether_one_was_ever_revoked() {
+        let reason = |revoked| Unavailable::NoToken { revoked }.to_string();
         assert!(
-            waiting(true).starts_with("it is revoked"),
+            reason(true).starts_with("it is revoked"),
             "{}",
-            waiting(true)
+            reason(true)
         );
         assert!(
-            waiting(false).starts_with("the token endpoint did not return"),
+            reason(false).starts_with("the token endpoint did not return"),
             "{}",
-            waiting(false)
+            reason(false)
         );
-    }
-
-    #[test]
-    fn the_wait_reads_in_minutes_or_hours() {
-        assert_eq!(wait_text(0), "1 minute");
-        assert_eq!(wait_text(59 * 60), "59 minutes");
-        assert_eq!(wait_text(HOUR), "1 hour");
-        assert_eq!(wait_text(2 * HOUR), "2 hours");
     }
 
     #[test]

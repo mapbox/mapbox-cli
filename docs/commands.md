@@ -2021,9 +2021,11 @@ needed. There is no way to read it back or delete it, so `--dry-run` shows
 the body without sending it.
 
 It is sent with the CLI's own token, not yours, so it works without a
-login; `--token` and `--use-login` are noted as unused. If this API refuses
+login. A typed `--token` or `--use-login` sends with yours instead, and the
+CLI's is not tried. If this API refuses
 the CLI's token, a fresh one is fetched there and then and the message sent
 again with it, so a token that was republished or fixed works at once.
+A `MAPBOX_CLI_TOKEN` override is sent as it is and never replaced.
 When the CLI's token still can't be used — it can't be fetched, it is
 revoked with no new one yet, or this API refuses it — your own token is
 used instead, and with none the command fails with `cli_token_unavailable`
@@ -2052,7 +2054,27 @@ mapbox report "…" --dry-run
 
 #### Outputs
 
-TODO(capture): live output pending.
+Captured live on 2026-10-19. `-o text` shows only that it was sent, the
+message and its id; `-o json` is the answer as the API sent it:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```text
+Sent to the Mapbox CLI team.
+feedback  Test from mapbox-cli development (report). Please ignore.
+id        01a15484-6d9b-744c-bea4-a9a0a99b95c5
+```
+
+</td><td>
+
+```json
+{"category":"general","created_at":"2026-10-19T14:15:32.069Z","feedback":"Test from mapbox-cli development (report). Please ignore.","has_screenshot":false,"id":"01a15484-7fc9-7328-a04d-251340f49f64","location":{"lat":0,"lon":0},"received_at":"2026-10-19T14:15:32.069Z","status":"received","updated_at":"2026-10-19T14:15:32.069Z"}
+```
+
+</td></tr>
+</table>
 
 ---
 
@@ -5137,7 +5159,7 @@ faults and are not:
 | `missing_subcommand` | A command group was named with no operation. |
 | `cancelled` | A delete was declined at the confirmation prompt. Nothing was sent. |
 | `cli_token_unavailable` | A command that prefers the CLI's own token (`report`) could not use it — it could not be fetched, or it is revoked and no new one is published yet — and you have no token of your own to fall back to. |
-| `cli_token_forbidden` | The CLI's own token works, but this API refused it, even after fetching it afresh, and you have no token of your own to fall back to. |
+| `cli_token_forbidden` | This API refused the CLI's own token, even after fetching it afresh, and you have no token of your own to fall back to. |
 | `usage` | Anything else clap rejected. Exit code 2, not 1. |
 | `error` | Unclassified. |
 

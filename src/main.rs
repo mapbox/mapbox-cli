@@ -7,6 +7,15 @@ use clap::builder::{
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 
+/// The repository's URL, as a macro so that `concat!` can build links on it
+/// in a `const`, such as `remedy`'s table. Defined ahead of the modules,
+/// which see it only from here on.
+macro_rules! repo_url {
+    () => {
+        "https://github.com/mapbox/cli"
+    };
+}
+
 mod account_usage;
 mod agent_detect;
 mod agent_skills;
@@ -56,7 +65,7 @@ use spec::ServiceSpec;
 /// The two installers keep a copy of their own each. They are downloaded and
 /// run on their own, with nothing of this crate beside them, so this is the
 /// single source for the Rust half rather than for all three.
-const REPO_URL: &str = "https://github.com/mapbox/cli";
+const REPO_URL: &str = repo_url!();
 
 /// Opens the top-level help when an agent is driving the CLI. Agents explore
 /// by chaining `--help` calls, one command at a time; `--schema` answers the
@@ -1483,9 +1492,15 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             let command = op.command();
 
             // Ahead of the user's credentials, so a run the CLI's token
-            // serves never refreshes a login it will not send.
+            // serves never refreshes a login it will not send. A typed
+            // `--token` or `--use-login` says which token to send, so the
+            // CLI's is not tried at all.
             let mut cli_failure = None;
-            if let Some(cli) = cli_token::for_command(&command, !dry_run) {
+            let chose_own_token = use_login || auth::typed_token(matches).is_some();
+            let cli = (!chose_own_token)
+                .then(|| cli_token::for_command(&command, !dry_run))
+                .flatten();
+            if let Some(cli) = cli {
                 let username = matches.get_one::<String>("username").cloned();
                 let attempt = try_cli_token(
                     op,
@@ -1497,24 +1512,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                     mode,
                 );
                 match attempt {
-                    CliAttempt::Done(result) => {
-                        // Whatever the result: a failure is when someone most
-                        // needs to know which token was sent.
-                        let ignored = if auth::typed_token(matches).is_some() {
-                            Some("`--token`")
-                        } else if use_login {
-                            Some("`--use-login`")
-                        } else {
-                            None
-                        };
-                        if let Some(choice) = ignored {
-                            output::progress(&format!(
-                                "{choice} was not used: this command sends with the CLI's \
-                                 own token while it works."
-                            ));
-                        }
-                        return result;
-                    }
+                    CliAttempt::Done(result) => return result,
                     CliAttempt::Unusable { error, sent } => {
                         // The user already confirmed the request that was
                         // refused; sending it again with their own token is
@@ -1609,7 +1607,7 @@ fn try_cli_token(
     op: &spec::Operation,
     op_matches: &clap::ArgMatches,
     command: &str,
-    cli: Result<String, cli_token::Unavailable>,
+    cli: Result<cli_token::CommandToken, cli_token::Unavailable>,
     username: Option<&str>,
     mut flags: executor::RunFlags,
     mode: output::Mode,
@@ -1630,12 +1628,11 @@ fn try_cli_token(
         |token: &str, flags| executor::execute(op, op_matches, Some(token), username, flags, mode);
     // Sends nothing, so there is nothing to be refused, or to count.
     if flags.dry_run {
-        return CliAttempt::Done(execute(&token, flags));
+        return CliAttempt::Done(execute(&token.token, flags));
     }
-    let sent = cli_token::send_with_cli_token(
+    let sent = cli_token::send_for_command(
         command,
         token,
-        &mut cli_token::Disk::Command,
         |token| {
             let result = execute(token, flags);
             // Confirmed once already, if the command asks.
@@ -1664,8 +1661,10 @@ fn try_cli_token(
             "cli_token_forbidden",
             "This API refused the CLI's token, and checking why failed.",
         ),
+        // Refused, and not checked why: `MAPBOX_CLI_TOKEN`, or the token on
+        // disk changed meanwhile or could not be written.
         cli_token::Refusal::NotFetched => {
-            ("cli_token_unavailable", "This API refused the CLI's token.")
+            ("cli_token_forbidden", "This API refused the CLI's token.")
         }
     };
     let request_id = result

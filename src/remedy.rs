@@ -99,7 +99,7 @@ const SERVICE_DOCS: &[(&str, &str)] = &[
     // this repository's own page is the only one.
     (
         "report",
-        "https://github.com/mapbox/cli/blob/main/docs/commands.md#mapbox-report",
+        concat!(repo_url!(), "/blob/main/docs/commands.md#mapbox-report"),
     ),
     ("search", "https://docs.mapbox.com/api/search/search-box/"),
     // Static Images and Static Tiles merged into one `static` command group

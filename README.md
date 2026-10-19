@@ -332,7 +332,8 @@ mapbox report "tilesets query hangs behind my proxy" --category bug
 
 The message goes to the Mapbox CLI team, not to your account, so
 `mapbox feedback list` won't show it. It is sent with the CLI's own token,
-so it needs no login; yours stands in only while the CLI's can't be used. See
+so it needs no login; yours stands in while the CLI's can't be used, or
+when you pass `--token` or `--use-login`. See
 [Report](./docs/commands.md#report).
 
 ### Shell completion

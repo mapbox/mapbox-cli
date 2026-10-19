@@ -709,35 +709,90 @@ mod report_token {
         assert!(state.contains(r#""token":"pk.fresh""#), "{state}");
     }
 
+    /// A command fetches past the backoff, so the reason it gives is what
+    /// that fetch found, not the backoff's wait, which it never waited for.
+    #[test]
+    fn an_unreachable_endpoint_is_reported_through_the_backoff() {
+        let config = config_dir("report-unreachable-backoff");
+        write_state(
+            &config,
+            &format!(
+                r#"{{"overridden":true,"failures":3,"retry_at":{}}}"#,
+                now() + 3600
+            ),
+        );
+        let out = run(&config, &["-o", "json", "report", "A test"]);
+        assert_eq!(error_code(&out), "cli_token_unavailable");
+        let err = stderr(&out);
+        assert!(err.contains("could not be reached"), "{err}");
+        assert!(!err.contains("trying again"), "{err}");
+    }
+
+    /// A miss on a command's fetch does not count toward the backoff, which
+    /// paces telemetry's fetches in the background.
+    #[test]
+    fn a_commands_miss_leaves_the_backoff_alone() {
+        let config = config_dir("report-miss-uncounted");
+        let state = r#"{"overridden":true,"failures":2}"#;
+        write_state(&config, state);
+        let out = command(&config)
+            .env(
+                "MAPBOX_INTERNAL_CLI_TOKEN_URL",
+                token_endpoint("not-a-token"),
+            )
+            .args(["-o", "json", "report", "A test"])
+            .output()
+            .expect("run mapbox");
+        assert_eq!(error_code(&out), "cli_token_unavailable");
+        let after = std::fs::read_to_string(config.join("cli-token.json")).expect("the state");
+        assert_eq!(after, state);
+    }
+
     /// The user's own token is not restricted to anything of ours, and goes
     /// without the CLI token's Referer when it stands in.
     #[test]
     fn the_users_token_goes_without_a_referer() {
         let config = config_dir("report-no-referer");
-        let out = sent_nowhere(
-            &config,
-            &["--debug", "--token", "sk.mine", "report", "A test"],
-        )
-        .output()
-        .expect("run mapbox");
+        let out = sent_nowhere(&config, &["--debug", "report", "A test"])
+            .env("MAPBOX_ACCESS_TOKEN", "sk.mine")
+            .output()
+            .expect("run mapbox");
         let err = stderr(&out);
         assert!(err.contains("Using your own token instead"), "{err}");
         assert!(err.contains("[debug] POST"), "{err}");
         assert!(!err.contains("Referer"), "{err}");
     }
 
+    /// A typed `--token` is the user's choice for this run, so the CLI's
+    /// token is not tried even when there is one.
+    #[test]
+    fn a_typed_token_outranks_the_clis() {
+        let config = config_dir("report-typed-token");
+        let out = sent_nowhere(
+            &config,
+            &["--debug", "--token", "sk.mine", "report", "A test"],
+        )
+        .env("MAPBOX_CLI_TOKEN", "pk.cli")
+        .output()
+        .expect("run mapbox");
+        let err = stderr(&out);
+        assert!(err.contains("[debug] POST"), "{err}");
+        assert!(!err.contains("Referer"), "{err}");
+        assert!(!err.contains("CLI's token"), "{err}");
+    }
+
     /// A dry run fetches nothing, so with no CLI token kept the plan goes out
-    /// with the user's, and a typed `--token` is not reported as ignored.
+    /// with the user's.
     #[test]
     fn a_dry_run_with_no_kept_token_plans_with_the_users() {
         let config = config_dir("report-dry-user");
-        let out = run(
-            &config,
-            &["--token", "sk.mine", "report", "--dry-run", "A test"],
-        );
+        let out = command(&config)
+            .env("MAPBOX_ACCESS_TOKEN", "sk.mine")
+            .args(["report", "--dry-run", "A test"])
+            .output()
+            .expect("run mapbox");
         assert!(out.status.success(), "{}", stderr(&out));
         let err = stderr(&out);
-        assert!(!err.contains("was not used"), "{err}");
         assert!(!err.contains("no access token was resolved"), "{err}");
     }
 }

@@ -216,14 +216,12 @@ fn dispatch(
     let data = data_argument
         .as_ref()
         .map(|argument| argument.body.as_ref());
-    let body_fields: Vec<Parameter> = op
+    let body_fields = op
         .body_fields
         .iter()
         .chain(&op.body_positional)
-        .chain(&op.fixed_body_fields)
-        .cloned()
-        .collect();
-    let merged_body = merge_body_fields(&body_fields, matches, data)?;
+        .chain(&op.fixed_body_fields);
+    let merged_body = merge_body_fields(body_fields, matches, data)?;
     let variadic_body = variadic_body_array_json(&op.variadic_body_array, matches);
     let data = variadic_body.as_deref().or(merged_body.as_deref()).or(data);
     let files: Vec<&str> = matches
@@ -1019,12 +1017,13 @@ fn variadic_body_array_json(
 
 /// `--data` with the body-field flags set on it, or `None` if nothing was
 /// set. A flag wins over `--data`; a default fills only what neither set.
-fn merge_body_fields(
-    fields: &[Parameter],
+fn merge_body_fields<'a>(
+    fields: impl IntoIterator<Item = &'a Parameter>,
     matches: &ArgMatches,
     data: Option<&str>,
 ) -> Result<Option<String>> {
-    if fields.is_empty() {
+    let mut fields = fields.into_iter().peekable();
+    if fields.peek().is_none() {
         return Ok(None);
     }
 

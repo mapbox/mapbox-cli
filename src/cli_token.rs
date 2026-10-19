@@ -117,29 +117,67 @@ fn use_for(command: &str) -> Option<Use> {
         .map(|(_, how, _)| *how)
 }
 
+/// The CLI's token as a command got it, for [`send_for_command`], which
+/// handles a refusal of it by where it came from.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct CommandToken {
+    pub(crate) token: String,
+    source: TokenSource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TokenSource {
+    /// `MAPBOX_CLI_TOKEN`.
+    Override,
+    /// The one on disk.
+    Saved,
+    /// Fetched by this run.
+    Fetched,
+}
+
 /// The CLI's token for `command`, or `None` when the command is not listed
 /// for it: the only way to ask, so an unlisted command never gets one.
 /// `fetch` is false where nothing may be sent, as in a dry run, and only a
 /// token already on disk is returned then.
-pub(crate) fn for_command(command: &str, fetch: bool) -> Option<Result<String, Unavailable>> {
+pub(crate) fn for_command(command: &str, fetch: bool) -> Option<Result<CommandToken, Unavailable>> {
     match use_for(command)? {
         Use::Preferred => Some(preferred_token(fetch)),
     }
 }
 
-fn preferred_token(fetch: bool) -> Result<String, Unavailable> {
+fn preferred_token(fetch: bool) -> Result<CommandToken, Unavailable> {
+    let given = |token: String, source| CommandToken { token, source };
     if let Some(token) = usable(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref()) {
-        return Ok(token.to_owned());
+        return Ok(given(token.to_owned(), TokenSource::Override));
+    }
+    if let Some(token) = fetch::saved_token() {
+        return Ok(given(token, TokenSource::Saved));
     }
     if !fetch {
-        return fetch::saved_token().ok_or(Unavailable::NotFetched);
+        return Err(Unavailable::NotFetched);
     }
     // A command is not held by the backoff, which paces background fetches:
     // someone is waiting, and the endpoint may have a new token by now.
-    match fetch::token() {
-        Err(why @ Unavailable::Waiting { .. }) => fetch::token_now().ok_or(why),
-        answer => answer,
-    }
+    fetch::token_now().map(|token| given(token, TokenSource::Fetched))
+}
+
+/// Sends a command's request with the CLI's token by [`send_with_cli_token`]'s
+/// rules, as [`Disk::Command`] for a token from disk or the endpoint.
+/// `MAPBOX_CLI_TOKEN` is sent once and never checked, counted or replaced,
+/// as [`send`] treats it: a developer chose that token, and a refusal of it
+/// is theirs to see.
+pub(crate) fn send_for_command<R>(
+    command: &str,
+    given: CommandToken,
+    send: impl FnMut(&str) -> R,
+    status: impl Fn(&R) -> Option<u16>,
+) -> Sent<R> {
+    let mut ledger = match given.source {
+        TokenSource::Override => Disk::Unchecked,
+        TokenSource::Saved => Disk::Command { fetched: false },
+        TokenSource::Fetched => Disk::Command { fetched: true },
+    };
+    send_with_cli_token(command, given.token, &mut ledger, send, status)
 }
 
 /// The token the user gave this run, ranked as a command ranks it: with
@@ -210,7 +248,7 @@ pub(crate) fn send(
     };
     let fetch = || {
         // A caller resting from the CLI's token sends nothing with it.
-        let token = (!fetch::cooling(caller)).then(|| fetch::token().ok())??;
+        let token = (!fetch::cooling(caller)).then(fetch::token)??;
         *fetched.borrow_mut() = Some(token.clone());
         Some(token)
     };
@@ -247,35 +285,46 @@ pub(crate) trait Ledger {
     fn fresh(&mut self) -> Option<String>;
 }
 
-/// `<config dir>/cli-token.json`, through [`fetch`], as one of two kinds of
-/// caller.
+/// `<config dir>/cli-token.json`, through [`fetch`], by kind of caller.
 pub(crate) enum Disk {
     /// Nobody is waiting, as for telemetry: paced, and a new token is tried
     /// only for a dead one, when the backoff allows.
     Background,
     /// Someone ran it and is waiting: never paced, and any refusal tries a
     /// token fetched there and then, so a token republished or fixed in the
-    /// Console works on the next try.
-    Command,
+    /// Console works on the next try. Not when this run `fetched` the token
+    /// already: asking again at once would only get the same one back.
+    Command { fetched: bool },
+    /// A token not from the endpoint (`MAPBOX_CLI_TOKEN`): the file is not
+    /// touched, and a refusal is handed back as it is.
+    Unchecked,
 }
 
 impl Ledger for Disk {
     fn refused(&mut self, caller: &str, token: &str) -> Refusal {
-        fetch::refused(caller, token, matches!(self, Disk::Background))
+        match self {
+            Disk::Background => fetch::refused(caller, token, true),
+            Disk::Command { .. } => fetch::refused(caller, token, false),
+            Disk::Unchecked => Refusal::NotFetched,
+        }
     }
     fn accepted(&mut self, caller: &str, token: &str) {
-        fetch::accepted(caller, token);
+        if !matches!(self, Disk::Unchecked) {
+            fetch::accepted(caller, token);
+        }
     }
     fn retries(&self, refusal: Refusal) -> bool {
         match self {
             Disk::Background => refusal == Refusal::Dead,
-            Disk::Command => true,
+            Disk::Command { fetched } => !fetched,
+            Disk::Unchecked => false,
         }
     }
     fn fresh(&mut self) -> Option<String> {
         match self {
-            Disk::Background => fetch::token().ok(),
-            Disk::Command => fetch::token_now(),
+            Disk::Background => fetch::token(),
+            Disk::Command { .. } => fetch::token_now().ok(),
+            Disk::Unchecked => None,
         }
     }
 }
@@ -830,6 +879,31 @@ mod tests {
         let (outcome, sent) = send_cli(&mut ledger, &[Some(403)]);
         assert_eq!(outcome, Sent::Refused(Some(403), Refusal::Forbidden));
         assert_eq!(sent, ["pk.old"]);
+    }
+
+    #[test]
+    fn a_command_token_just_fetched_or_overridden_is_not_replaced() {
+        for (ledger, retries) in [
+            (Disk::Command { fetched: false }, true),
+            (Disk::Command { fetched: true }, false),
+            (Disk::Unchecked, false),
+        ] {
+            for refusal in [
+                Refusal::Dead,
+                Refusal::Forbidden,
+                Refusal::Unknown,
+                Refusal::NotFetched,
+            ] {
+                assert_eq!(ledger.retries(refusal), retries, "{refusal:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_override_is_never_checked_or_replaced() {
+        let mut ledger = Disk::Unchecked;
+        assert_eq!(ledger.refused("report", "pk.override"), Refusal::NotFetched);
+        assert_eq!(ledger.fresh(), None);
     }
 
     #[test]

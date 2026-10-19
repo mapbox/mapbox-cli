@@ -22,7 +22,8 @@ that may never merge. They are not releases and are not listed here.
 - New `mapbox report "<message>"` sends feedback about the CLI itself to
   the Mapbox CLI team. It is sent with the CLI's own token, so it needs no
   login, no `user-feedback:write` scope, and files nothing under your own
-  account; your token stands in only while the CLI's can't be used.
+  account; your token stands in only while the CLI's can't be used, or
+  when you pass `--token` or `--use-login`.
   `--category` is optional and defaults to `general`. Two new error codes
   say why the CLI's token couldn't be used when you have no token either:
   `cli_token_unavailable` and `cli_token_forbidden` (see

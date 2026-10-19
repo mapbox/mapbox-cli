@@ -19,6 +19,15 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- The CLI's own token, used for telemetry when you have no token of your
+  own, is now fetched from `https://cli.mapbox.com/config/token.json` and
+  kept in `~/.mapbox/cli-token.json` instead of being built into the binary,
+  so it can be rotated without a release. It is replaced only when the
+  Tokens API says it is revoked, invalid or expired; a single API refusing
+  it is not enough. If the endpoint still serves the dead token, it is asked
+  again hourly three times, then daily. A build from source now fetches it
+  too.
+
 - `tilesets query` renders as a numbered list under `-o text` again, as
   documented. It had printed pretty JSON since 0.2.0, when the command moved
   from `tilequery get` and the renderer kept matching the old name.

@@ -302,10 +302,10 @@ It never includes a file path or free text you typed. It carries a random ID
 that is replaced on the first run a day after it was created. It is sent in
 the background, so a command never waits for it, and dropped if it can't be
 delivered. It is sent with your own token (`--token`, `MAPBOX_ACCESS_TOKEN`
-or your login) when you have one, and with a token built into the CLI
+or your login) when you have one, and with the CLI's own public token
 otherwise; Mapbox Events keeps the token an event was sent with, and the
-account it belongs to, alongside the event. A build from source has no
-built-in token, so with no token of your own the event is dropped.
+account it belongs to, alongside the event. With no token of your own and
+no way to fetch the CLI's, the event is dropped.
 `MAPBOX_CLI_NO_TELEMETRY=1` or `mapbox config set telemetry off` turns it off.
 
 ### Diagnostics and settings
@@ -479,8 +479,11 @@ and `--dry-run` show it alongside everything else on the request.
 Requests the CLI makes for itself rather than for your commands use your own
 token whenever you have one: `--token` or `MAPBOX_ACCESS_TOKEN`, then your
 login. Only when you have none does it use the CLI's token:
-`MAPBOX_CLI_TOKEN`, or one built into the binary. The CLI's token is only
-used for what `src/cli_token.rs` lists for it, today just telemetry.
+`MAPBOX_CLI_TOKEN`, or a public token fetched from
+`https://cli.mapbox.com/config/token.json` and kept in
+`~/.mapbox/cli-token.json`. It is replaced only when the Tokens API says it
+is revoked, invalid or expired, not when one API refuses it. The CLI's token
+is only used for what `src/cli_token.rs` lists for it, today just telemetry.
 
 ### Proxies
 

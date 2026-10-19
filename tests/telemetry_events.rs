@@ -6,9 +6,11 @@
 //! user typed, disappears when telemetry is off, and never changes stdout.
 //!
 //! `MAPBOX_INTERNAL_TELEMETRY_URL` points the binary at a loopback server,
-//! which is where these tests read the event. `cargo test` builds no token
-//! in, and a run with no token drops its event, so most runs here are given
-//! `MAPBOX_CLI_TOKEN` to send with.
+//! which is where these tests read the event. The CLI's token endpoint is
+//! pointed at a dead port, and a run with no token drops its event, so most
+//! runs here are given `MAPBOX_CLI_TOKEN` to send with. The tests of the
+//! fetched token point `MAPBOX_INTERNAL_CLI_TOKEN_URL`, and the Tokens API
+//! check behind `MAPBOX_INTERNAL_TOKENS_URL`, at loopback servers.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -46,6 +48,7 @@ fn command(home: &Path) -> Command {
         .env_remove("MAPBOX_CLI_NO_TELEMETRY")
         .env_remove("MAPBOX_INTERNAL_TELEMETRY_URL")
         .env_remove("MAPBOX_CLI_TOKEN")
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
         .env_remove("MAPBOX_INTERNAL_TELEMETRY_SEND")
         .env_remove("MAPBOX_INTERNAL_TELEMETRY_LOG")
         .env_remove("SUDO_USER")
@@ -763,19 +766,225 @@ fn sending_never_creates_the_config_directory() {
 #[test]
 fn without_a_token_the_event_is_dropped() {
     let home = scratch("no-token");
+    // The token endpoint is unreachable, which only the child finds out.
     let out = command(&home)
         .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
         .args(["config", "list"])
         .output()
         .expect("run mapbox");
     assert!(out.status.success());
-    let lines = deliveries(&home, 1);
-    assert_eq!(lines.len(), 1, "{lines:?}");
-    assert_eq!(lines[0]["stage"], "no_token");
+    let lines = deliveries(&home, 2);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(lines[0]["stage"], "queued");
+    assert_eq!(lines[1]["error"], "no token to send with");
     let kept: Vec<PathBuf> = std::fs::read_dir(config_dir(&home).join(".telemetry"))
         .expect("the telemetry directory")
         .map(|e| e.expect("an entry").path())
         .filter(|p| p.extension().is_some_and(|ext| ext == "jsonl"))
         .collect();
     assert!(kept.is_empty(), "the event was kept on disk: {kept:?}");
+}
+
+/// A server that answers one request with `status` and `body`, and reports
+/// that it was asked.
+fn answer_once(status: &'static str, body: &'static str) -> (mpsc::Receiver<()>, String) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let addr = listener.local_addr().expect("the bound address");
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            match stream.read(&mut byte) {
+                Ok(1) => head.push(byte[0]),
+                _ => break,
+            }
+        }
+        // Read the body too: closing with it unread resets the connection
+        // before the client sees the answer.
+        let head = String::from_utf8_lossy(&head).into_owned();
+        let length = head
+            .lines()
+            .find_map(|l| {
+                let (name, value) = l.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())?
+            })
+            .unwrap_or(0);
+        let _ = stream.read_exact(&mut vec![0u8; length]);
+        let _ = sender.send(());
+        let _ = write!(
+            stream,
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+    });
+    (receiver, format!("http://{addr}/config/token.json"))
+}
+
+/// Waits for the child to have written the CLI token's state, which happens
+/// after the run itself has exited.
+fn cli_token_state(home: &Path, contains: &str) -> Value {
+    let path = config_dir(home).join("cli-token.json");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if text.contains(contains) {
+                return serde_json::from_str(&text).expect("the state is JSON");
+            }
+        }
+        assert!(Instant::now() < deadline, "no state holding {contains}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// With no token of the user's and no `MAPBOX_CLI_TOKEN`, the event goes
+/// with the token fetched from the endpoint, which is kept for the next run.
+#[test]
+fn the_fetched_token_sends_the_event_and_is_kept() {
+    let home = scratch("send-fetched");
+    let (asked, token_url) = answer_once("200 OK", r#"{"token":"pk.fetched"}"#);
+    let (received, url) = events_server(true);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert_eq!(sent_with(&received), "pk.fetched");
+    asked
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the endpoint was asked");
+    assert_eq!(cli_token_state(&home, "pk.fetched")["token"], "pk.fetched");
+
+    // The endpoint is gone now; the kept token is enough.
+    let (received, url) = events_server(true);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert_eq!(sent_with(&received), "pk.fetched");
+}
+
+/// A `401` to the kept token, which the Tokens API says is revoked, marks
+/// it, and the next run fetches a new one.
+#[test]
+fn a_revoked_token_is_fetched_again_on_the_next_run() {
+    let home = scratch("send-rejected");
+    std::fs::write(
+        config_dir(&home).join("cli-token.json"),
+        r#"{"token":"pk.old"}"#,
+    )
+    .expect("write the state");
+    let (_, events_url) = answer_once("401 Unauthorized", r#"{"message":"Not Authorized"}"#);
+    let (checked, tokens_url) = answer_once("200 OK", r#"{"code":"TokenRevoked"}"#);
+    let out = command(&home)
+        .env(
+            "MAPBOX_INTERNAL_TELEMETRY_URL",
+            events_url.replace("/config/token.json", "/events/v2"),
+        )
+        .env("MAPBOX_INTERNAL_TOKENS_URL", &tokens_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    checked
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the token was checked");
+    assert_eq!(cli_token_state(&home, "rejected\":true")["token"], "pk.old");
+
+    let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.new"}"#);
+    let (received, url) = events_server(true);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert_eq!(sent_with(&received), "pk.new");
+}
+
+/// A `401` to a token the Tokens API calls valid is this API refusing it,
+/// not the token being dead, so it is kept.
+#[test]
+fn a_token_an_api_refuses_is_kept() {
+    let home = scratch("send-forbidden");
+    std::fs::write(
+        config_dir(&home).join("cli-token.json"),
+        r#"{"token":"pk.kept"}"#,
+    )
+    .expect("write the state");
+    let (_, events_url) = answer_once("401 Unauthorized", r#"{"message":"Not Authorized"}"#);
+    let (checked, tokens_url) = answer_once("200 OK", r#"{"code":"TokenValid"}"#);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
+        .env(
+            "MAPBOX_INTERNAL_TELEMETRY_URL",
+            events_url.replace("/config/token.json", "/events/v2"),
+        )
+        .env("MAPBOX_INTERNAL_TOKENS_URL", &tokens_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    checked
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the token was checked");
+    let lines = deliveries(&home, 2);
+    assert_eq!(lines[1]["status"], 401, "{lines:?}");
+    let state: Value = serde_json::from_str(
+        &std::fs::read_to_string(config_dir(&home).join("cli-token.json")).expect("the state"),
+    )
+    .expect("the state is JSON");
+    assert_eq!(state, serde_json::json!({ "token": "pk.kept" }));
+}
+
+/// The endpoint still serving the rejected token is not asked again for an
+/// hour, and the event is dropped meanwhile.
+#[test]
+fn the_rejected_token_served_again_waits_before_asking() {
+    let home = scratch("send-still-rejected");
+    std::fs::write(
+        config_dir(&home).join("cli-token.json"),
+        r#"{"token":"pk.old","rejected":true}"#,
+    )
+    .expect("write the state");
+    let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.old"}"#);
+    let out = command(&home)
+        .env(
+            "MAPBOX_INTERNAL_TELEMETRY_URL",
+            "http://127.0.0.1:1/events/v2",
+        )
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    let state = cli_token_state(&home, "retry_at");
+    assert_eq!(state["failures"], 1);
+
+    // Nothing listens at the endpoint now, and nothing should try it.
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
+        .env(
+            "MAPBOX_INTERNAL_TELEMETRY_URL",
+            "http://127.0.0.1:1/events/v2",
+        )
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    let lines = deliveries(&home, 1);
+    assert_eq!(lines.last().expect("a delivery line")["stage"], "no_token");
 }

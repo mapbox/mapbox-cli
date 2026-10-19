@@ -567,3 +567,30 @@ fn only_telemetry_and_doctor_read_the_env_opt_out_alone() {
          persisted setting: {unexpected:?}. Call `telemetry::telemetry_allowed` instead."
     );
 }
+
+/// Every end-to-end test file that runs the binary keeps the CLI token's
+/// fetch off the network.
+///
+/// Every build fetches the CLI's token from cli.mapbox.com when it needs one,
+/// a test build included: telemetry's child does, and so does a command that
+/// prefers the CLI's token. Pointing `MAPBOX_INTERNAL_CLI_TOKEN_URL` at
+/// loopback is the decision this asks for, on every command a file builds.
+#[test]
+fn every_test_that_runs_the_binary_keeps_the_token_fetch_offline() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let mut undecided: Vec<String> = files_under(&dir, &["rs"])
+        .into_iter()
+        .filter_map(|(name, path)| {
+            let text = std::fs::read_to_string(&path).expect("read a test");
+            let decided = text.contains(r#".env("MAPBOX_INTERNAL_CLI_TOKEN_URL""#);
+            (text.contains("CARGO_BIN_EXE_mapbox") && !decided).then_some(name)
+        })
+        .collect();
+    undecided.sort();
+    assert!(
+        undecided.is_empty(),
+        "these run `mapbox` without setting MAPBOX_INTERNAL_CLI_TOKEN_URL, so a run \
+         that needs the CLI's token fetches it from cli.mapbox.com: {undecided:?}. \
+         Point it at loopback on the command they build."
+    );
+}

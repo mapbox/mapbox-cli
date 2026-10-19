@@ -1456,6 +1456,29 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             deprecation::warn_endpoint(op, &op.command());
 
             let dry_run = executor::wants_dry_run(op_matches);
+            let flags = executor::RunFlags {
+                debug,
+                assume_yes,
+                dry_run,
+                // Read here rather than beside the other globals at the
+                // top, so that `MAPBOX_TIMEOUT` is only looked at by a
+                // command it can apply to. A warning about an unreadable
+                // one in front of `generate-skills`, which sends nothing,
+                // would be a note about a request that is not happening.
+                timeout: http::requested(matches),
+            };
+            let command = op.command();
+
+            // Ahead of the user's credentials, so a run the CLI's token
+            // serves never refreshes a login it will not send.
+            let mut cli_failure = None;
+            if cli_token::use_for(&command) == Some(cli_token::Use::Preferred) {
+                let username = matches.get_one::<String>("username").cloned();
+                match try_cli_token(op, op_matches, &command, username.as_deref(), flags, mode) {
+                    CliAttempt::Done(result) => return result,
+                    CliAttempt::Unusable(error) => cli_failure = Some(error),
+                }
+            }
 
             // Resolve token: explicit flag/env takes priority, then stored
             // credentials (auto-refreshed, except under `--dry-run` — a stale
@@ -1475,22 +1498,25 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             }
             .or_else(|| stored_creds.as_ref().map(|c| c.access_token.clone()));
 
+            // A command that could not use the CLI's token falls back to the
+            // user's, and with none says why the CLI's failed rather than
+            // sending a request bound to be refused. A dry run sends nothing
+            // and fetches nothing, so it plans with whatever there is.
+            if let Some(failure) = cli_failure.filter(|_| !dry_run) {
+                if token.is_none() {
+                    return Err(failure.into());
+                }
+                output::progress(&format!(
+                    "{} Using your own token instead.",
+                    failure.message
+                ));
+            }
             if use_login && token.is_none() {
                 return Err(no_stored_credentials(profile));
             }
             if let Some(token) = &token {
                 run_record::set_resolved_token(matches, use_login, token);
             }
-            // After the record above, which knows only the user's own
-            // sources. `--use-login` already returned when it found nothing.
-            let token = token.or_else(|| {
-                let token = cli_token::for_command(op)?;
-                output::progress(
-                    "No token of your own, so this request uses the CLI's token. \
-                     Run `mapbox auth login` to use yours.",
-                );
-                Some(token)
-            });
             let username: Option<String> = matches
                 .get_one::<String>("username")
                 .cloned()
@@ -1501,17 +1527,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                 op_matches,
                 token.as_deref(),
                 username.as_deref(),
-                executor::RunFlags {
-                    debug,
-                    assume_yes,
-                    dry_run,
-                    // Read here rather than beside the other globals at the
-                    // top, so that `MAPBOX_TIMEOUT` is only looked at by a
-                    // command it can apply to. A warning about an unreadable
-                    // one in front of `generate-skills`, which sends nothing,
-                    // would be a note about a request that is not happening.
-                    timeout: http::requested(matches),
-                },
+                flags,
                 mode,
             )
             // The executor does not know where its token came from, and that
@@ -1529,6 +1545,105 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
     }
 
     Ok(())
+}
+
+/// How [`try_cli_token`] ended.
+enum CliAttempt {
+    /// The CLI's token was used; this is the command's own result.
+    Done(Result<()>),
+    /// It could not be used, for the reason given, and the user's token may
+    /// stand in.
+    Unusable(CliError),
+}
+
+/// Runs a [`cli_token::Use::Preferred`] command on the CLI's token.
+///
+/// A `401` or `403` is checked with [`cli_token::refused`]. A dead token is
+/// replaced and the request sent once more, since a refused request was not
+/// acted on; a token this API refuses, or one the check could not explain,
+/// is handed back as unusable.
+fn try_cli_token(
+    op: &spec::Operation,
+    op_matches: &clap::ArgMatches,
+    command: &str,
+    username: Option<&str>,
+    flags: executor::RunFlags,
+    mode: output::Mode,
+) -> CliAttempt {
+    let execute =
+        |token: &str| executor::execute(op, op_matches, Some(token), username, flags, mode);
+    let mut token = match cli_token::for_command(command, !flags.dry_run) {
+        Ok(token) => token,
+        Err(why) => return CliAttempt::Unusable(cli_token_unusable(&why)),
+    };
+    let mut replaced = false;
+    loop {
+        let error = match execute(&token) {
+            Err(error) if is_refusal(&error) => error,
+            result => return CliAttempt::Done(result),
+        };
+        let unusable = |code: &str, message: &str| {
+            CliAttempt::Unusable(
+                CliError::new(code, message).with_request_id(request_id_of(&error)),
+            )
+        };
+        match cli_token::refused(&token) {
+            cli_token::Refusal::Dead if !replaced => match cli_token::for_command(command, true) {
+                Ok(fresh) if fresh != token => {
+                    token = fresh;
+                    replaced = true;
+                }
+                Ok(_) => {
+                    return unusable(
+                        "cli_token_unavailable",
+                        "The CLI's token is revoked and no new one is published yet.",
+                    )
+                }
+                Err(why) => return CliAttempt::Unusable(cli_token_unusable(&why)),
+            },
+            cli_token::Refusal::Dead => {
+                return unusable(
+                    "cli_token_unavailable",
+                    "The CLI's token is revoked, and so is the one just fetched.",
+                )
+            }
+            cli_token::Refusal::Forbidden => {
+                return unusable(
+                    "cli_token_forbidden",
+                    "The CLI's token is valid, but this API does not accept it.",
+                )
+            }
+            cli_token::Refusal::Unknown => {
+                return unusable(
+                    "cli_token_unavailable",
+                    "The CLI's token was refused, and checking why failed.",
+                )
+            }
+        }
+    }
+}
+
+/// Why a command could not have the CLI's token, as the error it fails with.
+/// The code tells a script which it was: one that waiting may fix, and one
+/// that it never will.
+fn cli_token_unusable(why: &cli_token::Unusable) -> CliError {
+    let code = match why {
+        cli_token::Unusable::NotAllowed => "cli_token_not_allowed",
+        cli_token::Unusable::Unavailable(_) => "cli_token_unavailable",
+    };
+    CliError::new(code, format!("Can't get the CLI's token: {why}."))
+}
+
+fn is_refusal(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<CliError>()
+        .is_some_and(|e| matches!(e.status, Some(401 | 403)))
+}
+
+fn request_id_of(error: &anyhow::Error) -> Option<String> {
+    error
+        .downcast_ref::<CliError>()
+        .and_then(|e| e.request_id.clone())
 }
 
 #[cfg(test)]

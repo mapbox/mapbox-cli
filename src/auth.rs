@@ -36,7 +36,7 @@ const TOKEN_ENDPOINT: &str = "https://api.mapbox.com/oauth/2.1/token";
 const REGISTRATION_ENDPOINT: &str = "https://api.mapbox.com/oauth/register";
 /// Where `--verify` sends the token. Reached with the token as a query
 /// parameter, so every failure path out of it has to redact.
-const VALIDATION_ENDPOINT: &str = "https://api.mapbox.com/tokens/v2";
+pub(crate) const VALIDATION_ENDPOINT: &str = "https://api.mapbox.com/tokens/v2";
 
 // Every scope here must be one the Accounts API's dynamic client
 // registration (DCR) will actually grant — a scope it doesn't recognize is
@@ -1317,16 +1317,26 @@ fn verify_token(token: &str, debug: bool, timeout: Option<Duration>) -> Result<V
         // pasted issue reports, and the token is a query parameter here.
         eprintln!("[debug] GET {VALIDATION_ENDPOINT}?access_token=<redacted>");
     }
+    // The one request `auth` makes to a Mapbox API rather than to the
+    // authorization server, so it is the one `--timeout` has to reach. The
+    // other three — refresh, registration, code exchange — carry a few
+    // hundred bytes each and keep the client's own budget.
+    check_token(
+        VALIDATION_ENDPOINT,
+        token,
+        crate::http::budget(timeout, crate::http::Payload::Bounded),
+    )
+}
 
+/// The request behind [`verify_token`], at `url`: the endpoint's answer,
+/// whose `code` is the verdict. Also how [`crate::cli_token`] tells a revoked
+/// token from one an API merely refuses.
+pub(crate) fn check_token(url: &str, token: &str, timeout: Duration) -> Result<Value> {
     let response = crate::http::send(
         crate::http::client()?
-            .get(VALIDATION_ENDPOINT)
+            .get(url)
             .query(&[("access_token", token)])
-            // The one request `auth` makes to a Mapbox API rather than to the
-            // authorization server, so it is the one `--timeout` has to reach.
-            // The other three — refresh, registration, code exchange — carry a
-            // few hundred bytes each and keep the client's own budget.
-            .timeout(crate::http::budget(timeout, crate::http::Payload::Bounded)),
+            .timeout(timeout),
     )
     // `reqwest::Error`'s `Display` appends the URL, and the token is in it.
     .map_err(|e| crate::executor::transport_failure("Token check failed", e))?;

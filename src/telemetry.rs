@@ -1,5 +1,6 @@
 //! What this CLI's `User-Agent` says about the environment, beyond its
-//! version. `MAPBOX_CLI_NO_TELEMETRY` disables all of it.
+//! version. `MAPBOX_CLI_NO_TELEMETRY` or `mapbox config set telemetry off`
+//! disables all of it — and the update check and the run's event with it.
 //!
 //! `crate::http` builds the client and attaches [`user_agent`]'s result.
 
@@ -17,8 +18,17 @@ const NOT_AN_OPT_OUT: [&str; 6] = ["0", "f", "false", "n", "no", "off"];
 /// Always sent, even when telemetry is off.
 pub const PRODUCT_TOKEN: &str = concat!("mapbox-cli/", env!("CARGO_PKG_VERSION"));
 
-/// Whether anything past [`PRODUCT_TOKEN`] may be sent.
+/// Whether anything past [`PRODUCT_TOKEN`] may be sent: neither opt-out is
+/// on. The two cover the same things, one for a shell and one for good, so
+/// every caller asks this rather than either alone. The setting is read
+/// afresh each time, so a run that turns it off stops at its next check.
 pub(crate) fn telemetry_allowed() -> bool {
+    env_allows_telemetry() && crate::config::telemetry_enabled()
+}
+
+/// `MAPBOX_CLI_NO_TELEMETRY` alone, for `doctor`, which reports the two
+/// opt-outs apart.
+pub(crate) fn env_allows_telemetry() -> bool {
     env_switch(MAPBOX_CLI_NO_TELEMETRY_ENV) != Some(true)
 }
 
@@ -100,7 +110,13 @@ fn terminal_marker() -> String {
 
 /// The full `User-Agent`: [`PRODUCT_TOKEN`], then markers if allowed.
 pub fn user_agent(command_group: Option<&str>) -> String {
-    if telemetry_allowed() {
+    user_agent_if(telemetry_allowed(), command_group)
+}
+
+/// [`user_agent`] with the decision passed in, so a test isn't at the mercy
+/// of the persisted setting on the machine running it.
+fn user_agent_if(allowed: bool, command_group: Option<&str>) -> String {
+    if allowed {
         assemble(&telemetry_markers(command_group))
     } else {
         assemble(&[])
@@ -138,11 +154,11 @@ mod tests {
         let previous = std::env::var_os(MAPBOX_CLI_NO_TELEMETRY_ENV);
         let read = |value: &&str| {
             std::env::set_var(MAPBOX_CLI_NO_TELEMETRY_ENV, value);
-            user_agent(None)
+            user_agent_if(env_allows_telemetry(), None)
         };
 
         std::env::remove_var(MAPBOX_CLI_NO_TELEMETRY_ENV);
-        let unset = user_agent(None);
+        let unset = user_agent_if(env_allows_telemetry(), None);
         let opted_out: Vec<String> = opt_outs.iter().map(read).collect();
         let allowed: Vec<String> = left_alone.iter().map(read).collect();
 
@@ -152,6 +168,7 @@ mod tests {
         }
 
         assert!(unset.starts_with(PRODUCT_TOKEN), "{unset}");
+        assert_ne!(unset, PRODUCT_TOKEN, "no markers with the switch unset");
         for (value, agent) in opt_outs.iter().zip(&opted_out) {
             assert_eq!(agent, PRODUCT_TOKEN, "MAPBOX_CLI_NO_TELEMETRY={value:?}");
         }

@@ -546,3 +546,24 @@ fn every_test_that_runs_the_binary_decides_about_telemetry() {
          token sends real telemetry: {undecided:?}. Set it on the command they build."
     );
 }
+
+/// `env_allows_telemetry` is `MAPBOX_CLI_NO_TELEMETRY` alone, so a caller
+/// that gates telemetry on it ignores `mapbox config set telemetry off`.
+/// Only `telemetry.rs`, which combines the two, and `doctor.rs`, which
+/// reports them apart, may call it.
+#[test]
+fn only_telemetry_and_doctor_read_the_env_opt_out_alone() {
+    let unexpected: Vec<String> = sources()
+        .into_iter()
+        .filter(|(name, source)| {
+            !["telemetry.rs", "doctor.rs"].contains(&name.as_str())
+                && source.contains("env_allows_telemetry")
+        })
+        .map(|(name, _)| format!("src/{name}"))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "these modules call `telemetry::env_allows_telemetry`, which ignores the \
+         persisted setting: {unexpected:?}. Call `telemetry::telemetry_allowed` instead."
+    );
+}

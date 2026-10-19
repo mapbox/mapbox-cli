@@ -4265,6 +4265,7 @@ was set in, and stays in every future shell instead.
 | `update-check` | `on` | The update notice; mirrors `MAPBOX_NO_UPDATE_CHECK` (see [Update notices](../README.md#update-notices)) |
 | `history` | `on` | [Command history](../README.md#command-history), read by `mapbox history`; `MAPBOX_HISTORY=0` or `=1` overrides it for a session |
 | `log` | `off` | [Diagnostic logs](../README.md#diagnostic-logs), shown by `mapbox history show`; `MAPBOX_LOG=1` or `=0` overrides it for a session. Needs `history` on: `config set log on` with history off fails with `history_required` |
+| `telemetry` | `on` | Telemetry — the run's event, the `User-Agent` markers and the update notice; mirrors `MAPBOX_CLI_NO_TELEMETRY` (see [Privacy](../README.md#privacy)) |
 
 ### `mapbox config get`
 
@@ -4276,7 +4277,7 @@ than failing, the same forgiving read the update-check cache itself uses.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to read: `update-check`, `history` or `log`. |
+| `<key>` | Which setting to read: `update-check`, `history`, `log` or `telemetry`. |
 
 #### Examples
 
@@ -4315,7 +4316,7 @@ without an environment variable.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to change: `update-check`, `history` or `log`. |
+| `<key>` | Which setting to change: `update-check`, `history`, `log` or `telemetry`. |
 | `<value>` | `on` or `off`. |
 
 #### Examples
@@ -4374,6 +4375,7 @@ mapbox config list
 update-check  on
 history       on
 log           off
+telemetry     on
 ```
 
 </td><td>
@@ -4391,6 +4393,10 @@ log           off
   {
     "key": "log",
     "value": false
+  },
+  {
+    "key": "telemetry",
+    "value": true
   }
 ]
 ```
@@ -4409,7 +4415,7 @@ default, a key explicitly set to the old default value does not.
 
 | Parameter | Effect |
 | --- | --- |
-| `<key>` | Which setting to clear: `update-check`, `history` or `log`. |
+| `<key>` | Which setting to clear: `update-check`, `history`, `log` or `telemetry`. |
 
 #### Examples
 
@@ -4703,6 +4709,7 @@ Telemetry:     on
   "proxy": { "active": [] },
   "switches": {
     "telemetry_allowed": true,
+    "telemetry_persisted": true,
     "update_check_env_opt_out": false,
     "update_check_persisted": true
   },
@@ -4718,6 +4725,10 @@ Telemetry:     on
 
 </td></tr>
 </table>
+
+In `switches`, `telemetry_allowed` is `MAPBOX_CLI_NO_TELEMETRY` alone and
+`telemetry_persisted` is `mapbox config set telemetry`; telemetry is on only
+when both are `true`.
 
 With `--verify`, a `connectivity` object joins the JSON and a `Reachable:`
 line joins the text — `{ "reachable": true, "status": 200 }`, or `{

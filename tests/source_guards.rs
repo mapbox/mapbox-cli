@@ -597,3 +597,34 @@ fn every_test_that_runs_the_binary_keeps_the_token_fetch_offline() {
          on the command they build."
     );
 }
+
+/// The repository URL is written in four places that cannot share it: the
+/// crate's `repo_url!`, `Cargo.toml`, and each installer, which is served on
+/// its own. They drifted once, and the crate's issues link pointed at a repo
+/// outside users can't open.
+#[test]
+fn every_copy_of_the_repository_url_agrees() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let expected = env!("CARGO_PKG_REPOSITORY");
+    // The first GitHub URL after `marker`, up to its closing quote.
+    let url_in = |file: &str, marker: &str| -> String {
+        let text = std::fs::read_to_string(root.join(file)).expect("read a file");
+        let after = &text[text
+            .find(marker)
+            .unwrap_or_else(|| panic!("{file} has no `{marker}`"))..];
+        let start = after.find("https://github.com/").expect("a GitHub URL");
+        let url = &after[start..];
+        url[..url.find(['"', '\'']).expect("a closing quote")].to_owned()
+    };
+    for (file, marker) in [
+        ("src/main.rs", "macro_rules! repo_url"),
+        ("scripts/install.sh", "REPO="),
+        ("scripts/install.ps1", "$Repo ="),
+    ] {
+        assert_eq!(
+            url_in(file, marker),
+            expected,
+            "{file} names a different repository than Cargo.toml's `repository`"
+        );
+    }
+}

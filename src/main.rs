@@ -12,7 +12,7 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 /// which see it only from here on.
 macro_rules! repo_url {
     () => {
-        "https://github.com/mapbox/cli"
+        "https://github.com/mapbox/mapbox-cli"
     };
 }
 

@@ -7,6 +7,15 @@ use clap::builder::{
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 
+/// The repository's URL, as a macro so that `concat!` can build links on it
+/// in a `const`, such as `remedy`'s table. Defined ahead of the modules,
+/// which see it only from here on.
+macro_rules! repo_url {
+    () => {
+        "https://github.com/mapbox/mapbox-cli"
+    };
+}
+
 mod account_usage;
 mod agent_detect;
 mod agent_skills;
@@ -56,7 +65,7 @@ use spec::ServiceSpec;
 /// The two installers keep a copy of their own each. They are downloaded and
 /// run on their own, with nothing of this crate beside them, so this is the
 /// single source for the Rust half rather than for all three.
-const REPO_URL: &str = "https://github.com/mapbox/cli";
+const REPO_URL: &str = repo_url!();
 
 /// Opens the top-level help when an agent is driving the CLI. Agents explore
 /// by chaining `--help` calls, one command at a time; `--schema` answers the
@@ -286,8 +295,9 @@ fn build_operation_command(op: &spec::Operation) -> Command {
         // A variadic positional builds the whole body on its own — see
         // below — so `--data` would be a second, redundant way to say the
         // same thing, with nothing else the body ever carries.
-        let takes_data =
-            (body.accepts_json() || text_body.is_some()) && op.variadic_body_array.is_none();
+        let takes_data = (body.accepts_json() || text_body.is_some())
+            && op.variadic_body_array.is_none()
+            && op.body_positional.is_none();
         if takes_data {
             cmd = cmd.arg(
                 Arg::new("data")
@@ -347,6 +357,18 @@ fn build_operation_command(op: &spec::Operation) -> Command {
             arg = arg.value_parser(PossibleValuesParser::new(&field.enum_values));
         }
         cmd = cmd.arg(arg);
+    }
+
+    // `merge_body_fields` reads it by `arg_name`, the same as a flag. A
+    // `fixed_body_fields` entry has no argument at all; its default is what
+    // gets sent.
+    if let Some(field) = &op.body_positional {
+        cmd = cmd.arg(
+            Arg::new(field.arg_name.clone())
+                .required(true)
+                .value_parser(not_blank)
+                .help(help_text(field)),
+        );
     }
 
     if let Some(variadic) = &op.variadic_body_array {
@@ -954,6 +976,7 @@ fn cli() -> u8 {
 /// error that makes it matter most.
 fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> u8 {
     let err = drop_subcommand_from_short_circuit_usage(err);
+    let err = whole_value_after_double_dash(err, raw_argv);
 
     // Clap uses 2 for a usage error and 0 for help/version; preserving that
     // is more useful to a caller than flattening everything to 1.
@@ -1135,6 +1158,53 @@ fn drop_subcommand_from_short_circuit_usage(mut err: clap::Error) -> clap::Error
         corrected
     };
     err.insert(ContextKind::Usage, ContextValue::StyledStr(corrected));
+    err
+}
+
+/// A positional body field is what the command is for, so an empty one
+/// would send a request with nothing in it.
+fn not_blank(value: &str) -> std::result::Result<String, String> {
+    if value.trim().is_empty() {
+        return Err("it is empty".to_owned());
+    }
+    Ok(value.to_owned())
+}
+
+/// Rewrites clap's tip for a value that starts with `-`, such as
+/// `mapbox report "-x is broken"`.
+///
+/// Clap names only the flag-like start of it (`-x`) and suggests
+/// `'-- -x'`, which would send `-x` alone. The tip has to quote the
+/// argument as typed, and say that flags go before the `--`: everything
+/// after it is a value, so a `--dry-run` there would become part of the
+/// message. Left alone for any other tip, such as a misspelled flag's.
+fn whole_value_after_double_dash(mut err: clap::Error, argv: &[std::ffi::OsString]) -> clap::Error {
+    if err.kind() != ErrorKind::UnknownArgument {
+        return err;
+    }
+    let passes_as_value = matches!(
+        err.get(ContextKind::Suggested),
+        Some(ContextValue::StyledStrs(tips))
+            if tips.iter().any(|tip| tip.to_string().starts_with("to pass "))
+    );
+    let Some(ContextValue::String(start)) = err.get(ContextKind::InvalidArg) else {
+        return err;
+    };
+    if !passes_as_value {
+        return err;
+    }
+    let Some(typed) = argv
+        .iter()
+        .filter_map(|arg| arg.to_str())
+        .find(|arg| arg.starts_with(start.as_str()))
+    else {
+        return err;
+    };
+    let mut tip = StyledStr::new();
+    tip.push_str(&format!(
+        "to pass '{typed}' as a value, put '--' before it, and every flag before the '--'"
+    ));
+    err.insert(ContextKind::Suggested, ContextValue::StyledStrs(vec![tip]));
     err
 }
 
@@ -1456,6 +1526,51 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             deprecation::warn_endpoint(op, &op.command());
 
             let dry_run = executor::wants_dry_run(op_matches);
+            let mut flags = executor::RunFlags {
+                debug,
+                assume_yes,
+                dry_run,
+                // Read here rather than beside the other globals at the
+                // top, so that `MAPBOX_TIMEOUT` is only looked at by a
+                // command it can apply to. A warning about an unreadable
+                // one in front of `generate-skills`, which sends nothing,
+                // would be a note about a request that is not happening.
+                timeout: http::requested(matches),
+                referer: None,
+            };
+            let command = op.command();
+
+            // Ahead of the user's credentials, so a run the CLI's token
+            // serves never refreshes a login it will not send. A typed
+            // `--token` or `--use-login` says which token to send, so the
+            // CLI's is not tried at all.
+            let mut cli_failure = None;
+            let chose_own_token = use_login || auth::typed_token(matches).is_some();
+            let cli = (!chose_own_token)
+                .then(|| cli_token::for_command(&command, !dry_run))
+                .flatten();
+            if let Some(cli) = cli {
+                let username = matches.get_one::<String>("username").cloned();
+                let attempt = try_cli_token(
+                    op,
+                    op_matches,
+                    &command,
+                    cli,
+                    username.as_deref(),
+                    flags,
+                    mode,
+                );
+                match attempt {
+                    CliAttempt::Done(result) => return result,
+                    CliAttempt::Unusable { error, why, sent } => {
+                        // The user already confirmed the request that was
+                        // refused; sending it again with their own token is
+                        // the same request, not a second one to agree to.
+                        flags.assume_yes |= sent;
+                        cli_failure = Some((error, why));
+                    }
+                }
+            }
 
             // Resolve token: explicit flag/env takes priority, then stored
             // credentials (auto-refreshed, except under `--dry-run` — a stale
@@ -1475,22 +1590,22 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             }
             .or_else(|| stored_creds.as_ref().map(|c| c.access_token.clone()));
 
+            // A command that could not use the CLI's token falls back to the
+            // user's, and with none says why the CLI's failed rather than
+            // sending a request bound to be refused. A dry run sends nothing
+            // and fetches nothing, so it plans with whatever there is.
+            if let Some((failure, why)) = cli_failure.filter(|_| !dry_run) {
+                if token.is_none() {
+                    return Err((*failure).with_remedy(no_own_token_remedy()).into());
+                }
+                output::progress(&format!("{why} Using your own token instead."));
+            }
             if use_login && token.is_none() {
                 return Err(no_stored_credentials(profile));
             }
             if let Some(token) = &token {
                 run_record::set_resolved_token(matches, use_login, token);
             }
-            // After the record above, which knows only the user's own
-            // sources. `--use-login` already returned when it found nothing.
-            let token = token.or_else(|| {
-                let token = cli_token::for_command(op)?;
-                output::progress(
-                    "No token of your own, so this request uses the CLI's token. \
-                     Run `mapbox auth login` to use yours.",
-                );
-                Some(token)
-            });
             let username: Option<String> = matches
                 .get_one::<String>("username")
                 .cloned()
@@ -1501,17 +1616,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                 op_matches,
                 token.as_deref(),
                 username.as_deref(),
-                executor::RunFlags {
-                    debug,
-                    assume_yes,
-                    dry_run,
-                    // Read here rather than beside the other globals at the
-                    // top, so that `MAPBOX_TIMEOUT` is only looked at by a
-                    // command it can apply to. A warning about an unreadable
-                    // one in front of `generate-skills`, which sends nothing,
-                    // would be a note about a request that is not happening.
-                    timeout: http::requested(matches),
-                },
+                flags,
                 mode,
             )
             // The executor does not know where its token came from, and that
@@ -1531,9 +1636,177 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
     Ok(())
 }
 
+/// How [`try_cli_token`] ended.
+enum CliAttempt {
+    /// The CLI's token was used; this is the command's own result.
+    Done(Result<()>),
+    /// It could not be used, and the user's token may stand in: `error` is
+    /// what the command fails with when there is none, and `why` says what
+    /// happened when there is. `sent` when a request went out and was
+    /// refused, so any confirmation was already given.
+    Unusable {
+        error: Box<CliError>,
+        why: String,
+        sent: bool,
+    },
+}
+
+/// Runs a [`cli_token::Use::Preferred`] command on the CLI's token, given
+/// what [`cli_token::for_command`] found for it, by the rules in
+/// [`cli_token::send_with_cli_token`].
+fn try_cli_token(
+    op: &spec::Operation,
+    op_matches: &clap::ArgMatches,
+    command: &str,
+    cli: Result<cli_token::CommandToken, cli_token::Unavailable>,
+    username: Option<&str>,
+    mut flags: executor::RunFlags,
+    mode: output::Mode,
+) -> CliAttempt {
+    let token = match cli {
+        Ok(token) => token,
+        Err(why) => {
+            let error = cli_token_unavailable(command, &why);
+            return CliAttempt::Unusable {
+                why: error.message.clone(),
+                error: Box::new(error),
+                sent: false,
+            };
+        }
+    };
+    // Only for the CLI's token: the user's, which may stand in after, goes
+    // out without it.
+    flags.referer = Some(cli_token::REFERER);
+    let execute =
+        |token: &str, flags| executor::execute(op, op_matches, Some(token), username, flags, mode);
+    // Sends nothing, so there is nothing to be refused, or to count.
+    if flags.dry_run {
+        return CliAttempt::Done(execute(&token.token, flags));
+    }
+    let sent = cli_token::send_for_command(
+        command,
+        token,
+        |token| {
+            let result = execute(token, flags);
+            // Confirmed once already, if the command asks.
+            flags.assume_yes = true;
+            result
+        },
+        |result| match result {
+            Ok(()) => Some(200),
+            Err(error) => error.downcast_ref::<CliError>().and_then(|e| e.status),
+        },
+    );
+    let (result, refusal) = match sent {
+        cli_token::Sent::Answered(result) => match rate_limited(result) {
+            // Every install shares the CLI's token, so a limit on it says
+            // nothing about the user's. A `429` was not acted on, so sending
+            // it again is not a second report; with no token of their own,
+            // the `429` is the answer.
+            Ok(error) => {
+                return CliAttempt::Unusable {
+                    why: provided_token(command, "Mapbox is rate-limiting it right now"),
+                    error,
+                    sent: true,
+                }
+            }
+            Err(result) => return CliAttempt::Done(result),
+        },
+        cli_token::Sent::Refused(result, refusal) => (result, refusal),
+    };
+    let (code, reason) = match refusal {
+        cli_token::Refusal::Dead => (
+            "cli_token_unavailable",
+            "it is revoked and no new one is published yet",
+        ),
+        cli_token::Refusal::Forbidden => ("cli_token_forbidden", "this API does not accept it"),
+        cli_token::Refusal::Unknown => (
+            "cli_token_forbidden",
+            "this API refused it, and checking why failed",
+        ),
+        // Refused, and not checked why: `MAPBOX_CLI_TOKEN`, or the token on
+        // disk changed meanwhile or could not be written.
+        cli_token::Refusal::NotFetched => ("cli_token_forbidden", "this API refused it"),
+    };
+    let request_id = result
+        .err()
+        .and_then(|e| e.downcast::<CliError>().ok())
+        .and_then(|e| e.request_id);
+    let message = provided_token(command, reason);
+    CliAttempt::Unusable {
+        why: message.clone(),
+        error: Box::new(CliError::new(code, message).with_request_id(request_id)),
+        sent: true,
+    }
+}
+
+/// The error of a request the API answered `429`, or the result as it was.
+fn rate_limited(result: Result<()>) -> std::result::Result<Box<CliError>, Result<()>> {
+    match result {
+        Err(error) if error.downcast_ref::<CliError>().and_then(|e| e.status) == Some(429) => Ok(
+            Box::new(error.downcast::<CliError>().expect("checked above")),
+        ),
+        result => Err(result),
+    }
+}
+
+/// Why `command` could not use the token the CLI provides, in words for
+/// someone who has never heard of it: what it is, then `reason`.
+fn provided_token(command: &str, reason: &str) -> String {
+    format!(
+        "`mapbox {command}` sends with a token the CLI provides, so it needs no login, \
+         but {reason}."
+    )
+}
+
+/// Why there was no CLI token to try, as the error a command fails with
+/// when the user has no token of their own either.
+fn cli_token_unavailable(command: &str, why: &cli_token::Unavailable) -> CliError {
+    let reason = match why {
+        cli_token::Unavailable::Unreachable => {
+            "cli.mapbox.com, where the CLI gets it, could not be reached"
+        }
+        cli_token::Unavailable::NoToken { revoked: true } => {
+            "it is revoked and no new one is published yet"
+        }
+        cli_token::Unavailable::NoToken { revoked: false } => {
+            "cli.mapbox.com did not return a usable one"
+        }
+        cli_token::Unavailable::NotFetched => "it has not been fetched yet",
+    };
+    CliError::new("cli_token_unavailable", provided_token(command, reason))
+}
+
+/// What to do when a command could not use the CLI's token and the user has
+/// none of their own: give it theirs.
+fn no_own_token_remedy() -> Remedy {
+    Remedy::default()
+        .with_fix("Log in with `mapbox auth login`, or pass `--token`, and it is sent with yours.")
+        .with_action(Some("mapbox auth login".to_owned()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every install shares the CLI's token, so its rate limit is no reason
+    /// to fail someone whose own token would work; nothing else is.
+    #[test]
+    fn only_a_429_on_the_clis_token_falls_back() {
+        let failed = |status: u16| -> Result<()> {
+            Err(CliError {
+                status: Some(status),
+                ..CliError::new(format!("http_{status}"), "Refused")
+            }
+            .into())
+        };
+        let error = rate_limited(failed(429)).expect("a 429 falls back");
+        assert_eq!(error.code, "http_429");
+        for status in [400, 404, 500] {
+            assert!(rate_limited(failed(status)).is_err(), "{status}");
+        }
+        assert!(matches!(rate_limited(Ok(())), Err(Ok(()))));
+    }
 
     /// Half the world has a negative longitude. Clap reads `-74.0` as a
     /// cluster of short flags unless told otherwise, which made every

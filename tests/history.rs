@@ -43,6 +43,8 @@ fn command(home: &Path) -> Command {
         .env_remove("MAPBOX_USERNAME")
         .env_remove("MAPBOX_OUTPUT")
         .env_remove("MAPBOX_HISTORY")
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/")
         .env_remove("MAPBOX_LOG")
         .env_remove("SUDO_USER")
         .env_remove("NO_PROXY")

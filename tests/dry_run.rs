@@ -40,7 +40,9 @@ fn command(config: &Path) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
     // Telemetry is not under test here, and would post to Mapbox.
     cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
-        .env_remove("MAPBOX_CLI_TOKEN");
+        .env_remove("MAPBOX_CLI_TOKEN")
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/");
     cmd.env_remove("MAPBOX_ACCESS_TOKEN")
         .env_remove("MapboxAccessToken")
         .env_remove("MAPBOX_USERNAME")
@@ -506,4 +508,395 @@ fn places_refuses_more_than_a_hundred_ids_before_sending() {
         "{}",
         stderr(&out)
     );
+}
+
+/// `report`'s message is its positional, `lat`/`lon` are sent without being
+/// typed, and it goes to the CLI endpoint, not the one `feedback create`
+/// files under the caller's account.
+#[test]
+fn report_sends_the_message_to_the_cli_endpoint() {
+    let config = config_dir("report");
+    let plan = |extra: &[&str]| {
+        let mut args = vec![
+            "-o",
+            "json",
+            "--token",
+            "sk.a-test-token",
+            "report",
+            "--dry-run",
+            "A test",
+        ];
+        args.extend_from_slice(extra);
+        let out = run(&config, &args);
+        assert!(out.status.success(), "{}", stderr(&out));
+        json(&stdout(&out))
+    };
+
+    let defaults = plan(&[]);
+    assert_eq!(
+        defaults["url"],
+        "https://api.mapbox.com/user-feedback/v1/cli-feedback"
+    );
+    let feedback = format!(
+        "A test\n\n— mapbox-cli {} on {}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS
+    );
+    assert_eq!(
+        defaults["body"]["json"],
+        serde_json::json!({ "feedback": feedback, "lat": 0, "lon": 0, "category": "general" })
+    );
+    assert_eq!(defaults["body"]["source"], "arguments");
+    assert_eq!(defaults["token"], "user");
+
+    let categorized = plan(&["--category", "bug"]);
+    assert_eq!(categorized["body"]["json"]["category"], "bug");
+}
+
+/// A terminal's dry run shows the message as it would be sent, and which
+/// token it would go with, rather than only the body's size.
+#[test]
+fn report_dry_run_shows_the_body_and_token_in_text() {
+    let config = config_dir("report-text");
+    let out = run(
+        &config,
+        &[
+            "-o",
+            "text",
+            "--token",
+            "sk.a-test-token",
+            "report",
+            "--dry-run",
+            "A test",
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("Token: yours"), "{text}");
+    assert!(
+        text.contains(r#""feedback": "A test\n\n— mapbox-cli "#),
+        "{text}"
+    );
+    assert!(!text.contains("--data"), "{text}");
+}
+
+/// Clap names only `-x` of `"-x is broken"` and would have it passed alone;
+/// the tip quotes the whole message.
+#[test]
+fn report_says_how_to_send_a_message_starting_with_a_dash() {
+    let config = config_dir("report-dash");
+    let out = run(
+        &config,
+        &[
+            "-o",
+            "json",
+            "--token",
+            "sk.a-test-token",
+            "report",
+            "--dry-run",
+            "-x is broken",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    let fix = json(&stderr(&out))["fix"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        fix.contains("'-x is broken'") && fix.contains("'--'"),
+        "{fix}"
+    );
+
+    let out = run(
+        &config,
+        &[
+            "-o",
+            "json",
+            "--token",
+            "sk.a-test-token",
+            "report",
+            "--dry-run",
+            "--",
+            "-x is broken",
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let feedback = json(&stdout(&out))["body"]["json"]["feedback"].clone();
+    assert!(
+        feedback
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("-x is broken\n"),
+        "{feedback}"
+    );
+}
+
+/// The positional is the whole body; a `--data` would be a second way to
+/// say it, or a way to send a place this endpoint has no use for. An empty
+/// message is refused before anything is sent.
+#[test]
+fn report_needs_a_message_and_takes_no_data() {
+    let config = config_dir("report-usage");
+    for args in [
+        &["--token", "sk.a-test-token", "report", "--dry-run"][..],
+        &["--token", "sk.a-test-token", "report", "--dry-run", ""][..],
+        &["--token", "sk.a-test-token", "report", "--dry-run", " \n "][..],
+        &[
+            "--token",
+            "sk.a-test-token",
+            "report",
+            "A test",
+            "--data",
+            "{}",
+            "--dry-run",
+        ][..],
+    ] {
+        let out = run(&config, args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stderr(&out));
+        assert!(stdout(&out).is_empty(), "{args:?}: {}", stdout(&out));
+    }
+}
+
+/// What `report` sends with, and what it says, when it cannot use the CLI's
+/// token. Every case here is decided before a request: the token endpoint
+/// is a dead port, and a cooldown is written to disk.
+mod report_token {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    fn now() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a clock after 1970")
+            .as_secs()
+    }
+
+    fn write_state(config: &Path, state: &str) {
+        std::fs::write(config.join("cli-token.json"), state).expect("write the state");
+    }
+
+    fn error_code(out: &Output) -> String {
+        json(&stderr(out))["code"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    /// A token endpoint on loopback that hands out `token` once.
+    fn token_endpoint(token: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+        let addr = listener.local_addr().expect("the bound address");
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") {
+                match stream.read(&mut byte) {
+                    Ok(1) => head.push(byte[0]),
+                    _ => break,
+                }
+            }
+            let body = format!(r#"{{"token":"{token}"}}"#);
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        });
+        format!("http://{addr}/config/token.json")
+    }
+
+    /// A request that goes nowhere: the proxy is a dead port, so `--debug`
+    /// shows what was about to be sent without anything reaching Mapbox.
+    fn sent_nowhere(config: &Path, args: &[&str]) -> Command {
+        let mut cmd = command(config);
+        cmd.env("HTTPS_PROXY", "http://127.0.0.1:9")
+            .env_remove("https_proxy")
+            .env_remove("ALL_PROXY")
+            .env_remove("all_proxy")
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
+            .args(args);
+        cmd
+    }
+
+    #[test]
+    fn with_no_token_at_all_it_says_the_clis_is_unavailable() {
+        let config = config_dir("report-no-tokens");
+        let out = run(&config, &["-o", "json", "report", "A test"]);
+        assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+        assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+        assert_eq!(error_code(&out), "cli_token_unavailable");
+        let error = json(&stderr(&out));
+        assert!(
+            error["fix"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("--token"),
+            "{error}"
+        );
+        assert_eq!(error["next_actions"][0], "mapbox auth login");
+        assert!(
+            !error["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("CLI's token"),
+            "{error}"
+        );
+    }
+
+    /// The CLI's token is restricted to its URL, so a request with it says
+    /// it comes from there.
+    #[test]
+    fn the_clis_token_goes_with_its_referer() {
+        let config = config_dir("report-referer");
+        let out = sent_nowhere(&config, &["--debug", "report", "A test"])
+            .env("MAPBOX_CLI_TOKEN", "pk.cli")
+            .output()
+            .expect("run mapbox");
+        let err = stderr(&out);
+        assert!(
+            err.contains("[debug] Referer: https://cli.mapbox.com/"),
+            "{err}"
+        );
+    }
+
+    /// Someone ran it, so a rest telemetry might take does not hold it back:
+    /// it sends with the CLI's token.
+    #[test]
+    fn a_cooldown_does_not_hold_report_back() {
+        let config = config_dir("report-not-resting");
+        write_state(
+            &config,
+            &format!(
+                r#"{{"token":"pk.saved","overridden":true,"cooldowns":{{"report":{{"failures":3,"until":{}}}}}}}"#,
+                now() + 3600
+            ),
+        );
+        let out = sent_nowhere(&config, &["--debug", "report", "A test"])
+            .output()
+            .expect("run mapbox");
+        let err = stderr(&out);
+        assert!(
+            err.contains("[debug] Referer: https://cli.mapbox.com/"),
+            "{err}"
+        );
+        assert!(!err.contains("recently"), "{err}");
+    }
+
+    /// Nor does the endpoint's backoff: with the kept token dead, it asks
+    /// for a new one there and then, and sends with it.
+    #[test]
+    fn report_fetches_through_the_backoff() {
+        let config = config_dir("report-through-backoff");
+        write_state(
+            &config,
+            &format!(
+                r#"{{"token":"pk.dead","rejected":true,"overridden":true,"failures":3,"retry_at":{}}}"#,
+                now() + 3600
+            ),
+        );
+        let out = sent_nowhere(&config, &["--debug", "report", "A test"])
+            .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", token_endpoint("pk.fresh"))
+            .output()
+            .expect("run mapbox");
+        let err = stderr(&out);
+        assert!(
+            err.contains("[debug] Referer: https://cli.mapbox.com/"),
+            "{err}"
+        );
+        let state = std::fs::read_to_string(config.join("cli-token.json")).expect("the state");
+        assert!(state.contains(r#""token":"pk.fresh""#), "{state}");
+    }
+
+    /// A command fetches past the backoff, so the reason it gives is what
+    /// that fetch found, not the backoff's wait, which it never waited for.
+    #[test]
+    fn an_unreachable_endpoint_is_reported_through_the_backoff() {
+        let config = config_dir("report-unreachable-backoff");
+        write_state(
+            &config,
+            &format!(
+                r#"{{"overridden":true,"failures":3,"retry_at":{}}}"#,
+                now() + 3600
+            ),
+        );
+        let out = run(&config, &["-o", "json", "report", "A test"]);
+        assert_eq!(error_code(&out), "cli_token_unavailable");
+        let err = stderr(&out);
+        assert!(err.contains("could not be reached"), "{err}");
+        assert!(!err.contains("trying again"), "{err}");
+    }
+
+    /// A miss on a command's fetch does not count toward the backoff, which
+    /// paces telemetry's fetches in the background.
+    #[test]
+    fn a_commands_miss_leaves_the_backoff_alone() {
+        let config = config_dir("report-miss-uncounted");
+        let state = r#"{"overridden":true,"failures":2}"#;
+        write_state(&config, state);
+        let out = command(&config)
+            .env(
+                "MAPBOX_INTERNAL_CLI_TOKEN_URL",
+                token_endpoint("not-a-token"),
+            )
+            .args(["-o", "json", "report", "A test"])
+            .output()
+            .expect("run mapbox");
+        assert_eq!(error_code(&out), "cli_token_unavailable");
+        let after = std::fs::read_to_string(config.join("cli-token.json")).expect("the state");
+        assert_eq!(after, state);
+    }
+
+    /// The user's own token is not restricted to anything of ours, and goes
+    /// without the CLI token's Referer when it stands in.
+    #[test]
+    fn the_users_token_goes_without_a_referer() {
+        let config = config_dir("report-no-referer");
+        let out = sent_nowhere(&config, &["--debug", "report", "A test"])
+            .env("MAPBOX_ACCESS_TOKEN", "sk.mine")
+            .output()
+            .expect("run mapbox");
+        let err = stderr(&out);
+        assert!(err.contains("Using your own token instead"), "{err}");
+        assert!(err.contains("[debug] POST"), "{err}");
+        assert!(!err.contains("Referer"), "{err}");
+    }
+
+    /// A typed `--token` is the user's choice for this run, so the CLI's
+    /// token is not tried even when there is one.
+    #[test]
+    fn a_typed_token_outranks_the_clis() {
+        let config = config_dir("report-typed-token");
+        let out = sent_nowhere(
+            &config,
+            &["--debug", "--token", "sk.mine", "report", "A test"],
+        )
+        .env("MAPBOX_CLI_TOKEN", "pk.cli")
+        .output()
+        .expect("run mapbox");
+        let err = stderr(&out);
+        assert!(err.contains("[debug] POST"), "{err}");
+        assert!(!err.contains("Referer"), "{err}");
+        assert!(!err.contains("CLI's token"), "{err}");
+    }
+
+    /// A dry run fetches nothing, so with no CLI token kept the plan goes out
+    /// with the user's.
+    #[test]
+    fn a_dry_run_with_no_kept_token_plans_with_the_users() {
+        let config = config_dir("report-dry-user");
+        let out = command(&config)
+            .env("MAPBOX_ACCESS_TOKEN", "sk.mine")
+            .args(["report", "--dry-run", "A test"])
+            .output()
+            .expect("run mapbox");
+        assert!(out.status.success(), "{}", stderr(&out));
+        let err = stderr(&out);
+        assert!(!err.contains("no access token was resolved"), "{err}");
+    }
 }

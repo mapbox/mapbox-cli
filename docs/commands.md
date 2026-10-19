@@ -1,8 +1,8 @@
 # Implemented commands
 
-Every command the CLI ships, including five auth commands, 40 API operations (35 across 9
-command groups, plus `directions`, `isochrone`, `map-match`, `matrix` and
-`places`), the tilesets-cli proxy, `completion` and `generate-skills`. Each is
+Every command the CLI ships, including five auth commands, 41 API operations (35 across 9
+command groups, plus `directions`, `isochrone`, `map-match`, `matrix`,
+`places` and `report`), the tilesets-cli proxy, `completion` and `generate-skills`. Each is
 shown in both of its renderings. Which one you get is decided by `--output`, whose default
 (`auto`) reads stdout: a terminal gets the left column, a pipe or redirect
 gets the right one. See
@@ -80,6 +80,8 @@ nests, and is typed `mapbox styles draft get`.
 **[Matrix](#matrix)** — [matrix](#mapbox-matrix)
 
 **[Places](#places)** — [places](#mapbox-places)
+
+**[Report](#report)** — [report](#mapbox-report)
 
 **[Search](#search)** — [search.forward](#mapbox-search-forward) ·
 [search.reverse](#mapbox-search-reverse) ·
@@ -462,10 +464,11 @@ No stored profiles. Run `mapbox auth login` to create one.
 
 ## API command groups
 
-35 operations across 9 command groups, plus five single-operation commands
-with no group: `directions`, `isochrone`, `map-match`, `matrix` and `places`.
+35 operations across 9 command groups, plus six single-operation commands
+with no group: `directions`, `isochrone`, `map-match`, `matrix`, `places`
+and `report`.
 Seven groups are generated from the OpenAPI specs vendored in `openapi/`;
-`search`, `feedback` and the five single commands are the exceptions —
+`search`, `feedback` and the six single commands are the exceptions —
 hand-authored specs versioned in this repo's own `custom-openapi/`, see
 `custom-openapi/README.md`.
 
@@ -490,7 +493,7 @@ moved to `tilesets` or `static`.
 | [`styles`](#styles) | **9** |
 | [`tilesets`](#tilesets) | **3** |
 
-The [Contents](#contents) list above names every one of the 40.
+The [Contents](#contents) list above names every one of the 41.
 
 **Everything else the Mapbox specs describe is not here at all.** Not
 hidden, not shipped as a command that refuses: absent from the spec content
@@ -598,8 +601,8 @@ Three things worth knowing about the read forms:
 
 A command that changes something takes `--dry-run`, which prints the request
 it would send, on stdout, and sends nothing. Which commands those are is not
-a list anyone keeps: it is every `POST`, `PUT`, `PATCH` and `DELETE` — 14 of
-the 40 operations — plus `auth login`, `auth logout`, `auth refresh` and
+a list anyone keeps: it is every `POST`, `PUT`, `PATCH` and `DELETE` — 15 of
+the 41 operations — plus `auth login`, `auth logout`, `auth refresh` and
 `generate-skills`. A read-only `GET` does not take it, so `mapbox styles
 list --dry-run` is a usage error rather than a no-op. It rehearses
 rather than describes: `--data` is parsed and every `--file` is read, so a
@@ -1999,6 +2002,90 @@ Error: No id resolved. See the ids above, or re-check them against a Search Box 
 $ echo $?
 1
 ```
+
+---
+
+## Report
+
+Feedback about the CLI itself — a bug, a missing command, anything else —
+sent to the Mapbox CLI team. It goes through an endpoint the Feedback API
+added for this CLI and doesn't document on docs.mapbox.com, so this
+section is its only description; see `custom-openapi/README.md` for how
+that spec is wired in.
+
+### `mapbox report`
+
+Sends one message, with the CLI's version and OS appended to it
+(`— mapbox-cli <version> on <os>`). It is filed under a Mapbox account, not
+yours, so `mapbox feedback list` won't show it, and no `user-feedback:write`
+scope is needed. There is no way to read it back or delete it, so
+`--dry-run` shows the body, and which token it would go with, without
+sending it.
+
+It is sent with the CLI's own token, not yours, so it works without a
+login. A typed `--token` or `--use-login` sends with yours instead, and the
+CLI's is not tried. If this API refuses
+the CLI's token, a fresh one is fetched there and then and the message sent
+again with it, so a token that was republished or fixed works at once.
+A `MAPBOX_CLI_TOKEN` override is sent as it is and never replaced.
+When the CLI's token still can't be used — it can't be fetched, it is
+revoked with no new one yet, this API refuses it, or it is rate-limited
+(`429`) — your own token is used instead, so the request then carries
+your token, though the message is still filed under Mapbox's account. With
+none of your own, the command fails with `cli_token_unavailable` or
+`cli_token_forbidden`, or with the `429` itself. Each run tries the CLI's
+token again; nothing here is put off for later. Telemetry settings don't
+apply: the token is shared and public, and fetching it sends nothing about
+you.
+
+#### Parameters
+
+`<message>` (positional, required) — what you want to tell the team.
+Quote it. An empty one is refused. One that starts with `-` goes after
+`--`, with every flag before it: `mapbox report --category bug -- "-x is
+ignored"`.
+
+| Flag | Effect |
+| --- | --- |
+| `--category <category>` | What kind of feedback this is, such as `bug` or `feature_request`. Free text. Defaults to `general`. |
+
+The API requires `lat` and `lon` as well; CLI feedback has no place, so
+both are always sent as `0`. The command takes no `--data`.
+
+#### Examples
+
+```sh
+mapbox report "I'd like support for optimization commands"
+mapbox report "tilesets query hangs behind my proxy" --category bug
+mapbox report "…" --dry-run
+```
+
+#### Outputs
+
+One report, captured live on 2026-10-19 and shown both ways. `-o text`
+shows only that it was sent, the message and its id; `-o json` is the
+answer as the API sent it:
+
+<table>
+<tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
+<tr><td>
+
+```text
+Sent to the Mapbox CLI team.
+feedback  Test from mapbox-cli development (report). Please ignore.
+
+          — mapbox-cli 0.3.0 on macos
+id        01a15503-8d64-75ed-aa9b-790ae4ba69a0
+```
+
+</td><td>
+
+```json
+{"category":"general","created_at":"2026-10-19T16:34:18.626Z","feedback":"Test from mapbox-cli development (report). Please ignore.\n\n— mapbox-cli 0.3.0 on macos","has_screenshot":false,"id":"01a15503-8d64-75ed-aa9b-790ae4ba69a0","location":{"lat":0,"lon":0},"received_at":"2026-10-19T16:34:18.626Z","status":"received","updated_at":"2026-10-19T16:34:18.626Z"}
+```
+
+</td></tr>
+</table>
 
 ---
 
@@ -5082,6 +5169,8 @@ faults and are not:
 | `binary_response` | The response was bytes and stdout is a terminal. Redirect it to a file. |
 | `missing_subcommand` | A command group was named with no operation. |
 | `cancelled` | A delete was declined at the confirmation prompt. Nothing was sent. |
+| `cli_token_unavailable` | A command that prefers the CLI's own token (`report`) could not use it — it could not be fetched, or it is revoked and no new one is published yet — and you have no token of your own to fall back to. |
+| `cli_token_forbidden` | This API refused the CLI's own token, even after fetching it afresh, and you have no token of your own to fall back to. |
 | `usage` | Anything else clap rejected. Exit code 2, not 1. |
 | `error` | Unclassified. |
 

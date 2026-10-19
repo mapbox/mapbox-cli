@@ -185,12 +185,9 @@ fn manifest_url() -> Option<String> {
     if let Some(override_url) = from_environment(URL_ENV) {
         return Some(override_url);
     }
-    match option_env!("MAPBOX_CLI_BUILD_ENV") {
-        // Only production. Staging and dev sit behind basic auth at the
-        // edge, and this does not send credentials.
-        Some("production") => Some(format!("{PRODUCTION_BASE_URL}/latest/manifest.json")),
-        _ => None,
-    }
+    // Only production. Staging and dev sit behind basic auth at the edge,
+    // and this does not send credentials.
+    http::is_production_build().then(|| format!("{PRODUCTION_BASE_URL}/latest/manifest.json"))
 }
 
 fn cache_path() -> Option<PathBuf> {

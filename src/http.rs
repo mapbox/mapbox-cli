@@ -310,9 +310,44 @@ fn is_mapbox_host(host: &str) -> bool {
     host == "mapbox.com" || host.ends_with(".mapbox.com")
 }
 
+/// A URL from the environment variable `name`, unless this build is a
+/// production release, which ignores it, so an injected variable cannot point
+/// a request, or the token it carries, at a host of its choosing. Builds that
+/// are not releases honor it, which is how the tests reach loopback servers.
+/// For a request that carries a token; `update_check`'s, which carries none,
+/// keeps its override in a release too.
+pub(crate) fn url_override(name: &str) -> Option<String> {
+    override_unless_production(is_production_build(), std::env::var(name).ok())
+}
+
+fn override_unless_production(production: bool, value: Option<String>) -> Option<String> {
+    let value = value?;
+    let value = value.trim();
+    (!production && !value.is_empty()).then(|| value.to_owned())
+}
+
+/// `MAPBOX_CLI_BUILD_ENV` is how the release pipeline marks a production
+/// build, read at compile time, so outside a release this is a constant
+/// `false`.
+pub(crate) fn is_production_build() -> bool {
+    option_env!("MAPBOX_CLI_BUILD_ENV") == Some("production")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_build_that_is_not_production_takes_a_url_override() {
+        let custom = || Some(" http://127.0.0.1:1/x ".to_string());
+        assert_eq!(
+            override_unless_production(false, custom()).as_deref(),
+            Some("http://127.0.0.1:1/x")
+        );
+        assert_eq!(override_unless_production(true, custom()), None);
+        assert_eq!(override_unless_production(false, None), None);
+        assert_eq!(override_unless_production(false, Some("  ".into())), None);
+    }
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::time::Duration;

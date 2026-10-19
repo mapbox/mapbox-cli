@@ -51,6 +51,7 @@ const GROUPS: &[(&str, &[&str])] = &[
             "completion",
             "tilesets-cli",
             "uninstall",
+            "report",
             "help",
         ],
     ),
@@ -95,6 +96,7 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
         "generate-skills",
         "Write Agent Skills describing this CLI's own commands",
     ),
+    ("report", "Send feedback about this CLI to Mapbox"),
     ("help", "Print help for mapbox or a command"),
 ];
 

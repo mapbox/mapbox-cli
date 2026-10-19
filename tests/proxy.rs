@@ -131,7 +131,9 @@ fn mapbox() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mapbox"));
     // Telemetry is not under test here, and would post to Mapbox.
     cmd.env("MAPBOX_CLI_NO_TELEMETRY", "1")
-        .env_remove("MAPBOX_CLI_TOKEN");
+        .env_remove("MAPBOX_CLI_TOKEN")
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", "http://127.0.0.1:9/")
+        .env("MAPBOX_INTERNAL_TOKENS_URL", "http://127.0.0.1:9/");
     cmd.args(["styles", "list", "--username", "someone", "-o", "json"])
         .env_remove("HTTP_PROXY")
         .env_remove("HTTPS_PROXY")

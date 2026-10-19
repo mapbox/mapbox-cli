@@ -11,10 +11,9 @@
 //!    credentials lock, only when it is about to expire.
 //! 3. `MAPBOX_CLI_TOKEN` at run time, the CLI's token for someone with none
 //!    of their own, such as a developer pointing at staging.
-//! 4. The token compiled in from `MAPBOX_CLI_BUNDLED_TOKEN` at build time. A
-//!    plain `cargo build` has none. It is a different variable from the
-//!    run-time one so that a token exported in a dev shell is not baked into
-//!    every local build.
+//! 4. The token published on the release channel, fetched and kept on disk
+//!    until the Tokens API calls it dead. See [`fetch`] for when it is
+//!    fetched again.
 //!
 //! A `401` moves on to the next token; any other answer is the caller's.
 //! [`send`]'s callers never see the token, so every one of them gets the same
@@ -27,20 +26,39 @@
 //! is for, not where it goes: a request the CLI makes for itself passes
 //! [`send`] an order that ends in [`Fallback::CliToken`], and every such order
 //! is defined in this file (today only [`TELEMETRY`]); a command must be in
-//! [`CLI_TOKEN_COMMANDS`]. Where the request is sent does not matter, so a URL
-//! overridden from the environment keeps the same fallback.
+//! [`CLI_TOKEN_COMMANDS`], which also says how it uses it ([`Use`]). Where
+//! the request is sent does not matter, so a URL overridden from the
+//! environment keeps the same fallback.
 //!
-//! # The bundled token is public
+//! Either way the token is sent through [`send_with_cli_token`], which holds
+//! the rules: check a refusal at once, replace a dead token, rest from an API
+//! that refuses a valid one. A command that cannot use the CLI's token falls
+//! back to the user's, and with none says why: unavailable right now
+//! ([`Unavailable`]) or refused by this API ([`Refusal`]).
 //!
-//! Anything compiled into a distributed binary can be pulled out with
-//! `strings`. The bundled token must therefore be a dedicated `pk.` token with
-//! the minimum scopes, and nothing may ever treat it as a secret. `build.rs`
+//! # The token is public
+//!
+//! It is served from a public URL, so it must be a dedicated `pk.` token with
+//! the minimum scopes, and nothing may ever treat it as a secret. [`fetch`]
 //! refuses anything that is not `pk.`.
+
+use std::cell::RefCell;
 
 use reqwest::blocking::{RequestBuilder, Response};
 use reqwest::StatusCode;
 
 use crate::{auth, http};
+
+mod fetch;
+
+pub(crate) use fetch::{Refusal, Unavailable};
+
+/// The `Referer` every request with the CLI's token carries. The published
+/// token is restricted to this URL, so that a web page elsewhere cannot use
+/// it; without the header, the API answers `401`. It keeps nothing out of a
+/// program that sets the header itself, which is all the restriction can do
+/// for a token anyone can read.
+pub(crate) const REFERER: &str = "https://cli.mapbox.com/";
 
 /// One place [`send`] may take a token from. A caller passes them in the
 /// order to try.
@@ -50,10 +68,13 @@ pub(crate) enum Fallback {
     UserToken,
     /// The stored login, refreshed only when it is about to expire.
     Login,
-    /// `MAPBOX_CLI_TOKEN` at run time, then the bundled token. Billed to the
+    /// `MAPBOX_CLI_TOKEN` at run time, then the fetched token. Billed to the
     /// CLI's account, so it only ever comes after every token of the user's.
     CliToken,
 }
+
+/// Telemetry's name as a caller of the CLI's token, for its cooldown.
+pub(crate) const TELEMETRY_CALLER: &str = "telemetry";
 
 /// Telemetry's order. The CLI's own usage data, so there is no user's
 /// account to bill when the user has no token.
@@ -65,31 +86,103 @@ pub(crate) const TELEMETRY: &[Fallback] =
 #[cfg(test)]
 const ORDERS: &[&[Fallback]] = &[TELEMETRY];
 
-/// Commands that may run on the CLI's token when the user has none, by the
-/// name `--schema` reports, each with the reason the CLI's account should
-/// carry their use. Command names are a compatibility promise, so an entry
-/// does not quietly move to another API when a spec changes its URL.
-const CLI_TOKEN_COMMANDS: &[(&str, &str)] = &[];
+/// How a command listed in [`CLI_TOKEN_COMMANDS`] uses the CLI's token.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Use {
+    /// The CLI's token first, and the user's own only while the CLI's
+    /// cannot be used: unavailable, resting, or refused by this API.
+    Preferred,
+}
 
-/// The CLI's token for a command's request, when the user has none of their
-/// own and the command is in [`CLI_TOKEN_COMMANDS`].
+/// Commands that may run on the CLI's token, by the name `--schema` reports,
+/// each with how and with the reason the CLI's account should carry their
+/// use. Command names are a compatibility promise, so an entry does not
+/// quietly move to another API when a spec changes its URL.
 ///
-/// Only for a user with no token at all: one whose token is rejected sees that
-/// rejection rather than having it hidden behind the CLI's token.
-pub(crate) fn for_command(op: &crate::spec::Operation) -> Option<String> {
-    let command = op.command();
-    if CLI_TOKEN_COMMANDS.iter().any(|(name, _)| *name == command) {
-        cli_token(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref())
-    } else {
-        None
+/// A command here must not read its body from stdin: a refused request is
+/// sent again, with a fresh token or the user's, and stdin can only be read
+/// once. `cli_token_commands_read_nothing_from_stdin` holds that.
+const CLI_TOKEN_COMMANDS: &[(&str, Use, &str)] = &[(
+    "report",
+    Use::Preferred,
+    "Feedback about the CLI is filed under Mapbox's own account, so it is the \
+     CLI's request rather than the user's, and it works for someone not \
+     logged in.",
+)];
+
+/// Whether `command` may run on the CLI's token at all.
+pub(crate) fn may_use(command: &str) -> bool {
+    use_for(command).is_some()
+}
+
+fn use_for(command: &str) -> Option<Use> {
+    CLI_TOKEN_COMMANDS
+        .iter()
+        .find(|(name, _, _)| *name == command)
+        .map(|(_, how, _)| *how)
+}
+
+/// The CLI's token as a command got it, for [`send_for_command`], which
+/// handles a refusal of it by where it came from.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct CommandToken {
+    pub(crate) token: String,
+    source: TokenSource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TokenSource {
+    /// `MAPBOX_CLI_TOKEN`.
+    Override,
+    /// The one on disk.
+    Saved,
+    /// Fetched by this run.
+    Fetched,
+}
+
+/// The CLI's token for `command`, or `None` when the command is not listed
+/// for it: the only way to ask, so an unlisted command never gets one.
+/// `fetch` is false where nothing may be sent, as in a dry run, and only a
+/// token already on disk is returned then.
+pub(crate) fn for_command(command: &str, fetch: bool) -> Option<Result<CommandToken, Unavailable>> {
+    match use_for(command)? {
+        Use::Preferred => Some(preferred_token(fetch)),
     }
 }
 
-/// `MAPBOX_CLI_TOKEN` at run time, then the bundled token.
-fn cli_token(override_token: Option<&str>) -> Option<String> {
-    usable(override_token)
-        .or_else(|| usable(option_env!("MAPBOX_CLI_BUNDLED_TOKEN")))
-        .map(str::to_owned)
+fn preferred_token(fetch: bool) -> Result<CommandToken, Unavailable> {
+    let given = |token: String, source| CommandToken { token, source };
+    if let Some(token) = usable(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref()) {
+        return Ok(given(token.to_owned(), TokenSource::Override));
+    }
+    if let Some(token) = fetch::saved_token() {
+        return Ok(given(token, TokenSource::Saved));
+    }
+    if !fetch {
+        return Err(Unavailable::NotFetched);
+    }
+    // A command is not held by the backoff, which paces background fetches:
+    // someone is waiting, and the endpoint may have a new token by now.
+    fetch::token_now().map(|token| given(token, TokenSource::Fetched))
+}
+
+/// Sends a command's request with the CLI's token by [`send_with_cli_token`]'s
+/// rules, as [`Disk::Command`] for a token from disk or the endpoint.
+/// `MAPBOX_CLI_TOKEN` is sent once and never checked, counted or replaced,
+/// as [`send`] treats it: a developer chose that token, and a refusal of it
+/// is theirs to see.
+pub(crate) fn send_for_command<R>(
+    command: &str,
+    given: CommandToken,
+    send: impl FnMut(&str) -> R,
+    status: impl Fn(&R) -> Option<u16>,
+) -> Sent<R> {
+    let mut ledger = match given.source {
+        TokenSource::Override => Disk::Unchecked,
+        TokenSource::Saved => Disk::Command { fetched: false },
+        TokenSource::Fetched => Disk::Command { fetched: true },
+    };
+    send_with_cli_token(command, given.token, &mut ledger, send, status)
 }
 
 /// The token the user gave this run, ranked as a command ranks it: with
@@ -120,23 +213,163 @@ pub(crate) fn user_token(matches: &clap::ArgMatches) -> Option<String> {
 /// request could not be sent at all; otherwise the first answer that was not
 /// a `401`, or the last `401` when every token was rejected.
 pub(crate) fn send(
+    caller: &str,
     order: &[Fallback],
     user_token: Option<&str>,
     profile: Option<&str>,
     request: impl Fn() -> RequestBuilder,
 ) -> Option<reqwest::Result<Response>> {
     let override_token = std::env::var("MAPBOX_CLI_TOKEN").ok();
+    let fetched = RefCell::new(None);
+    let send = |token: &str| http::send(request().query(&[("access_token", token)]));
+    // Any CLI token, a replacement for a dead one included.
+    let send_cli = |token: &str| {
+        http::send(
+            request()
+                .query(&[("access_token", token)])
+                .header(reqwest::header::REFERER, REFERER),
+        )
+    };
+    let attempt = |token: &str| {
+        // Only the fetched token goes through the CLI token's rules: the
+        // user's tokens are never checked or counted, nor is
+        // `MAPBOX_CLI_TOKEN`, which still carries the CLI token's Referer.
+        if fetched.borrow().as_deref() != Some(token) {
+            return if usable(override_token.as_deref()) == Some(token) {
+                send_cli(token)
+            } else {
+                send(token)
+            };
+        }
+        match send_with_cli_token(
+            caller,
+            token.to_owned(),
+            &mut Disk::Background,
+            send_cli,
+            |answer| answer.as_ref().ok().map(|r| r.status().as_u16()),
+        ) {
+            Sent::Answered(answer) | Sent::Refused(answer, _) => answer,
+        }
+    };
+    let fetch = || {
+        // A caller resting from the CLI's token sends nothing with it.
+        let token = (!fetch::cooling(caller)).then(fetch::token)??;
+        *fetched.borrow_mut() = Some(token.clone());
+        Some(token)
+    };
     resolve(
         order,
         Sources {
             user: user_token,
             override_token: override_token.as_deref(),
-            bundled: option_env!("MAPBOX_CLI_BUNDLED_TOKEN"),
         },
         || login_token(profile),
-        |token| http::send(request().query(&[("access_token", token)])),
+        fetch,
+        attempt,
         |response| response.status() == StatusCode::UNAUTHORIZED,
     )
+}
+
+/// What a request sent with the CLI's token came to.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Sent<R> {
+    /// An answer that was not a refusal, or no answer at all: the caller's.
+    Answered(R),
+    /// A `401` or `403` that replacing a dead token did not fix, and why.
+    Refused(R, Refusal),
+}
+
+/// The state on disk, as [`send_with_cli_token`] uses it, so its rules can
+/// be tested without it.
+pub(crate) trait Ledger {
+    fn refused(&mut self, caller: &str, token: &str) -> Refusal;
+    fn accepted(&mut self, caller: &str, token: &str);
+    /// Whether a request refused for `refusal` is worth sending again with
+    /// a [`fresh`](Ledger::fresh) token.
+    fn retries(&self, refusal: Refusal) -> bool;
+    fn fresh(&mut self) -> Option<String>;
+}
+
+/// `<config dir>/cli-token.json`, through [`fetch`], by kind of caller.
+pub(crate) enum Disk {
+    /// Nobody is waiting, as for telemetry: paced, and a new token is tried
+    /// only for a dead one, when the backoff allows.
+    Background,
+    /// Someone ran it and is waiting: never paced, and any refusal tries a
+    /// token fetched there and then, so a token republished or fixed in the
+    /// Console works on the next try. Not when this run `fetched` the token
+    /// already: asking again at once would only get the same one back.
+    Command { fetched: bool },
+    /// A token not from the endpoint (`MAPBOX_CLI_TOKEN`): the file is not
+    /// touched, and a refusal is handed back as it is.
+    Unchecked,
+}
+
+impl Ledger for Disk {
+    fn refused(&mut self, caller: &str, token: &str) -> Refusal {
+        match self {
+            Disk::Background => fetch::refused(caller, token, true),
+            Disk::Command { .. } => fetch::refused(caller, token, false),
+            Disk::Unchecked => Refusal::NotFetched,
+        }
+    }
+    fn accepted(&mut self, caller: &str, token: &str) {
+        if !matches!(self, Disk::Unchecked) {
+            fetch::accepted(caller, token);
+        }
+    }
+    fn retries(&self, refusal: Refusal) -> bool {
+        match self {
+            Disk::Background => refusal == Refusal::Dead,
+            Disk::Command { fetched } => !fetched,
+            Disk::Unchecked => false,
+        }
+    }
+    fn fresh(&mut self) -> Option<String> {
+        match self {
+            Disk::Background => fetch::token(),
+            Disk::Command { .. } => fetch::token_now().ok(),
+            Disk::Unchecked => None,
+        }
+    }
+}
+
+/// Sends with the CLI's `token` on `caller`'s behalf: the one place the
+/// rules for using it live, for telemetry and commands alike.
+///
+/// A `2xx` ends `caller`'s cooldown. A `401` or `403` is checked with the
+/// Tokens API at once ([`fetch::refused`]); when the ledger says it is worth
+/// it ([`Ledger::retries`]) and a different token is to be had, the request
+/// is sent once more with it, since a refused request was not acted on.
+/// Otherwise the refusal is handed back. `status` is an answer's HTTP status,
+/// or `None` when there was no answer.
+pub(crate) fn send_with_cli_token<R>(
+    caller: &str,
+    mut token: String,
+    ledger: &mut impl Ledger,
+    mut send: impl FnMut(&str) -> R,
+    status: impl Fn(&R) -> Option<u16>,
+) -> Sent<R> {
+    let mut replaced = false;
+    loop {
+        let answer = send(&token);
+        match status(&answer) {
+            Some(401 | 403) => {
+                let refusal = ledger.refused(caller, &token);
+                if ledger.retries(refusal) && !replaced {
+                    if let Some(fresh) = ledger.fresh().filter(|fresh| *fresh != token) {
+                        token = fresh;
+                        replaced = true;
+                        continue;
+                    }
+                }
+                return Sent::Refused(answer, refusal);
+            }
+            Some(200..=299) => ledger.accepted(caller, &token),
+            _ => {}
+        }
+        return Sent::Answered(answer);
+    }
 }
 
 /// Whether [`send`] has a token it could try in `order`, judged without the
@@ -144,6 +377,7 @@ pub(crate) fn send(
 /// find nothing to send with. A login counts by being there: it may still turn
 /// out expired and unrefreshable, and then nothing is sent.
 pub(crate) fn has_token_for(
+    caller: &str,
     order: &[Fallback],
     user_token: Option<&str>,
     profile: Option<&str>,
@@ -152,7 +386,8 @@ pub(crate) fn has_token_for(
         Fallback::UserToken => usable(user_token).is_some(),
         Fallback::Login => auth::load_credentials_readonly(profile).is_some(),
         Fallback::CliToken => {
-            cli_token(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref()).is_some()
+            usable(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref()).is_some()
+                || (!fetch::cooling(caller) && fetch::may_have_token())
         }
     })
 }
@@ -173,39 +408,53 @@ fn login_token(profile: Option<&str>) -> Option<String> {
 struct Sources<'a> {
     user: Option<&'a str>,
     override_token: Option<&'a str>,
-    bundled: Option<&'a str>,
 }
 
-/// The order and the fallback, with the login and the send passed in so each
-/// path can be tested without the network or the disk.
+enum Source {
+    User,
+    Login,
+    Override,
+    Fetched,
+}
+
+/// The order and the fallback, with the login, the fetched token and the
+/// send passed in so each path can be tested without the network or the
+/// disk.
 ///
-/// Tries each [`Fallback`] in `order`. The login is loaded only when its turn
-/// comes, and a token that was already rejected is not tried again. A
-/// failed send stops here: no other token fixes a request that never
-/// arrived.
+/// Tries each [`Fallback`] in `order`. The login and the fetched token are
+/// loaded only when their turn comes, and a token that was already rejected
+/// is not tried again. A failed send stops here: no other token fixes a
+/// request that never arrived.
 fn resolve<R, E>(
     order: &[Fallback],
     sources: Sources<'_>,
     login: impl FnOnce() -> Option<String>,
+    fetched: impl FnOnce() -> Option<String>,
     mut attempt: impl FnMut(&str) -> Result<R, E>,
     rejected: impl Fn(&R) -> bool,
 ) -> Option<Result<R, E>> {
     let mut login = Some(login);
+    let mut fetched = Some(fetched);
     let mut tried: Vec<String> = Vec::new();
     let mut last = None;
     for fallback in order {
-        let tokens: Vec<String> = match fallback {
-            Fallback::UserToken => usable(sources.user)
-                .map(str::to_owned)
-                .into_iter()
-                .collect(),
-            Fallback::Login => login.take().and_then(|load| load()).into_iter().collect(),
-            Fallback::CliToken => [sources.override_token, sources.bundled]
-                .into_iter()
-                .filter_map(|t| usable(t).map(str::to_owned))
-                .collect(),
+        // One source per step, each loaded only when the one before it was
+        // rejected, so a developer's override never costs a fetch.
+        let steps: &[Source] = match fallback {
+            Fallback::UserToken => &[Source::User],
+            Fallback::Login => &[Source::Login],
+            Fallback::CliToken => &[Source::Override, Source::Fetched],
         };
-        for token in tokens {
+        for source in steps {
+            let token = match source {
+                Source::User => usable(sources.user).map(str::to_owned),
+                Source::Login => login.take().and_then(|load| load()),
+                Source::Override => usable(sources.override_token).map(str::to_owned),
+                Source::Fetched => fetched.take().and_then(|load| load()),
+            };
+            let Some(token) = token else {
+                continue;
+            };
             if tried.contains(&token) {
                 continue;
             }
@@ -235,7 +484,7 @@ mod tests {
     /// Runs [`resolve`] against a fake API that accepts only `accepted`, and
     /// returns the answer, every token sent, and whether the login was loaded.
     fn run(
-        sources: Sources<'_>,
+        sources: (Sources<'_>, Option<&str>),
         login: Option<&str>,
         accepted: &[&str],
     ) -> (Option<u16>, Vec<String>, bool) {
@@ -244,7 +493,7 @@ mod tests {
 
     fn run_in(
         order: &[Fallback],
-        sources: Sources<'_>,
+        (sources, fetched): (Sources<'_>, Option<&str>),
         login: Option<&str>,
         accepted: &[&str],
     ) -> (Option<u16>, Vec<String>, bool) {
@@ -257,6 +506,7 @@ mod tests {
                 loaded.set(true);
                 login.map(str::to_owned)
             },
+            || fetched.map(str::to_owned),
             |token| {
                 sent.borrow_mut().push(token.to_owned());
                 Ok::<_, ()>(if accepted.contains(&token) { 200 } else { 401 })
@@ -266,22 +516,25 @@ mod tests {
         (answer.map(|a| a.unwrap()), sent.into_inner(), loaded.get())
     }
 
+    /// The user's token, `MAPBOX_CLI_TOKEN`, and what a fetch would return.
     fn sources<'a>(
         user: Option<&'a str>,
         override_token: Option<&'a str>,
-        bundled: Option<&'a str>,
-    ) -> Sources<'a> {
-        Sources {
-            user,
-            override_token,
-            bundled,
-        }
+        fetched: Option<&'a str>,
+    ) -> (Sources<'a>, Option<&'a str>) {
+        (
+            Sources {
+                user,
+                override_token,
+            },
+            fetched,
+        )
     }
 
     #[test]
     fn an_accepted_user_token_is_all_that_is_sent() {
         let (answer, sent, loaded) = run(
-            sources(Some("pk.typed"), Some("pk.override"), Some("pk.bundled")),
+            sources(Some("pk.typed"), Some("pk.override"), Some("pk.fetched")),
             Some("sk.login"),
             &["pk.typed"],
         );
@@ -314,7 +567,7 @@ mod tests {
     #[test]
     fn the_clis_token_is_sent_only_once_every_user_token_is_rejected() {
         let (answer, sent, _) = run(
-            sources(Some("pk.typed"), Some("pk.override"), Some("pk.bundled")),
+            sources(Some("pk.typed"), Some("pk.override"), Some("pk.fetched")),
             Some("sk.login"),
             &["pk.override"],
         );
@@ -326,9 +579,9 @@ mod tests {
     fn the_clis_token_is_never_sent_by_an_order_without_it() {
         let (answer, sent, _) = run_in(
             &[Fallback::UserToken, Fallback::Login],
-            sources(Some("pk.typed"), Some("pk.override"), Some("pk.bundled")),
+            sources(Some("pk.typed"), Some("pk.override"), Some("pk.fetched")),
             None,
-            &["pk.override", "pk.bundled"],
+            &["pk.override", "pk.fetched"],
         );
         assert_eq!(answer, Some(401));
         assert_eq!(sent, ["pk.typed"]);
@@ -355,11 +608,11 @@ mod tests {
     }
 
     #[test]
-    fn override_comes_before_bundled() {
+    fn override_comes_before_fetched() {
         let (answer, sent, _) = run(
-            sources(None, Some("pk.override"), Some("pk.bundled")),
+            sources(None, Some("pk.override"), Some("pk.fetched")),
             None,
-            &["pk.override", "pk.bundled"],
+            &["pk.override", "pk.fetched"],
         );
         assert_eq!(answer, Some(200));
         assert_eq!(sent, ["pk.override"]);
@@ -369,23 +622,23 @@ mod tests {
     fn a_rejected_token_is_not_sent_twice() {
         // The login and the typed token can be the same token.
         let (answer, sent, _) = run(
-            sources(Some("sk.same"), None, Some("pk.bundled")),
+            sources(Some("sk.same"), None, Some("pk.fetched")),
             Some("sk.same"),
-            &["pk.bundled"],
+            &["pk.fetched"],
         );
         assert_eq!(answer, Some(200));
-        assert_eq!(sent, ["sk.same", "pk.bundled"]);
+        assert_eq!(sent, ["sk.same", "pk.fetched"]);
     }
 
     #[test]
     fn every_token_rejected_returns_the_last_answer() {
         let (answer, sent, _) = run(
-            sources(Some("pk.typed"), Some("pk.override"), Some("pk.bundled")),
+            sources(Some("pk.typed"), Some("pk.override"), Some("pk.fetched")),
             Some("sk.login"),
             &[],
         );
         assert_eq!(answer, Some(401));
-        assert_eq!(sent, ["pk.typed", "sk.login", "pk.override", "pk.bundled"]);
+        assert_eq!(sent, ["pk.typed", "sk.login", "pk.override", "pk.fetched"]);
     }
 
     #[test]
@@ -393,8 +646,9 @@ mod tests {
         let mut sent = Vec::new();
         let answer = resolve(
             TELEMETRY,
-            sources(Some("pk.typed"), Some("pk.override"), Some("pk.bundled")),
+            sources(Some("pk.typed"), Some("pk.override"), None).0,
             || Some("sk.login".to_owned()),
+            || Some("pk.fetched".to_owned()),
             |token| {
                 sent.push(token.to_owned());
                 Err::<u16, _>("unreachable")
@@ -408,12 +662,12 @@ mod tests {
     #[test]
     fn blank_tokens_are_skipped_and_the_rest_trimmed() {
         let (answer, sent, _) = run(
-            sources(Some("  "), Some(""), Some(" pk.bundled\n")),
+            sources(Some("  "), Some(""), Some("pk.fetched")),
             None,
-            &["pk.bundled"],
+            &["pk.fetched"],
         );
         assert_eq!(answer, Some(200));
-        assert_eq!(sent, ["pk.bundled"]);
+        assert_eq!(sent, ["pk.fetched"]);
     }
 
     #[test]
@@ -469,7 +723,7 @@ mod tests {
             .flat_map(|svc| &svc.operations)
             .map(|op| op.command())
             .collect();
-        for (name, reason) in CLI_TOKEN_COMMANDS {
+        for (name, _, reason) in CLI_TOKEN_COMMANDS {
             assert!(
                 commands.iter().any(|c| c == name),
                 "`{name}` is in CLI_TOKEN_COMMANDS but is not a command"
@@ -479,16 +733,222 @@ mod tests {
     }
 
     #[test]
-    fn the_runtime_override_comes_before_the_bundled_token() {
-        assert_eq!(
-            cli_token(Some(" pk.override ")).as_deref(),
-            Some("pk.override")
+    fn cli_token_commands_read_nothing_from_stdin() {
+        let specs = crate::spec::effective_services().expect("the bundled specs parse");
+        for op in specs.iter().flat_map(|svc| &svc.operations) {
+            if use_for(&op.command()).is_none() {
+                continue;
+            }
+            let cmd = crate::build_operation_command(op);
+            for id in ["data", "file"] {
+                assert!(
+                    cmd.get_arguments().all(|arg| arg.get_id() != id),
+                    "`{}` takes `--{id}`, which can read stdin, and a refused request \
+                     is sent again",
+                    op.command()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_unlisted_command_never_gets_the_clis_token() {
+        assert_eq!(for_command("styles list", true), None);
+    }
+
+    /// A ledger that answers every refusal with `verdict` and has `fresh`
+    /// to hand out once, and records what it was told.
+    #[derive(Default)]
+    struct FakeLedger {
+        /// Retries after any refusal, as [`Disk::Command`] does, rather than
+        /// only a dead token, as [`Disk::Background`] does.
+        command: bool,
+        verdict: Option<Refusal>,
+        fresh: Option<String>,
+        refused: Vec<String>,
+        accepted: Vec<String>,
+    }
+
+    impl Ledger for FakeLedger {
+        fn refused(&mut self, _: &str, token: &str) -> Refusal {
+            self.refused.push(token.to_owned());
+            self.verdict.expect("a verdict to give")
+        }
+        fn accepted(&mut self, _: &str, token: &str) {
+            self.accepted.push(token.to_owned());
+        }
+        fn retries(&self, refusal: Refusal) -> bool {
+            self.command || refusal == Refusal::Dead
+        }
+        fn fresh(&mut self) -> Option<String> {
+            self.fresh.take()
+        }
+    }
+
+    /// Sends through [`send_with_cli_token`] to a fake API that answers
+    /// `statuses` in turn, and returns the outcome and the tokens sent.
+    fn send_cli(
+        ledger: &mut FakeLedger,
+        statuses: &[Option<u16>],
+    ) -> (Sent<Option<u16>>, Vec<String>) {
+        let mut sent = Vec::new();
+        let mut answers = statuses.iter().copied();
+        let outcome = send_with_cli_token(
+            "report",
+            "pk.old".to_owned(),
+            ledger,
+            |token| {
+                sent.push(token.to_owned());
+                answers.next().expect("an answer for each send")
+            },
+            |status| *status,
         );
-        assert_eq!(
-            cli_token(Some("  ")).as_deref(),
-            option_env!("MAPBOX_CLI_BUNDLED_TOKEN")
-                .map(str::trim)
-                .filter(|t| !t.is_empty())
+        (outcome, sent)
+    }
+
+    #[test]
+    fn a_dead_token_is_replaced_and_sent_once_more() {
+        let mut ledger = FakeLedger {
+            verdict: Some(Refusal::Dead),
+            fresh: Some("pk.new".to_owned()),
+            ..FakeLedger::default()
+        };
+        let (outcome, sent) = send_cli(&mut ledger, &[Some(401), Some(200)]);
+        assert_eq!(outcome, Sent::Answered(Some(200)));
+        assert_eq!(sent, ["pk.old", "pk.new"]);
+        assert_eq!(ledger.accepted, ["pk.new"]);
+    }
+
+    #[test]
+    fn a_replacement_that_is_refused_too_is_not_replaced_again() {
+        let mut ledger = FakeLedger {
+            verdict: Some(Refusal::Dead),
+            fresh: Some("pk.new".to_owned()),
+            ..FakeLedger::default()
+        };
+        let (outcome, sent) = send_cli(&mut ledger, &[Some(401), Some(401)]);
+        assert_eq!(outcome, Sent::Refused(Some(401), Refusal::Dead));
+        assert_eq!(sent, ["pk.old", "pk.new"]);
+    }
+
+    #[test]
+    fn a_dead_token_with_no_new_one_is_handed_back() {
+        let mut ledger = FakeLedger {
+            verdict: Some(Refusal::Dead),
+            fresh: Some("pk.old".to_owned()),
+            ..FakeLedger::default()
+        };
+        let (outcome, sent) = send_cli(&mut ledger, &[Some(403)]);
+        assert_eq!(outcome, Sent::Refused(Some(403), Refusal::Dead));
+        assert_eq!(sent, ["pk.old"], "the same token is not sent again");
+    }
+
+    #[test]
+    fn a_token_this_api_refuses_is_handed_back_without_a_fetch() {
+        for verdict in [Refusal::Forbidden, Refusal::Unknown] {
+            let mut ledger = FakeLedger {
+                verdict: Some(verdict),
+                fresh: Some("pk.new".to_owned()),
+                ..FakeLedger::default()
+            };
+            let (outcome, sent) = send_cli(&mut ledger, &[Some(403)]);
+            assert_eq!(outcome, Sent::Refused(Some(403), verdict));
+            assert_eq!(sent, ["pk.old"]);
+            assert!(ledger.fresh.is_some(), "{verdict:?} fetched a new token");
+        }
+    }
+
+    #[test]
+    fn a_command_tries_a_fresh_token_after_any_refusal() {
+        for verdict in [Refusal::Forbidden, Refusal::Unknown, Refusal::NotFetched] {
+            let mut ledger = FakeLedger {
+                command: true,
+                verdict: Some(verdict),
+                fresh: Some("pk.new".to_owned()),
+                ..FakeLedger::default()
+            };
+            let (outcome, sent) = send_cli(&mut ledger, &[Some(403), Some(200)]);
+            assert_eq!(outcome, Sent::Answered(Some(200)), "{verdict:?}");
+            assert_eq!(sent, ["pk.old", "pk.new"], "{verdict:?}");
+        }
+    }
+
+    #[test]
+    fn a_command_gets_the_same_token_back_and_does_not_resend_it() {
+        let mut ledger = FakeLedger {
+            command: true,
+            verdict: Some(Refusal::Forbidden),
+            fresh: Some("pk.old".to_owned()),
+            ..FakeLedger::default()
+        };
+        let (outcome, sent) = send_cli(&mut ledger, &[Some(403)]);
+        assert_eq!(outcome, Sent::Refused(Some(403), Refusal::Forbidden));
+        assert_eq!(sent, ["pk.old"]);
+    }
+
+    #[test]
+    fn a_command_token_just_fetched_or_overridden_is_not_replaced() {
+        for (ledger, retries) in [
+            (Disk::Command { fetched: false }, true),
+            (Disk::Command { fetched: true }, false),
+            (Disk::Unchecked, false),
+        ] {
+            for refusal in [
+                Refusal::Dead,
+                Refusal::Forbidden,
+                Refusal::Unknown,
+                Refusal::NotFetched,
+            ] {
+                assert_eq!(ledger.retries(refusal), retries, "{refusal:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_override_is_never_checked_or_replaced() {
+        let mut ledger = Disk::Unchecked;
+        assert_eq!(ledger.refused("report", "pk.override"), Refusal::NotFetched);
+        assert_eq!(ledger.fresh(), None);
+    }
+
+    #[test]
+    fn only_a_2xx_counts_as_accepted() {
+        for status in [Some(200), Some(204), Some(404), Some(500), None] {
+            let mut ledger = FakeLedger::default();
+            let (outcome, _) = send_cli(&mut ledger, &[status]);
+            assert_eq!(outcome, Sent::Answered(status));
+            let accepted = status.is_some_and(|s| (200..300).contains(&s));
+            assert_eq!(ledger.accepted.len(), usize::from(accepted), "{status:?}");
+            assert!(ledger.refused.is_empty(), "{status:?} was checked");
+        }
+    }
+
+    #[test]
+    fn the_override_is_trimmed_before_it_is_sent() {
+        let (answer, sent, _) = run(
+            sources(None, Some(" pk.override\n"), None),
+            None,
+            &["pk.override"],
         );
+        assert_eq!(answer, Some(200));
+        assert_eq!(sent, ["pk.override"]);
+    }
+
+    #[test]
+    fn an_accepted_override_never_fetches() {
+        let fetched = Cell::new(false);
+        let answer = resolve(
+            &[Fallback::CliToken],
+            sources(None, Some("pk.override"), None).0,
+            || None,
+            || {
+                fetched.set(true);
+                Some("pk.fetched".to_owned())
+            },
+            |_| Ok::<_, ()>(200),
+            |status| *status == 401,
+        );
+        assert_eq!(answer, Some(Ok(200)));
+        assert!(!fetched.get());
     }
 }

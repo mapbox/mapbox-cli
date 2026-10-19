@@ -36,7 +36,7 @@ const TOKEN_ENDPOINT: &str = "https://api.mapbox.com/oauth/2.1/token";
 const REGISTRATION_ENDPOINT: &str = "https://api.mapbox.com/oauth/register";
 /// Where `--verify` sends the token. Reached with the token as a query
 /// parameter, so every failure path out of it has to redact.
-const VALIDATION_ENDPOINT: &str = "https://api.mapbox.com/tokens/v2";
+pub(crate) const VALIDATION_ENDPOINT: &str = "https://api.mapbox.com/tokens/v2";
 
 // Every scope here must be one the Accounts API's dynamic client
 // registration (DCR) will actually grant — a scope it doesn't recognize is
@@ -1317,19 +1317,62 @@ fn verify_token(token: &str, debug: bool, timeout: Option<Duration>) -> Result<V
         // pasted issue reports, and the token is a query parameter here.
         eprintln!("[debug] GET {VALIDATION_ENDPOINT}?access_token=<redacted>");
     }
-
-    let response = crate::http::send(
-        crate::http::client()?
-            .get(VALIDATION_ENDPOINT)
-            .query(&[("access_token", token)])
-            // The one request `auth` makes to a Mapbox API rather than to the
-            // authorization server, so it is the one `--timeout` has to reach.
-            // The other three — refresh, registration, code exchange — carry a
-            // few hundred bytes each and keep the client's own budget.
-            .timeout(crate::http::budget(timeout, crate::http::Payload::Bounded)),
+    // The one request `auth` makes to a Mapbox API rather than to the
+    // authorization server, so it is the one `--timeout` has to reach. The
+    // other three — refresh, registration, code exchange — carry a few
+    // hundred bytes each and keep the client's own budget.
+    check_token(
+        token,
+        crate::http::budget(timeout, crate::http::Payload::Bounded),
     )
-    // `reqwest::Error`'s `Display` appends the URL, and the token is in it.
-    .map_err(|e| crate::executor::transport_failure("Token check failed", e))?;
+}
+
+/// The request behind [`verify_token`]: the endpoint's answer,
+/// whose `code` is the verdict.
+fn check_token(token: &str, timeout: Duration) -> Result<Value> {
+    let (status, request_id, body) = send_token_check(VALIDATION_ENDPOINT, token, None, timeout)?;
+    if !status.is_success() {
+        return Err(CliError::http(status.as_u16(), &body)
+            .with_request_id(request_id)
+            .into());
+    }
+    serde_json::from_str(&body).context("Invalid JSON from the token check endpoint")
+}
+
+/// The verdict's `code` alone, read whatever the status, or `None` when there
+/// was no answer with one. How [`crate::cli_token`] tells a dead token from
+/// one an API merely refuses. Observed answering `200` for every verdict, but
+/// a dead token's `code` must not be lost if that ever changes, or the token
+/// would never be replaced.
+///
+/// `referer` is sent along, for a token restricted to a URL.
+pub(crate) fn token_code(
+    url: &str,
+    token: &str,
+    referer: Option<&str>,
+    timeout: Duration,
+) -> Option<String> {
+    let (_, _, body) = send_token_check(url, token, referer, timeout).ok()?;
+    let answer: Value = serde_json::from_str(&body).ok()?;
+    Some(answer.get("code")?.as_str()?.to_owned())
+}
+
+fn send_token_check(
+    url: &str,
+    token: &str,
+    referer: Option<&str>,
+    timeout: Duration,
+) -> Result<(reqwest::StatusCode, Option<String>, String)> {
+    let mut request = crate::http::client()?
+        .get(url)
+        .query(&[("access_token", token)])
+        .timeout(timeout);
+    if let Some(referer) = referer {
+        request = request.header(reqwest::header::REFERER, referer);
+    }
+    let response = crate::http::send(request)
+        // `reqwest::Error`'s `Display` appends the URL, and the token is in it.
+        .map_err(|e| crate::executor::transport_failure("Token check failed", e))?;
 
     let status = response.status();
     // Before `text()` consumes the response — see `executor::request_id`.
@@ -1337,14 +1380,7 @@ fn verify_token(token: &str, debug: bool, timeout: Option<Duration>) -> Result<V
     let body = response
         .text()
         .map_err(|e| crate::executor::transport_failure("Failed to read the token check", e))?;
-
-    if !status.is_success() {
-        return Err(CliError::http(status.as_u16(), &body)
-            .with_request_id(request_id)
-            .into());
-    }
-
-    serde_json::from_str(&body).context("Invalid JSON from the token check endpoint")
+    Ok((status, request_id, body))
 }
 
 /// A verdict from [`verify_token`] that is not `TokenValid`.

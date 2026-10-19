@@ -209,7 +209,9 @@ for the same `ps`-visibility reason Diagram 3 gives.
 
 Step ②'s token follows `src/cli_token.rs`'s fallback order: the user's own
 token first (flag, environment, or stored login), and only when none of
-those exist, a `pk.` token compiled into the binary at build time
-(`MAPBOX_CLI_BUNDLED_TOKEN`) as a last resort so usage from a user who has
-never logged in is still counted. A `cargo build` from source has no bundled
-token, so with no login either, the event is simply dropped.
+those exist, the CLI's `pk.` token as a last resort so usage from a user who
+has never logged in is still counted. Every build fetches that token from
+`https://cli.mapbox.com/config/token.json` and keeps it in
+`~/.mapbox/cli-token.json` until the Tokens API says it is dead
+(`src/cli_token/fetch.rs`). With no login and no way to fetch it, the event
+is simply dropped.

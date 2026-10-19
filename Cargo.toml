@@ -3,7 +3,7 @@ name = "mapbox-cli"
 version = "0.3.0"
 edition = "2021"
 description = "A command-line interface for Mapbox APIs, with commands generated at build time from OpenAPI specs."
-repository = "https://github.com/mapbox/cli"
+repository = "https://github.com/mapbox/mapbox-cli"
 # The file rather than an SPDX expression: LICENSE is Mapbox's own terms and
 # not an OSI license, so there is no identifier that says what it grants.
 license-file = "LICENSE"

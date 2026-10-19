@@ -252,7 +252,7 @@ mapbox tilesets <operation>
 ```
 
 `mapbox directions`, `mapbox isochrone`, `mapbox map-match`,
-`mapbox matrix`, and `mapbox places` are the exceptions: each API has a
+`mapbox matrix`, `mapbox places` and `mapbox report` are the exceptions: each API has a
 single exposed operation, so there's a bare command with no subcommand at
 all, the same shape `mapbox usage` already has, see
 [docs/commands.md](./docs/commands.md) for their own parameters.
@@ -302,10 +302,10 @@ It never includes a file path or free text you typed. It carries a random ID
 that is replaced on the first run a day after it was created. It is sent in
 the background, so a command never waits for it, and dropped if it can't be
 delivered. It is sent with your own token (`--token`, `MAPBOX_ACCESS_TOKEN`
-or your login) when you have one, and with a token built into the CLI
+or your login) when you have one, and with the CLI's own public token
 otherwise; Mapbox Events keeps the token an event was sent with, and the
-account it belongs to, alongside the event. A build from source has no
-built-in token, so with no token of your own the event is dropped.
+account it belongs to, alongside the event. With no token of your own and
+no way to fetch the CLI's, the event is dropped.
 `MAPBOX_CLI_NO_TELEMETRY=1` or `mapbox config set telemetry off` turns it off.
 
 ### Diagnostics and settings
@@ -322,6 +322,21 @@ unexpectedly. It makes no request unless you pass `--verify`. See
 [Doctor](./docs/commands.md#doctor), [Usage](./docs/commands.md#usage) and
 [Config](./docs/commands.md#config) for details, and
 [Command history](#command-history) below.
+
+### Feedback about the CLI
+
+```sh
+mapbox report "I'd like support for optimization commands"
+mapbox report "tilesets query hangs behind my proxy" --category bug
+```
+
+The message goes to the Mapbox CLI team, with the CLI's version and OS
+appended, and is filed under Mapbox's account, not yours, so
+`mapbox feedback list` won't show it. It is sent with the CLI's own token,
+so it needs no login; yours stands in while the CLI's can't be used, or
+when you pass `--token` or `--use-login`, and the request then carries your
+token. See
+[Report](./docs/commands.md#report).
 
 ### Shell completion
 
@@ -476,11 +491,22 @@ and `--dry-run` show it alongside everything else on the request.
 
 ### The CLI's own requests
 
-Requests the CLI makes for itself rather than for your commands use your own
-token whenever you have one: `--token` or `MAPBOX_ACCESS_TOKEN`, then your
-login. Only when you have none does it use the CLI's token:
-`MAPBOX_CLI_TOKEN`, or one built into the binary. The CLI's token is only
-used for what `src/cli_token.rs` lists for it, today just telemetry.
+The CLI has a token of its own, for requests it makes for itself. Telemetry
+uses your own token whenever you have one: `--token` or
+`MAPBOX_ACCESS_TOKEN`, then your login. Only when you have none does it use
+the CLI's token:
+`MAPBOX_CLI_TOKEN`, or a public token fetched from
+`https://cli.mapbox.com/config/token.json` and kept in
+`~/.mapbox/cli-token.json`. It is replaced only when the Tokens API says it
+is revoked, invalid, expired or malformed, not when one API refuses it. A
+refusal of a valid token, or one the Tokens API cannot explain, counts; the
+third in a row pauses telemetry's sending with it for an hour, as three
+fetches in a row that find no usable token pause fetching. The token is
+restricted to `https://cli.mapbox.com/`, so every request with it carries
+that as its `Referer`. The CLI's token is only used for what
+`src/cli_token.rs` lists for it: telemetry, and `mapbox report`, which is
+the other way around: it prefers the CLI's token to yours and falls back to
+yours while the CLI's can't be used.
 
 ### Proxies
 

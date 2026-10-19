@@ -33,8 +33,37 @@ pub(super) fn list_rendering(value: &Value, service: Option<&str>) -> Option<Ren
             render_geocoder_list(value).or_else(|| render_batch_feature_list(value))
         }
         Some("tilesets") => tilequery_feature_rows(value).map(|rows| render_feature_list(&rows)),
+        Some("report") => render_report(value),
         _ => None,
     }
+}
+
+/// `report`'s answer, as what the sender can use: that it went, what was
+/// sent, and the id to quote. The rest is the Feedback API's record of it —
+/// timestamps, a status that is always `received`, the `0,0` this command
+/// always sends, a screenshot it never attaches — none of which the sender
+/// chose or can act on. `-o json` still has all of it.
+///
+/// `None` for an answer without both, which then falls back to the whole
+/// field list rather than hiding what came back.
+fn render_report(value: &Value) -> Option<Rendered> {
+    const SENT: &str = "Sent to the Mapbox CLI team.";
+    let map = value.as_object()?;
+    let fields = vec![
+        (
+            "feedback".to_owned(),
+            map.get("feedback")?.as_str()?.to_owned(),
+        ),
+        ("id".to_owned(), map.get("id")?.as_str()?.to_owned()),
+    ];
+    Some(Rendered {
+        text: format!("{SENT}\n{}", field_lines(&fields, false)),
+        header: false,
+        fields: None,
+        colored: Some(format!("{SENT}\n{}", field_lines(&fields, true))),
+        shortened: false,
+        identifier: None,
+    })
 }
 
 /// A human rendering, what it had to cut, and the first identifier in it.
@@ -2326,5 +2355,44 @@ mod tests {
             render_table(&extracted).expect("a table").identifier,
             Some("Food and Drink".to_string())
         );
+    }
+
+    #[test]
+    fn a_report_shows_what_was_sent_and_its_id_alone() {
+        let answer = serde_json::json!({
+            "id": "01a15433-408f-708c-929f-cad22dd7ef88",
+            "created_at": "2026-10-19T12:46:47.466Z",
+            "updated_at": "2026-10-19T12:46:47.466Z",
+            "received_at": "2026-10-19T12:46:47.466Z",
+            "feedback": "test from CLI",
+            "category": "general",
+            "status": "received",
+            "location": { "lat": 0, "lon": 0 },
+            "has_screenshot": false
+        });
+        let rendered = list_rendering(&answer, Some("report")).expect("a rendering");
+        let lines: Vec<&str> = rendered.text.lines().collect();
+        assert_eq!(lines[0], "Sent to the Mapbox CLI team.");
+        assert_eq!(lines.len(), 3, "{}", rendered.text);
+        assert!(lines[1].starts_with("feedback") && lines[1].ends_with("test from CLI"));
+        assert!(
+            lines[2].starts_with("id")
+                && lines[2].ends_with("01a15433-408f-708c-929f-cad22dd7ef88")
+        );
+        for hidden in [
+            "created_at",
+            "status",
+            "location",
+            "has_screenshot",
+            "category",
+        ] {
+            assert!(!rendered.text.contains(hidden), "{hidden} shown");
+        }
+    }
+
+    #[test]
+    fn a_report_answer_missing_its_id_is_shown_whole() {
+        let answer = serde_json::json!({ "feedback": "test", "status": "received" });
+        assert!(list_rendering(&answer, Some("report")).is_none());
     }
 }

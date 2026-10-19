@@ -49,11 +49,18 @@ pub(super) fn list_rendering(value: &Value, service: Option<&str>) -> Option<Ren
 fn render_report(value: &Value) -> Option<Rendered> {
     const SENT: &str = "Sent to the Mapbox CLI team.";
     let map = value.as_object()?;
+    // The message is several lines once the CLI's version and OS are on
+    // it; each goes under the first, not back at the label column.
+    let indent = format!("\n{}", " ".repeat("feedback".len() + 2));
+    let feedback = map
+        .get("feedback")?
+        .as_str()?
+        .split('\n')
+        .collect::<Vec<_>>()
+        .join(&indent)
+        .replace(&format!("{indent}{indent}"), &format!("\n{indent}"));
     let fields = vec![
-        (
-            "feedback".to_owned(),
-            map.get("feedback")?.as_str()?.to_owned(),
-        ),
+        ("feedback".to_owned(), feedback),
         ("id".to_owned(), map.get("id")?.as_str()?.to_owned()),
     ];
     Some(Rendered {
@@ -2388,6 +2395,23 @@ mod tests {
         ] {
             assert!(!rendered.text.contains(hidden), "{hidden} shown");
         }
+    }
+
+    #[test]
+    fn a_reports_later_lines_line_up_under_its_first() {
+        let answer = serde_json::json!({
+            "id": "an-id",
+            "feedback": "A test\n\n— mapbox-cli 0.3.0 on macos",
+        });
+        let rendered = list_rendering(&answer, Some("report")).expect("a rendering");
+        assert_eq!(
+            rendered.text,
+            "Sent to the Mapbox CLI team.\n\
+             feedback  A test\n\
+             \n          \
+             — mapbox-cli 0.3.0 on macos\n\
+             id        an-id"
+        );
     }
 
     #[test]

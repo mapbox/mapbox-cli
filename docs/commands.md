@@ -2062,8 +2062,9 @@ mapbox report "…" --dry-run
 
 #### Outputs
 
-Captured live on 2026-10-19. `-o text` shows only that it was sent, the
-message and its id; `-o json` is the answer as the API sent it:
+One report, captured live on 2026-10-19 and shown both ways. `-o text`
+shows only that it was sent, the message and its id; `-o json` is the
+answer as the API sent it:
 
 <table>
 <tr><th width="50%">Terminal — <code>-o text</code></th><th width="50%">Agent — <code>-o json</code></th></tr>
@@ -2072,13 +2073,15 @@ message and its id; `-o json` is the answer as the API sent it:
 ```text
 Sent to the Mapbox CLI team.
 feedback  Test from mapbox-cli development (report). Please ignore.
-id        01a15484-6d9b-744c-bea4-a9a0a99b95c5
+
+          — mapbox-cli 0.3.0 on macos
+id        01a15503-8d64-75ed-aa9b-790ae4ba69a0
 ```
 
 </td><td>
 
 ```json
-{"category":"general","created_at":"2026-10-19T14:15:32.069Z","feedback":"Test from mapbox-cli development (report). Please ignore.","has_screenshot":false,"id":"01a15484-7fc9-7328-a04d-251340f49f64","location":{"lat":0,"lon":0},"received_at":"2026-10-19T14:15:32.069Z","status":"received","updated_at":"2026-10-19T14:15:32.069Z"}
+{"category":"general","created_at":"2026-10-19T16:34:18.626Z","feedback":"Test from mapbox-cli development (report). Please ignore.\n\n— mapbox-cli 0.3.0 on macos","has_screenshot":false,"id":"01a15503-8d64-75ed-aa9b-790ae4ba69a0","location":{"lat":0,"lon":0},"received_at":"2026-10-19T16:34:18.626Z","status":"received","updated_at":"2026-10-19T16:34:18.626Z"}
 ```
 
 </td></tr>

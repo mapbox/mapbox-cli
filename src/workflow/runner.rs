@@ -327,7 +327,7 @@ fn run_steps(
         let is_script = matches!(step.action, Action::Script { .. });
         let view = display.start(index, title, &step.label(), is_script);
         let result = execute(&mut process, stdin.as_ref(), step, &view, workdir.path());
-        let interrupted = INTERRUPTED.load(Ordering::SeqCst);
+        let interrupted = interrupted(result.is_err());
         view.finish(result.is_ok() && !interrupted);
         if interrupted {
             return Err(CliError::new(
@@ -355,6 +355,28 @@ static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 fn catch_interrupt() {
     // Fails only when a handler is already set, and only a run sets one.
     let _ = ctrlc::set_handler(|| INTERRUPTED.store(true, Ordering::SeqCst));
+}
+
+/// Whether Ctrl-C was pressed. `ctrlc` runs the handler on a thread of its
+/// own, so a child stopped by the same Ctrl-C can be reaped before the flag
+/// is set; a step that failed waits a moment for it, so the run says it was
+/// interrupted rather than that the step failed.
+fn interrupted(step_failed: bool) -> bool {
+    let grace = if step_failed {
+        std::time::Duration::from_millis(250)
+    } else {
+        std::time::Duration::ZERO
+    };
+    let deadline = std::time::Instant::now() + grace;
+    loop {
+        if INTERRUPTED.load(Ordering::SeqCst) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 fn size(bytes: usize) -> String {

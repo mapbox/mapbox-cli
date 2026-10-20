@@ -126,9 +126,11 @@ jobs:
       contents: read
     steps:
       # Whole history, so the base commit is there to check out beside it.
+      # No credential left behind: nothing here pushes or fetches again.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       # As in the build job: install exactly the pinned toolchain.
       - name: Read the pinned toolchain
@@ -141,27 +143,53 @@ jobs:
         with:
           toolchain: ${{ steps.toolchain.outputs.toolchain }}
 
-      # `|| true`: a run below its floor still writes its reports, and the
-      # build job is where that failure is reported.
+      # The exit status is recorded rather than failing the step: a run below
+      # its floor still writes its reports, the build job is where that
+      # failure is reported, and the summary needs the status to say whether
+      # missing reports mean a failed run or one with no eval to run.
       - name: Run the eval on this branch
-        run: MAPBOX_SEARCH_EVAL_REPORT="$RUNNER_TEMP/eval-head" cargo test --locked --bin mapbox eval_set || true
+        id: head
+        run: |
+          status=0
+          MAPBOX_SEARCH_EVAL_REPORT="$RUNNER_TEMP/eval-head" cargo test --locked --bin mapbox eval_set || status=$?
+          echo "status=$status" >>"$GITHUB_OUTPUT"
 
       # In a worktree sharing this target directory, so only the crate itself
-      # rebuilds. A base from before the eval existed matches no test and
-      # writes no reports; the summary then shows this branch's scores alone.
+      # rebuilds. A base from before the eval existed matches no test, passes
+      # and writes no reports; one that fails to build or check out exits
+      # non-zero. The summary tells the two apart by the status.
       - name: Run the eval on the base
+        id: base
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
-          cd "$RUNNER_TEMP/base"
-          CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
-            MAPBOX_SEARCH_EVAL_REPORT="$RUNNER_TEMP/eval-base" \
-            cargo test --locked --bin mapbox eval_set || true
+          status=0
+          {
+            git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA" &&
+              cd "$RUNNER_TEMP/base" &&
+              CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
+                MAPBOX_SEARCH_EVAL_REPORT="$RUNNER_TEMP/eval-base" \
+                cargo test --locked --bin mapbox eval_set
+          } || status=$?
+          echo "status=$status" >>"$GITHUB_OUTPUT"
 
+      # No `--base` on a push: the script then says there was no base rather
+      # than that the base had no reports. A status left empty by a step that
+      # never finished reads as "did not finish".
       - name: Write the summary
-        run: python3 scripts/commands-search-report.py "$RUNNER_TEMP/eval-head" "$RUNNER_TEMP/eval-base" >>"$GITHUB_STEP_SUMMARY"
+        if: ${{ !cancelled() }}
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_STATUS: ${{ steps.head.outputs.status }}
+          BASE_STATUS: ${{ steps.base.outputs.status }}
+        run: |
+          set -- --head "$RUNNER_TEMP/eval-head" --head-status "$HEAD_STATUS" \
+            --sets tests/fixtures/commands_search
+          if [ "$EVENT" = pull_request ]; then
+            set -- "$@" --base "$RUNNER_TEMP/eval-base" --base-status "$BASE_STATUS"
+          fi
+          python3 scripts/commands-search-report.py "$@" >>"$GITHUB_STEP_SUMMARY"
 
   # No Rust: this is where the repo's shell gets checked, install.sh above all
   # — it is served to machines we do not control, and this is the only thing
@@ -186,6 +214,7 @@ jobs:
           sh -n scripts/install.sh
           sh -n scripts/test-install.sh
           sh -n scripts/test-completion.sh
+          sh -n scripts/test-commands-search-report.sh
 
       # -s sh, not the default: bash would accept things `curl | sh` will not.
       # Once is enough — the findings do not depend on the runner. The version
@@ -195,10 +224,18 @@ jobs:
       # Kept clean against 0.9, 0.10 and 0.11.
       - name: Shellcheck
         if: runner.os == 'Linux'
-        run: shellcheck -s sh scripts/install.sh scripts/test-install.sh scripts/test-completion.sh
+        run: shellcheck -s sh scripts/install.sh scripts/test-install.sh scripts/test-completion.sh scripts/test-commands-search-report.sh
 
       - name: Install, verify and prompt against a local channel
         run: sh scripts/test-install.sh
+
+      # The `commands search eval` job's summary script, against hand-written
+      # reports: that job never fails, so this is where a summary that says
+      # the wrong thing would be caught. Python only, so it lives here rather
+      # than beside the Rust. Once is enough, as for shellcheck.
+      - name: Summarize hand-written search eval reports
+        if: runner.os == 'Linux'
+        run: sh scripts/test-commands-search-report.sh
 
   # The other half of the same job, for the installer install.sh stops short
   # of. Both shells, because both are on a stock Windows 11 and they differ

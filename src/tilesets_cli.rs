@@ -178,7 +178,7 @@ pub fn warn_yes_ignored(matches: &ArgMatches) {
 
 pub fn command() -> Command {
     Command::new(COMMAND)
-        .about("Run the Mapbox Tilesets CLI (installed separately): upload data, publish tilesets")
+        .about("Run the separate Tilesets CLI: upload data, publish tilesets")
         .long_about(format!(
             "Forward arguments to the Mapbox Tilesets CLI, the command-line client for \
              Mapbox Tiling Service (MTS): upload GeoJSON as a tileset source, validate a \

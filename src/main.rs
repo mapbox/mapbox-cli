@@ -72,9 +72,9 @@ const REPO_URL: &str = repo_url!();
 /// by chaining `--help` calls, one command at a time; `--schema` answers the
 /// same question for every command in one document.
 const AGENT_HELP_HINT: &str = "\
-Agents: `mapbox commands search \"<task>\"` finds the command for a task. `mapbox --schema`
-describes every command, its arguments and the request it makes as one JSON document. Use
-these instead of chaining --help calls.";
+Agents: `mapbox commands search \"<task>\"` finds the command for a task.
+`mapbox --schema` describes every command, its arguments and the request it
+makes as one JSON document. Use these instead of chaining --help calls.";
 
 /// Help headings for the global options, which otherwise share one
 /// "Options:" list with every command's own.

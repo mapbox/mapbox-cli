@@ -1340,6 +1340,38 @@ fn commands_search_with_no_match_is_an_empty_list() {
     assert_eq!(json(&stdout(&out)), serde_json::json!([]));
 }
 
+/// Under `text` the empty answer is no output at all, not a blank line, so
+/// `> file` leaves an empty file. Where to look instead goes to stderr, and
+/// the `--help` tip, which is about a match, does not.
+#[test]
+fn commands_search_with_no_match_prints_nothing_as_text() {
+    let out = run(&["-o", "text", "commands", "search", "xyzzy"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert!(
+        stderr(&out).contains("mapbox commands list"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!stderr(&out).contains("Tip:"), "{}", stderr(&out));
+}
+
+/// `--limit` caps the matches at its value, five by default, and `0`
+/// lifts the cap. "style" matches more than five commands.
+#[test]
+fn commands_search_limit_caps_the_matches() {
+    let count = |extra: &[&str]| {
+        let mut args = vec!["-o", "json", "commands", "search", "style"];
+        args.extend_from_slice(extra);
+        let out = run(&args);
+        assert!(out.status.success(), "{}", stderr(&out));
+        json(&stdout(&out)).as_array().expect("an array").len()
+    };
+    assert_eq!(count(&[]), 5);
+    assert_eq!(count(&["--limit", "1"]), 1);
+    assert!(count(&["--limit", "0"]) > 5);
+}
+
 #[test]
 fn commands_list_names_every_command_once() {
     let out = run(&["-o", "json", "commands", "list"]);
@@ -1360,6 +1392,9 @@ fn commands_list_names_every_command_once() {
         .collect();
     described.sort_unstable();
     assert_eq!(listed, described);
+    let mut unique = listed.clone();
+    unique.dedup();
+    assert_eq!(unique, listed, "a command is listed twice");
 }
 
 /// A command name nothing resembles is pointed at `commands search`, in
@@ -1392,4 +1427,57 @@ fn an_unknown_command_is_pointed_at_search() {
             .is_some_and(|fix| fix.contains("'list'")),
         "{error}"
     );
+    assert!(
+        !error["fix"]
+            .as_str()
+            .is_some_and(|fix| fix.contains("commands search")),
+        "{error}"
+    );
+
+    let out = run(&["-o", "text", "styles", "lst"]);
+    assert!(stderr(&out).contains("'list'"), "{}", stderr(&out));
+    assert!(
+        !stderr(&out).contains("commands search"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// The closing line of top-level help points a person at `commands search`
+/// too, not only an agent reading the hint above it.
+#[test]
+fn top_level_help_points_a_person_at_search() {
+    let out = run(&["--help"]);
+    assert!(out.status.success());
+    let text = stdout(&out);
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("Run mapbox commands search \"<task>\"")),
+        "{text}"
+    );
+}
+
+/// Each command's row in top-level help fits one line at 80 columns: a
+/// summary that wraps reads as two rows at a glance. The options may wrap,
+/// since their environment notes are long by nature.
+#[test]
+fn every_command_fits_one_help_line_at_80_columns() {
+    let out = command()
+        .env("COLUMNS", "80")
+        .env("CLAUDECODE", "1")
+        .arg("--help")
+        .output()
+        .expect("run mapbox");
+    let text = stdout(&out);
+    let (hint, page) = text.split_at(text.find("Usage:").expect("a usage line"));
+    for line in hint.lines() {
+        assert!(line.chars().count() <= 80, "over 80 columns: {line:?}");
+    }
+    let commands = &page[..page.find("Authentication:").expect("an options section")];
+    for line in commands.lines() {
+        assert!(
+            !line.starts_with("   "),
+            "a command's summary wraps: {line:?}\n{commands}"
+        );
+    }
 }

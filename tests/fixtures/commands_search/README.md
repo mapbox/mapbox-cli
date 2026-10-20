@@ -5,7 +5,11 @@ tests in `src/commands.rs` run every file here and fail when a set ranks
 fewer queries right than its floor. `cargo test eval_set -- --nocapture`
 prints each set's score and every query that did not rank first. On a PR,
 CI's `commands search eval` job puts the scores in its job summary, with the
-queries the change fixed and broke against the base branch.
+queries the change fixed and broke against the base branch. It also says
+when there was nothing to compare against, and why: a push with no base, a
+base from before these sets, or a base run that failed.
+`scripts/test-commands-search-report.sh` checks that summary against
+hand-written reports.
 
 ## Format
 
@@ -53,6 +57,23 @@ Kinds:
 - Keyword search has a ceiling: a query that shares no words with any
   command's text cannot be found. Most of the remaining misses are of that
   kind, and tuning will not fix them.
+- A `-` row can only be won when no word of the query matches anything,
+  because matches are cut relative to the best one, never at a fixed
+  minimum (see `MIN_SHARE_OF_BEST`). A task the CLI cannot do almost always
+  shares a word with some command, so those rows are lost today, and the
+  rows a set can actually win are fewer than its total:
+
+  | File | Rows | `-` rows | `-` rows won | Rows that can win |
+  | --- | --- | --- | --- | --- |
+  | `tuning.tsv` | 100 | 2 | 2 | 100 |
+  | `issues.tsv` | 100 | 11 | 0 | 89 |
+  | `docs.tsv` | 60 | 11 | 0 | 49 |
+
+  They stay in the score, rather than being scored apart, so a set's score
+  keeps one meaning across changes, and a change that starts answering
+  "nothing" for them shows up as a gain in the same number. `tuning.tsv`
+  wins its two only because "bake a cake" and "deploy to kubernetes" share
+  no word with any command.
 
 ## Limits
 

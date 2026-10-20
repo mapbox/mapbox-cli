@@ -44,9 +44,10 @@ const DESCRIPTION_WEIGHT: f64 = 2.0;
 const GROUP_WEIGHT: f64 = 1.5;
 const ARGUMENTS_WEIGHT: f64 = 0.5;
 /// How much a term has to score in one command before it counts as
-/// answered in full: an exact match anywhere but an argument's help. A word
-/// found only there, or a near miss, answers it in part, so a passing
-/// mention cannot lift a command to full coverage of the query.
+/// answered in full: an exact match anywhere but an argument's help, or a
+/// near miss in the name or summary. A word found only in an argument's
+/// help, or near-missed in a description or group line, answers it in part,
+/// so a passing mention cannot lift a command to full coverage of the query.
 const FULL_MATCH: f64 = GROUP_WEIGHT;
 /// Taken off for each word of a command's name the query did not ask for,
 /// so "delete a style" finds `styles delete` ahead of `styles draft
@@ -57,13 +58,25 @@ const UNASKED_NAME_WORD: f64 = 1.0;
 /// for many.
 const UNASKED_BATCH: f64 = 0.5;
 
+/// What a deprecated command's score is scaled by. Still found, so a script
+/// that names one can be told what it was, but below anything it would be
+/// better to start using.
+const DEPRECATED: f64 = 0.5;
+
+/// How well a query term matches a word, by kind of match (see
+/// [`similarity`]).
+const EXACT: f64 = 1.0;
+const PREFIX: f64 = 0.7;
+const STEM: f64 = 0.5;
+const TYPO: f64 = 0.4;
+
 /// A match this far below the best one is noise beside it.
 ///
 /// Relative only. A fixed minimum also emptied the answer for tasks this CLI
 /// cannot do, but it emptied it just as readily for ones it can, worded
-/// loosely: "how far can I walk in ten minutes" finds `isochrone` with one
-/// word. A wrong guess costs the caller a look; no answer when there was one
-/// costs them the command.
+/// loosely: "how far can I cycle in twenty minutes" finds `isochrone` with
+/// one word. A wrong guess costs the caller a look; no answer when there was
+/// one costs them the command.
 const MIN_SHARE_OF_BEST: f64 = 0.1;
 
 /// Words that describe the asking rather than the task. Left in, "how do I
@@ -160,13 +173,13 @@ pub fn search(
             "No command matches \"{query}\". `mapbox commands list` shows every command."
         ));
     }
-    emit(mode, &found, !found.is_empty())
+    emit(mode, &found)
 }
 
 pub fn list(app: &Command, specs: &[ServiceSpec], mode: Mode) -> Result<()> {
     let mut all = schema::build(app, specs, &[]).commands;
     all.sort_by(|a, b| a.command.cmp(&b.command));
-    emit(mode, &all, true)
+    emit(mode, &all)
 }
 
 /// The commands that match `query`, best first, down to
@@ -199,7 +212,12 @@ fn index(app: &Command, specs: &[ServiceSpec]) -> Vec<(Fields, CommandEntry)> {
 /// Ties go to the shorter command name, then alphabetically, so the same
 /// query always answers the same way.
 fn rank_in(index: &[(Fields, CommandEntry)], query: &str) -> Vec<usize> {
-    let query = Query::parse(query);
+    let vocabulary: BTreeSet<&str> = index
+        .iter()
+        .flat_map(|(fields, _)| fields.parts.iter().flat_map(|(_, words)| words))
+        .map(String::as_str)
+        .collect();
+    let query = Query::parse(query, &vocabulary);
     if query.terms.is_empty() {
         return vec![];
     }
@@ -218,8 +236,8 @@ fn rank_in(index: &[(Fields, CommandEntry)], query: &str) -> Vec<usize> {
     above_floor(scored).into_iter().map(|(_, i)| i).collect()
 }
 
-/// `scored` sorted best first, without the zero scores and the ones too far
-/// below the best.
+/// What is left of `scored`, already sorted best first, once the zero scores
+/// and the ones too far below the best are dropped.
 fn above_floor<T>(scored: Vec<(f64, T)>) -> Vec<(f64, T)> {
     let floor = scored
         .first()
@@ -231,7 +249,7 @@ fn above_floor<T>(scored: Vec<(f64, T)>) -> Vec<(f64, T)> {
 }
 
 struct Query {
-    terms: Vec<String>,
+    terms: Vec<Term>,
     /// Neighboring words written together, "log out" as "logout", tried
     /// only for an exact match, with the two words they were made from.
     /// Kept apart from `terms` so that one that matches nothing — almost all
@@ -239,16 +257,33 @@ struct Query {
     compounds: Vec<(String, [String; 2])>,
 }
 
+struct Term {
+    word: String,
+    /// Whether a word a typo away counts. Not for a word some command's text
+    /// uses as it is: that is a real word, not a misspelling, and matching
+    /// it one edit off turns "match" into "batch".
+    typos: bool,
+}
+
 impl Query {
-    fn parse(query: &str) -> Self {
+    fn parse(query: &str, vocabulary: &BTreeSet<&str>) -> Self {
         let all: Vec<String> = tokens(query).collect();
+        let mut seen = BTreeSet::new();
         // Before stopwords come out: the "in" of "log in" is one.
         let compounds = all
             .windows(2)
             .map(|pair| (pair.concat(), [pair[0].clone(), pair[1].clone()]))
+            // "log in log in" asks once.
+            .filter(|(compound, _)| seen.insert(compound.clone()))
             .collect();
         Query {
-            terms: terms(query),
+            terms: terms(query)
+                .into_iter()
+                .map(|word| Term {
+                    typos: !vocabulary.contains(word.as_str()),
+                    word,
+                })
+                .collect(),
             compounds,
         }
     }
@@ -284,10 +319,11 @@ impl Fields {
             .flatten()
             .collect::<Vec<_>>()
             .join(" ");
+        let name = words(name);
         Fields {
-            name: words(name),
+            name: name.clone(),
             parts: vec![
-                (NAME_WEIGHT, words(name)),
+                (NAME_WEIGHT, name),
                 (SUMMARY_WEIGHT, words(&entry.summary)),
                 (
                     DESCRIPTION_WEIGHT,
@@ -332,14 +368,31 @@ fn score(query: &Query, fields: &Fields, deprecated: bool) -> f64 {
                 .fold(0.0, f64::max);
             term_total += weight * best;
         }
-        matched += if answered.contains(term) {
+        matched += if answered.contains(&term.word) {
             1.0
         } else {
             (term_total / FULL_MATCH).min(1.0)
         };
         total += term_total;
     }
-    let unasked = fields
+    let mut total = (total - UNASKED_NAME_WORD * unasked_name_words(query, fields) as f64).max(0.0);
+    // A `batch` command does what a sibling does, for many inputs at once,
+    // and its text says so at length: "forward or reverse", every option the
+    // sibling has. Unless the query asks for many, the sibling is the answer.
+    if fields.name.contains("batch") && !asks_for_many(query) {
+        total *= UNASKED_BATCH;
+    }
+    if deprecated {
+        total *= DEPRECATED;
+    }
+    let coverage = matched / query.terms.len() as f64;
+    total * coverage * coverage
+}
+
+/// How many words of a command's name no term or compound of the query
+/// asked for.
+fn unasked_name_words(query: &Query, fields: &Fields) -> usize {
+    fields
         .name
         .iter()
         .filter(|word| {
@@ -352,34 +405,26 @@ fn score(query: &Query, fields: &Fields, deprecated: bool) -> f64 {
                     .iter()
                     .any(|(compound, _)| exact_or_synonym(compound, word) > 0.0)
         })
-        .count();
-    // A `batch` command does what a sibling does, for many inputs at once,
-    // and its text says so at length: "forward or reverse", every option the
-    // sibling has. Unless the query asks for many, the sibling is the answer.
-    let unasked_batch = fields.name.contains("batch")
-        && !query
-            .terms
-            .iter()
-            .any(|term| relatedness(term, "batch") > 0.0 || relatedness(term, "multiple") > 0.0);
-    let total = (total - UNASKED_NAME_WORD * unasked as f64).max(0.0);
-    let total = if unasked_batch {
-        total * UNASKED_BATCH
-    } else {
-        total
-    };
-    let coverage = matched / query.terms.len() as f64;
-    // Still found, so a script that names one can be told what it was, but
-    // below anything it would be better to start using.
-    let standing = if deprecated { 0.5 } else { 1.0 };
-    total * coverage * coverage * standing
+        .count()
+}
+
+/// Whether the query says it has many inputs. A typo does not: "patch" and
+/// "watch" are one letter from "batch", and a query that means one of them
+/// is not asking for a `batch` command.
+fn asks_for_many(query: &Query) -> bool {
+    query.terms.iter().any(|term| {
+        ["batch", "multiple"].iter().any(|many| {
+            similarity(&term.word, many, false) > 0.0 || synonyms(&term.word).contains(many)
+        })
+    })
 }
 
 /// [`similarity`], or a synonym's exact match if that is closer. A synonym
 /// is not fuzzy-matched: it is already a guess, and "batch" one letter off
 /// is "match".
-fn relatedness(term: &str, word: &str) -> f64 {
-    let direct = similarity(term, word);
-    if synonyms(term).contains(&word) {
+fn relatedness(term: &Term, word: &str) -> f64 {
+    let direct = similarity(&term.word, word, term.typos);
+    if synonyms(&term.word).contains(&word) {
         direct.max(SYNONYM_WEIGHT)
     } else {
         direct
@@ -405,13 +450,15 @@ fn synonyms(term: &str) -> &'static [&'static str] {
 }
 
 /// How well a query term matches one word of a command's text, from 0 to 1.
-fn similarity(term: &str, word: &str) -> f64 {
+/// `typos` allows a match one or two edits off.
+fn similarity(term: &str, word: &str, typos: bool) -> f64 {
     if term == word {
-        return 1.0;
+        return EXACT;
     }
+    let term_len = term.chars().count();
     // Typing the start of a word: "geo" for "geocoder".
-    if term.len() >= 3 && word.starts_with(term) {
-        return 0.7;
+    if term_len >= 3 && word.starts_with(term) {
+        return PREFIX;
     }
     // The same stem, spelled on for a different ending: "geocoding" and
     // "geocoder".
@@ -421,19 +468,22 @@ fn similarity(term: &str, word: &str) -> f64 {
         .take_while(|(a, b)| a == b)
         .count();
     if shared >= 5 {
-        return 0.5;
+        return STEM;
     }
-    // A typo. Short words are left out: up to four letters, one edit turns
-    // too many words into another real one — "shop" into "show" — and up to
-    // seven, two do — "convert" into "content".
+    if !typos {
+        return 0.0;
+    }
+    // Short words are left out: up to four letters, one edit turns too many
+    // words into another real one — "shop" into "show" — and up to seven,
+    // two do — "convert" into "content".
     let edits = strsim::damerau_levenshtein(term, word);
-    let allowed = match term.len().min(word.len()) {
+    let allowed = match term_len.min(word.chars().count()) {
         0..=4 => 0,
         5..=7 => 1,
         _ => 2,
     };
     if edits <= allowed {
-        return 0.4;
+        return TYPO;
     }
     0.0
 }
@@ -468,36 +518,38 @@ fn raw_tokens(text: &str) -> impl Iterator<Item = String> + '_ {
 
 fn singular(word: String) -> String {
     match word.strip_suffix('s') {
-        Some(stem) if stem.len() >= 3 && !stem.ends_with('s') => stem.to_string(),
+        Some(stem) if stem.chars().count() >= 3 && !stem.ends_with('s') => stem.to_string(),
         _ => word,
     }
 }
 
-fn emit(mode: Mode, entries: &[CommandEntry], next_step: bool) -> Result<()> {
+fn emit(mode: Mode, entries: &[CommandEntry]) -> Result<()> {
+    // No table, not an empty line: `text` with no match prints nothing, so
+    // `mapbox commands search … > file` leaves an empty file. `json` still
+    // answers `[]`, the one shape a parser can take.
+    if entries.is_empty() && !mode.is_json() {
+        return Ok(());
+    }
     let width = entries
         .iter()
         .map(|entry| entry.command.len())
         .max()
         .unwrap_or(0)
         .max("COMMAND".len());
-    let text = if entries.is_empty() {
-        String::new()
-    } else {
-        std::iter::once(format!("{:width$}  SUMMARY", "COMMAND"))
-            .chain(
-                entries
-                    .iter()
-                    .map(|entry| format!("{:width$}  {}", entry.command, entry.summary)),
-            )
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
+    let text = std::iter::once(format!("{:width$}  SUMMARY", "COMMAND"))
+        .chain(
+            entries
+                .iter()
+                .map(|entry| format!("{:width$}  {}", entry.command, entry.summary)),
+        )
+        .collect::<Vec<_>>()
+        .join("\n");
     let json = entries
         .iter()
         .map(|entry| json!({ "command": entry.command, "summary": entry.summary }))
         .collect();
     output::emit(mode, &text, Value::Array(json))?;
-    if next_step && !mode.is_json() {
+    if !mode.is_json() {
         output::print_tips(&["`mapbox <command> --help` shows what one takes.".to_string()]);
     }
     Ok(())
@@ -556,95 +608,127 @@ mod tests {
     /// per set, so they run in parallel.
     ///
     /// With [`REPORT_DIR_ENV`] set, also writes every query's result to
-    /// `<dir>/<set>`, before the floors are checked so a failing run still
-    /// leaves one. CI diffs a PR's reports against its base's.
+    /// `<dir>/<set>`, before anything is asserted, so a failing run still
+    /// leaves one: a set missing from CI's summary would read as a set
+    /// nobody added. A row that cannot be scored goes in the report as a
+    /// `# invalid` line rather than stopping the run there.
     fn eval_set_keeps_its_scores(wanted: &str) {
+        let &(name, text, min_first, min_top3) = EVAL_SETS
+            .iter()
+            .find(|(name, ..)| *name == wanted)
+            .unwrap_or_else(|| panic!("`{wanted}` is not in EVAL_SETS"));
         let specs = crate::spec::effective_services().expect("specs load");
         let app = crate::build_app(&specs);
-        let known: BTreeSet<String> = schema::build(&app, &specs, &[])
-            .commands
-            .into_iter()
-            .map(|entry| entry.command)
-            .collect();
         let index = index(&app, &specs);
+        // From the index rather than the whole schema: an expected
+        // `commands` command is one search never answers with.
+        let known: BTreeSet<&str> = index
+            .iter()
+            .map(|(_, entry)| entry.command.as_str())
+            .collect();
 
-        let mut failures = vec![];
-        for (name, text, min_first, min_top3) in EVAL_SETS.iter().filter(|(n, ..)| *n == wanted) {
-            let (mut rows, mut first, mut top3) = (0, 0, 0);
-            let mut misses = vec![];
-            let mut report = format!("# floors\t{min_first}\t{min_top3}\n");
-            for line in text
-                .lines()
-                .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
-            {
-                let mut columns = line.split('\t');
-                let query = columns.next().expect("a query");
-                let expected: Vec<&str> = match columns.next().expect("an expected column") {
-                    "-" => vec![],
-                    answers => answers.split('|').collect(),
-                };
-                // A renamed command would leave its rows unwinnable, and
-                // the floor would read that as the search getting worse.
-                for command in &expected {
-                    assert!(
-                        known.contains(*command),
-                        "{name}: `{command}` is not a command (\"{query}\")"
-                    );
-                }
-                let found: Vec<String> = rank_in(&index, query)
-                    .into_iter()
-                    .take(3)
-                    .map(|i| index[i].1.command.clone())
-                    .collect();
-                let (is_first, in_top3) = if expected.is_empty() {
-                    (found.is_empty(), found.is_empty())
-                } else {
-                    (
-                        found
-                            .first()
-                            .is_some_and(|c| expected.contains(&c.as_str())),
-                        found.iter().any(|c| expected.contains(&c.as_str())),
-                    )
-                };
-                report.push_str(&format!(
-                    "{query}\t{}\t{}\t{}\t{}\n",
-                    expected.join("|"),
-                    found.join("|"),
-                    u8::from(is_first),
-                    u8::from(in_top3)
+        let (mut rows, mut first, mut top3) = (0, 0, 0);
+        let (mut misses, mut invalid) = (vec![], vec![]);
+        let mut report = format!("# floors\t{min_first}\t{min_top3}\n");
+        for line in text
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        {
+            let mut columns = line.split('\t');
+            let (Some(query), Some(expected)) = (columns.next(), columns.next()) else {
+                invalid.push(format!("no expected column: {line:?}"));
+                continue;
+            };
+            let expected: Vec<&str> = match expected {
+                "-" => vec![],
+                answers => answers.split('|').collect(),
+            };
+            // A renamed command would leave its row unwinnable, and the
+            // floor would read that as the search getting worse.
+            if let Some(command) = expected.iter().find(|c| !known.contains(**c)) {
+                invalid.push(format!(
+                    "`{command}` is not a command search answers with (\"{query}\")"
                 ));
-                rows += 1;
-                first += usize::from(is_first);
-                top3 += usize::from(in_top3);
-                if !is_first {
-                    misses.push(format!("  \"{query}\": want {expected:?}, got {found:?}"));
-                }
+                continue;
             }
-            if let Some(dir) = std::env::var_os(REPORT_DIR_ENV) {
-                let dir = std::path::PathBuf::from(dir);
-                std::fs::create_dir_all(&dir).expect("create the report directory");
-                std::fs::write(dir.join(name), report).expect("write the report");
-            }
-            eprintln!(
-                "{name}: {first}/{rows} first (floor {min_first}), \
-                 {top3}/{rows} in top 3 (floor {min_top3})"
-            );
-            if first < *min_first || top3 < *min_top3 {
-                failures.push(format!(
-                    "{name} fell below its floor: {first} first (floor {min_first}), \
-                     {top3} in top 3 (floor {min_top3}). If the trade-off is intended — \
-                     help text made accurate at the cost of a match, say — lower the floor \
-                     in EVAL_SETS to {}/{} and say why in the PR. Not first:\n{}",
-                    first.min(*min_first),
-                    top3.min(*min_top3),
-                    misses.join("\n")
-                ));
-            }
-            if first > *min_first || top3 > *min_top3 {
-                eprintln!("  above its floor: raise it to {first}/{top3} in EVAL_SETS");
+            let found: Vec<String> = rank_in(&index, query)
+                .into_iter()
+                .take(3)
+                .map(|i| index[i].1.command.clone())
+                .collect();
+            let (is_first, in_top3) = if expected.is_empty() {
+                (found.is_empty(), found.is_empty())
+            } else {
+                (
+                    found
+                        .first()
+                        .is_some_and(|c| expected.contains(&c.as_str())),
+                    found.iter().any(|c| expected.contains(&c.as_str())),
+                )
+            };
+            report.push_str(&format!(
+                "{query}\t{}\t{}\t{}\t{}\n",
+                expected.join("|"),
+                found.join("|"),
+                u8::from(is_first),
+                u8::from(in_top3)
+            ));
+            rows += 1;
+            first += usize::from(is_first);
+            top3 += usize::from(in_top3);
+            if !is_first {
+                misses.push(format!("  \"{query}\": want {expected:?}, got {found:?}"));
             }
         }
-        assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+        for problem in &invalid {
+            report.push_str(&format!("# invalid\t{problem}\n"));
+        }
+        if let Some(dir) = std::env::var_os(REPORT_DIR_ENV) {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).expect("create the report directory");
+            std::fs::write(dir.join(name), report).expect("write the report");
+        }
+
+        eprintln!(
+            "{name}: {first}/{rows} first (floor {min_first}), \
+             {top3}/{rows} in top 3 (floor {min_top3})"
+        );
+        for miss in &misses {
+            eprintln!("{miss}");
+        }
+        assert!(invalid.is_empty(), "{name}:\n{}", invalid.join("\n"));
+        assert!(
+            first >= min_first && top3 >= min_top3,
+            "{name} fell below its floor: {first} first (floor {min_first}), \
+             {top3} in top 3 (floor {min_top3}). If the trade-off is intended — \
+             help text made accurate at the cost of a match, say — lower the floor \
+             in EVAL_SETS to {}/{} and say why in the PR. The misses are above.",
+            first.min(min_first),
+            top3.min(min_top3),
+        );
+        if first > min_first || top3 > min_top3 {
+            eprintln!("  above its floor: raise it to {first}/{top3} in EVAL_SETS");
+        }
+    }
+
+    /// A file added to the directory but not to [`EVAL_SETS`] would be a
+    /// set that is never scored.
+    #[test]
+    fn every_query_file_is_an_eval_set() {
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/commands_search"
+        );
+        let mut files: Vec<String> = std::fs::read_dir(dir)
+            .expect("read the fixture directory")
+            .map(|entry| entry.expect("a directory entry").file_name())
+            .filter_map(|name| name.into_string().ok())
+            .filter(|name| name.ends_with(".tsv"))
+            .collect();
+        files.sort();
+        let mut sets: Vec<&str> = EVAL_SETS.iter().map(|(name, ..)| *name).collect();
+        sets.sort_unstable();
+        assert_eq!(files, sets);
     }
 
     #[test]
@@ -736,14 +820,15 @@ mod tests {
         assert_eq!(kept, ["best", "tenth"]);
     }
 
+    const WEAK_QUERY: &str = "how far can i cycle in twenty minutes";
+
     /// A loosely worded task matched by one word is still answered: a
-    /// fixed minimum score once emptied this.
+    /// fixed minimum score once emptied this. Not a phrasing from any query
+    /// set, so it does not lean on one the search was fitted to.
     #[test]
     fn a_weak_only_match_is_still_an_answer() {
         assert_eq!(
-            top("how far can i walk in ten minutes")
-                .first()
-                .map(String::as_str),
+            top(WEAK_QUERY).first().map(String::as_str),
             Some("mapbox isochrone")
         );
     }
@@ -764,32 +849,95 @@ mod tests {
         );
     }
 
+    /// "patch" and "match" are a letter from "batch", and both are words a
+    /// command's text uses as they are, so neither asks for many.
+    #[test]
+    fn a_word_one_letter_from_batch_does_not_find_a_batch_command() {
+        for query in ["patch a style", "match a style"] {
+            let found = top(query);
+            assert!(
+                found.first().is_some_and(|c| !c.contains("batch")),
+                "\"{query}\" ranked {found:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_word_some_command_uses_is_not_a_typo() {
+        let vocabulary = BTreeSet::from(["match"]);
+        let query = Query::parse("match uplaod", &vocabulary);
+        let typos: Vec<bool> = query.terms.iter().map(|term| term.typos).collect();
+        assert_eq!(typos, [false, true]);
+        assert_eq!(relatedness(&query.terms[0], "batch"), 0.0);
+    }
+
+    /// The caller is already in `commands`, and its own summaries would
+    /// otherwise answer every query about finding a command.
+    #[test]
+    fn the_commands_group_is_left_out() {
+        let specs = crate::spec::effective_services().expect("specs load");
+        let app = crate::build_app(&specs);
+        let found = rank(&app, &specs, "find a command search list commands");
+        assert!(
+            found.iter().all(|entry| entry.service != COMMAND),
+            "{:?}",
+            found.iter().map(|entry| &entry.command).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_repeated_pair_is_one_compound() {
+        let query = Query::parse("log in log in", &BTreeSet::new());
+        let compounds: Vec<&str> = query.compounds.iter().map(|(c, _)| c.as_str()).collect();
+        assert_eq!(compounds, ["login", "inlog"]);
+    }
+
     #[test]
     fn stopwords_are_dropped_before_the_plural_is() {
         assert!(terms("what is this").is_empty());
     }
 
-    #[test]
-    fn a_synonym_counts_for_less_than_the_word_itself() {
-        assert_eq!(relatedness("remove", "remove"), 1.0);
-        assert_eq!(relatedness("remove", "delete"), SYNONYM_WEIGHT);
-        assert_eq!(relatedness("delete", "remove"), 0.0);
+    fn term(word: &str) -> Term {
+        Term {
+            word: word.to_string(),
+            typos: true,
+        }
     }
 
-    /// "batch" is one letter from "match"; a synonym is matched exactly.
+    #[test]
+    fn a_synonym_counts_for_less_than_the_word_itself() {
+        assert_eq!(relatedness(&term("remove"), "remove"), EXACT);
+        assert_eq!(relatedness(&term("remove"), "delete"), SYNONYM_WEIGHT);
+        assert_eq!(relatedness(&term("delete"), "remove"), 0.0);
+    }
+
+    /// "bulk" stands in for "batch", and "batch" one letter off is
+    /// "match": the stand-in is matched exactly, not within a typo.
     #[test]
     fn a_synonym_is_not_fuzzy_matched() {
-        assert_eq!(relatedness("many", "match"), 0.0);
+        assert_eq!(relatedness(&term("bulk"), "batch"), SYNONYM_WEIGHT);
+        assert_eq!(similarity("batch", "match", true), TYPO);
+        assert_eq!(relatedness(&term("bulk"), "match"), 0.0);
     }
 
     #[test]
     fn a_plural_matches_its_singular() {
-        assert!(similarity(&terms("styles")[0], &terms("style")[0]) == 1.0);
+        assert_eq!(
+            similarity(&terms("styles")[0], &terms("style")[0], true),
+            EXACT
+        );
     }
 
     #[test]
     fn short_words_are_not_fuzzy_matched() {
-        assert_eq!(similarity("map", "mcp"), 0.0);
-        assert_eq!(similarity("shop", "show"), 0.0);
+        assert_eq!(similarity("map", "mcp", true), 0.0);
+        assert_eq!(similarity("shop", "show", true), 0.0);
+    }
+
+    /// Letters, not bytes: "café" is four letters, too short for a typo.
+    #[test]
+    fn lengths_count_letters() {
+        assert_eq!(similarity("cafè", "café", true), 0.0);
+        assert_eq!(singular("éés".to_string()), "éés");
     }
 }

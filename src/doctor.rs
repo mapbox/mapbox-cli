@@ -107,7 +107,7 @@ const PROXY_VARS: &[(&str, &str)] = &[
 
 pub fn command() -> Command {
     Command::new(COMMAND)
-        .about("Show the token, proxy and settings the next command would run with")
+        .about("Show the token, proxy and settings the next command would use")
         .long_about(
             "A read-only snapshot of what the next command would see: which token wins \
              and its state, which proxy variables are in effect, and where the \

@@ -83,7 +83,7 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "feedback",
-        "Report wrong or missing map data to Mapbox, and list what was reported",
+        "Report wrong or missing map data, and list what was reported",
     ),
     ("directions", "Route between waypoints"),
     (

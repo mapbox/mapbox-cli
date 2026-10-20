@@ -129,8 +129,9 @@ an entry outlives its command. A command it misses still shows, under
 ## `commands search` and its query sets
 
 `mapbox commands search` ranks commands by the words in their names, summaries,
-descriptions and help-group lines, so **editing a command's `about` or a line
-in `DESCRIPTIONS` changes search results**, not only `--help`. The `eval_set_*`
+descriptions, help-group lines and argument help, so **editing a command's
+`about`, an argument's `help` or a line in `DESCRIPTIONS` changes search
+results**, not only `--help`. The `eval_set_*`
 tests in `src/commands.rs` run the query sets in `tests/fixtures/commands_search/`
 and hold each to a floor of how many queries rank right. Each file's header says
 where its queries came from and how much the search was tuned against them.

@@ -861,111 +861,6 @@ fn the_fetched_token_sends_the_event_and_is_kept() {
     assert_eq!(sent_with(&received), "pk.fetched");
 }
 
-/// A `401` to a token the Tokens API calls valid is this API refusing it,
-/// not the token being dead, so it is kept; the third such refusal in a row
-/// rests telemetry for an hour.
-#[test]
-fn a_token_an_api_refuses_is_kept() {
-    let home = scratch("send-forbidden");
-    std::fs::write(
-        config_dir(&home).join("cli-token.json"),
-        // Refused twice before: this is the third in a row.
-        r#"{"token":"pk.kept","overridden":true,"cooldowns":{"telemetry":{"failures":2}}}"#,
-    )
-    .expect("write the state");
-    let (_, events_url) = answer_once("401 Unauthorized", r#"{"message":"Not Authorized"}"#);
-    let (checked, tokens_url) = answer_once("200 OK", r#"{"code":"TokenValid"}"#);
-    let out = command(&home)
-        .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
-        .env(
-            "MAPBOX_INTERNAL_TELEMETRY_URL",
-            events_url.replace("/config/token.json", "/events/v2"),
-        )
-        .env("MAPBOX_INTERNAL_TOKENS_URL", &tokens_url)
-        .args(["config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-    checked
-        .recv_timeout(Duration::from_secs(10))
-        .expect("the token was checked");
-    let lines = deliveries(&home, 2);
-    assert_eq!(lines[1]["status"], 401, "{lines:?}");
-    let state = cli_token_state(&home, "cooldowns");
-    assert_eq!(state["token"], "pk.kept");
-    assert_eq!(state["rejected"], false);
-    assert!(state["cooldowns"]["telemetry"]["until"].is_u64(), "{state}");
-
-    // Resting: the next run sends nothing with it, and checks nothing. It
-    // asks the endpoint for another, which is not there.
-    let (sent, events_url) = answer_once("401 Unauthorized", r#"{"message":"Not Authorized"}"#);
-    let (checked, tokens_url) = answer_once("200 OK", r#"{"code":"TokenValid"}"#);
-    let out = command(&home)
-        .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
-        .env(
-            "MAPBOX_INTERNAL_TELEMETRY_URL",
-            events_url.replace("/config/token.json", "/events/v2"),
-        )
-        .env("MAPBOX_INTERNAL_TOKENS_URL", &tokens_url)
-        .args(["config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-    let lines = deliveries(&home, 4);
-    assert_eq!(lines[3]["error"], "no token to send with", "{lines:?}");
-    assert!(
-        sent.recv_timeout(Duration::from_millis(500)).is_err(),
-        "sent while resting"
-    );
-    assert!(
-        checked.recv_timeout(Duration::from_millis(100)).is_err(),
-        "checked while resting"
-    );
-}
-
-/// The endpoint serving the rejected token a third time in a row is not
-/// asked again for an hour, and the event is dropped meanwhile.
-#[test]
-fn the_rejected_token_served_again_waits_before_asking() {
-    let home = scratch("send-still-rejected");
-    std::fs::write(
-        config_dir(&home).join("cli-token.json"),
-        // Two fetches already found it: this is the third in a row.
-        r#"{"token":"pk.old","rejected":true,"overridden":true,"failures":2}"#,
-    )
-    .expect("write the state");
-    let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.old"}"#);
-    let out = command(&home)
-        .env(
-            "MAPBOX_INTERNAL_TELEMETRY_URL",
-            "http://127.0.0.1:1/events/v2",
-        )
-        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
-        .args(["config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-    let state = cli_token_state(&home, "retry_at");
-    assert_eq!(state["failures"], 3);
-
-    // Nothing listens at the endpoint now, and nothing should try it.
-    let out = command(&home)
-        .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
-        .env(
-            "MAPBOX_INTERNAL_TELEMETRY_URL",
-            "http://127.0.0.1:1/events/v2",
-        )
-        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
-        .args(["config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-    let lines = deliveries(&home, 1);
-    let last = lines.last().expect("a delivery line");
-    assert_eq!(last["stage"], "no_token");
-    assert_eq!(last["reason"], "paused");
-}
-
 /// A token called invalid for something fixed in the Console stays the same
 /// string, so the dead token served again is checked once more, and taken
 /// back once it checks valid.
@@ -1084,70 +979,6 @@ fn keeping_a_fetched_token_leaves_the_directory_mode_alone() {
     );
 }
 
-/// Only an answer that went through ends a cooldown: a `500` after one
-/// expired says nothing about whether the API takes the token now.
-#[test]
-fn a_failed_send_does_not_end_a_cooldown() {
-    let home = scratch("send-cooldown-500");
-    std::fs::write(
-        config_dir(&home).join("cli-token.json"),
-        r#"{"token":"pk.kept","overridden":true,"cooldowns":{"telemetry":{"until":1}}}"#,
-    )
-    .expect("write the state");
-    let (sent, events_url) = answer_once("500 Internal Server Error", "{}");
-    let out = command(&home)
-        .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
-        .env(
-            "MAPBOX_INTERNAL_TELEMETRY_URL",
-            events_url.replace("/config/token.json", "/events/v2"),
-        )
-        .args(["config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-    sent.recv_timeout(Duration::from_secs(10))
-        .expect("the expired cooldown let the event go");
-    let lines = deliveries(&home, 2);
-    assert_eq!(lines[1]["status"], 500, "{lines:?}");
-    let state: Value = serde_json::from_str(
-        &std::fs::read_to_string(config_dir(&home).join("cli-token.json")).expect("the state"),
-    )
-    .expect("the state is JSON");
-    assert_eq!(state["cooldowns"]["telemetry"]["until"], 1, "{state}");
-}
-
-/// A refusal the Tokens API cannot explain still rests telemetry: sending
-/// the same token on the next run would most likely be refused again, and
-/// cost another check that may take seconds.
-#[test]
-fn an_unexplained_refusal_starts_a_cooldown_too() {
-    let home = scratch("send-unknown");
-    std::fs::write(
-        config_dir(&home).join("cli-token.json"),
-        r#"{"token":"pk.kept","overridden":true}"#,
-    )
-    .expect("write the state");
-    let (_, events_url) = answer_once("403 Forbidden", r#"{"message":"Forbidden"}"#);
-    let (checked, tokens_url) = answer_once("500 Internal Server Error", "{}");
-    let out = command(&home)
-        .env(
-            "MAPBOX_INTERNAL_TELEMETRY_URL",
-            events_url.replace("/config/token.json", "/events/v2"),
-        )
-        .env("MAPBOX_INTERNAL_TOKENS_URL", &tokens_url)
-        .args(["config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-    checked
-        .recv_timeout(Duration::from_secs(10))
-        .expect("the token was checked");
-    let state = cli_token_state(&home, "cooldowns");
-    assert_eq!(state["token"], "pk.kept");
-    assert_eq!(state["rejected"], false);
-    assert!(state["cooldowns"]["telemetry"]["until"].is_u64(), "{state}");
-}
-
 /// Unix seconds now, for a state file whose waits are still running.
 fn now() -> u64 {
     std::time::SystemTime::now()
@@ -1244,56 +1075,6 @@ fn try_sending(home: &Path, token_url: &str) -> (bool, Vec<Value>) {
     (arrived, lines)
 }
 
-/// A CLI token that cannot be used drops the event, even for a user who has
-/// a token: none on disk and the endpoint dead, which only the child finds
-/// out; or, known before anything is spawned, fetching paused after misses,
-/// or resting from it with fetching paused too.
-#[test]
-fn an_unusable_clis_token_sends_nothing_even_with_a_users_token() {
-    let later = now() + 3000;
-    for (name, stage, state) in [
-        ("endpoint-dead", "failed", None),
-        (
-            "paused",
-            "paused",
-            Some(serde_json::json!({"token": "pk.old", "rejected": true,
-                "failures": 3, "retry_at": later})),
-        ),
-        (
-            "resting",
-            "resting",
-            Some(
-                serde_json::json!({"token": "pk.kept", "failures": 3, "retry_at": later,
-                "cooldowns": {"telemetry": {"failures": 3, "until": later}}}),
-            ),
-        ),
-        (
-            "resting-own-pause",
-            "resting",
-            Some(
-                serde_json::json!({"token": "pk.kept", "cooldowns": {"telemetry":
-                {"failures": 3, "until": later, "misses": 3, "retry_at": later}}}),
-            ),
-        ),
-    ] {
-        let home = scratch(&format!("send-nothing-{name}"));
-        log_in(&home, "tk.login");
-        if let Some(state) = state {
-            save_cli_token_state(&home, state);
-        }
-        let (arrived, lines) = try_sending(&home, "http://127.0.0.1:9/");
-        assert!(!arrived, "{name}: sent");
-        let last = lines.last().expect("a delivery line");
-        if stage == "failed" {
-            assert_eq!(last["stage"], "failed", "{name}: {lines:?}");
-            assert_eq!(last["error"], "no token to send with", "{name}");
-        } else {
-            assert_eq!(last["stage"], "no_token", "{name}: {lines:?}");
-            assert_eq!(last["reason"], stage, "{name}: {lines:?}");
-        }
-    }
-}
-
 /// A `403` to the CLI's token, which the Tokens API calls valid: the event
 /// is dropped, not sent again with any other token.
 #[test]
@@ -1318,9 +1099,9 @@ fn a_refused_clis_token_is_not_sent_again() {
         token_sent(&heads),
         ("pk.kept".to_string(), CLI_REFERER.map(str::to_owned))
     );
-    // The child is done once the cooldown is written, so a resend would
+    // The child is done once the failure is counted, so a resend would
     // have arrived by the end of the wait below.
-    cli_token_state(&home, "cooldowns");
+    cli_token_state(&home, r#""count":1"#);
     assert!(
         heads.recv_timeout(Duration::from_secs(1)).is_err(),
         "the event was sent again"
@@ -1369,59 +1150,6 @@ fn a_revoked_token_is_replaced_for_the_next_run_without_a_resend() {
     assert_eq!(sent_with(&received), "pk.new");
 }
 
-/// Rotation during a rest: a token an API refused while valid is rested
-/// from, but a different token served ends the rest on the next run,
-/// without waiting out the hour.
-#[test]
-fn a_new_token_served_during_a_rest_ends_it() {
-    let home = scratch("send-rest-rotated");
-    log_in(&home, "tk.login");
-    save_cli_token_state(
-        &home,
-        serde_json::json!({"token": "pk.old", "cooldowns": {"telemetry":
-            {"failures": 3, "until": now() + 3000}}}),
-    );
-    let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.new"}"#);
-    let (received, url) = events_server(true);
-    let out = command(&home)
-        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
-        .args(["config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-    assert_eq!(sent_with(&received), "pk.new");
-    let state = cli_token_state(&home, "pk.new");
-    assert!(state.get("cooldowns").is_none(), "{state}");
-}
-
-/// The token a rest is from, served again, is a miss paced like any other:
-/// the rest holds, nothing is sent, and the third in a row pauses asking
-/// during the rest. It is the rest's miss, not the endpoint's, so the
-/// endpoint's own count is left as it was.
-#[test]
-fn the_rested_token_served_again_keeps_the_rest() {
-    let home = scratch("send-rest-same");
-    let until = now() + 3000;
-    save_cli_token_state(
-        &home,
-        serde_json::json!({"token": "pk.old", "failures": 1, "cooldowns": {"telemetry":
-            {"failures": 3, "until": until, "misses": 2}}}),
-    );
-    let (asked, token_url) = answer_once("200 OK", r#"{"token":"pk.old"}"#);
-    let (arrived, _) = try_sending(&home, &token_url);
-    assert!(!arrived, "sent while resting");
-    asked
-        .recv_timeout(Duration::from_secs(1))
-        .expect("the endpoint was asked");
-    let state = cli_token_state(&home, "retry_at");
-    let rest = &state["cooldowns"]["telemetry"];
-    assert_eq!(rest["misses"], 3, "{state}");
-    assert!(rest["retry_at"].as_u64() > Some(now()), "{state}");
-    assert_eq!(rest["until"], until, "{state}");
-    assert_eq!(state["failures"], 1, "{state}");
-}
-
 /// An override is the CLI's token only if it is a public one: a secret or
 /// login token there drops the event rather than reaching Mapbox Events,
 /// and the fetched token is not sent instead.
@@ -1453,37 +1181,6 @@ fn an_override_that_is_not_public_sends_nothing() {
             "{token}: fetched a token instead"
         );
     }
-}
-
-/// Rotation while fetching is paused: nothing is sent and the endpoint is
-/// left alone until the pause ends; then the token it serves is used.
-#[test]
-fn a_token_served_after_the_fetch_pause_is_used() {
-    let home = scratch("send-pause-ends");
-    let paused = |retry_at: u64| {
-        serde_json::json!({"token": "pk.old", "rejected": true,
-            "failures": 3, "retry_at": retry_at})
-    };
-    save_cli_token_state(&home, paused(now() + 3000));
-    let (asked, token_url) = answer_once("200 OK", r#"{"token":"pk.new"}"#);
-    let (arrived, _) = try_sending(&home, &token_url);
-    assert!(!arrived, "sent during the pause");
-    assert!(
-        asked.recv_timeout(Duration::from_millis(100)).is_err(),
-        "asked during the pause"
-    );
-
-    save_cli_token_state(&home, paused(1));
-    let (received, url) = events_server(true);
-    let out = command(&home)
-        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
-        .args(["config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-    assert_eq!(sent_with(&received), "pk.new");
-    assert_eq!(cli_token_state(&home, "pk.new")["failures"], 0);
 }
 
 /// `MAPBOX_CLI_TOKEN` is the developer's choice: a refusal of it is sent
@@ -1531,33 +1228,300 @@ fn a_refused_override_is_not_checked_or_replaced() {
     assert_eq!(after, state);
 }
 
-/// A rest or a fetch pause is about the fetched token, so an override is
-/// sent through either.
+/// A port nothing listens on, for an endpoint a run must not reach.
+const NOWHERE: &str = "http://127.0.0.1:9/";
+
+const NOT_AUTHORIZED: (&str, &str) = ("401 Unauthorized", r#"{"message":"Not Authorized"}"#);
+
+/// Runs `config list` with the delivery log on, its event sent to `events`,
+/// the token endpoint at `token` and the Tokens API at `tokens`.
+fn run_against(home: &Path, events: &str, token: &str, tokens: &str) {
+    let out = command(home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", events)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", token)
+        .env("MAPBOX_INTERNAL_TOKENS_URL", tokens)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+}
+
+/// The CLI token's state as it is now.
+fn read_cli_token_state(home: &Path) -> Value {
+    let text = std::fs::read_to_string(config_dir(home).join("cli-token.json")).expect("the state");
+    serde_json::from_str(&text).expect("the state is JSON")
+}
+
+/// A refusal of a token the Tokens API calls valid asks the endpoint once,
+/// at once. A different token served there is kept for the next run, which
+/// sends with it, and starts telemetry's count over; the refused event is
+/// not sent again.
 #[test]
-fn an_override_is_sent_while_resting_or_paused() {
+fn a_different_token_served_after_a_refusal_is_used_next_run() {
+    let home = scratch("send-refused-rotated");
+    save_cli_token_state(
+        &home,
+        serde_json::json!({"token": "pk.old", "callers": {"telemetry": {"count": 2}}}),
+    );
+    let (heads, events_url) = answer_each(&[NOT_AUTHORIZED, ("204 No Content", "")]);
+    let (_, tokens_url) = answer_once("200 OK", r#"{"code":"TokenValid"}"#);
+    let (fetches, token_url) = answer_each(&[
+        ("200 OK", r#"{"token":"pk.new"}"#),
+        ("200 OK", r#"{"token":"pk.new"}"#),
+    ]);
+    run_against(&home, &events_url, &token_url, &tokens_url);
+    assert_eq!(token_sent(&heads).0, "pk.old");
+    let state = cli_token_state(&home, "pk.new");
+    assert!(state.get("callers").is_none(), "{state}");
+    fetches
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the endpoint was asked after the refusal");
+    // The child logs once it is done.
+    deliveries(&home, 2);
+    assert!(
+        fetches.recv_timeout(Duration::from_millis(500)).is_err(),
+        "the endpoint was asked twice"
+    );
+    assert!(
+        heads.recv_timeout(Duration::from_millis(100)).is_err(),
+        "the event was sent again"
+    );
+
+    let (received, url) = events_server(true);
+    run_against(&home, &url, &token_url, NOWHERE);
+    assert_eq!(sent_with(&received), "pk.new");
+    assert!(
+        fetches.recv_timeout(Duration::from_millis(500)).is_err(),
+        "fetched with a token on disk"
+    );
+}
+
+/// The same token served after each of three refusals in a row quiets
+/// telemetry for an hour: nothing is sent, checked or fetched, and the
+/// parent drops the event before spawning anything. After the hour it sends
+/// again, and a send that goes through ends the count.
+#[test]
+fn the_same_token_after_three_refusals_quiets_telemetry_for_an_hour() {
+    let home = scratch("send-refused-quiet");
+    save_cli_token_state(&home, serde_json::json!({"token": "pk.kept"}));
+    for n in 1..=3 {
+        let (heads, events_url) = answer_each(&[NOT_AUTHORIZED]);
+        let (_, tokens_url) = answer_once("200 OK", r#"{"code":"TokenValid"}"#);
+        let (fetched, token_url) = answer_once("200 OK", r#"{"token":"pk.kept"}"#);
+        run_against(&home, &events_url, &token_url, &tokens_url);
+        assert_eq!(token_sent(&heads).0, "pk.kept", "run {n}");
+        fetched
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the endpoint was asked after the refusal");
+        let state = cli_token_state(&home, &format!(r#""count":{n}"#));
+        assert_eq!(state["token"], "pk.kept", "{state}");
+        assert_eq!(state["rejected"], false, "{state}");
+        deliveries(&home, 2 * n);
+    }
+    let mut state = read_cli_token_state(&home);
+    let until = state["callers"]["telemetry"]["quiet_until"]
+        .as_u64()
+        .expect("a quiet period");
+    assert!(until > now() + 3500, "{state}");
+
+    let (sent, events_url) = answer_once(NOT_AUTHORIZED.0, NOT_AUTHORIZED.1);
+    let (checked, tokens_url) = answer_once("200 OK", r#"{"code":"TokenValid"}"#);
+    let (fetched, token_url) = answer_once("200 OK", r#"{"token":"pk.new"}"#);
+    run_against(&home, &events_url, &token_url, &tokens_url);
+    let lines = deliveries(&home, 7);
+    assert_eq!(lines[6]["stage"], "no_token", "{lines:?}");
+    assert_eq!(lines[6]["reason"], "quiet", "{lines:?}");
+    assert!(
+        sent.recv_timeout(Duration::from_millis(500)).is_err(),
+        "sent while quiet"
+    );
+    assert!(checked.recv_timeout(Duration::from_millis(100)).is_err());
+    assert!(
+        fetched.recv_timeout(Duration::from_millis(100)).is_err(),
+        "fetched while quiet"
+    );
+
+    // The hour is over.
+    state["callers"]["telemetry"]["quiet_until"] = (now() - 1).into();
+    save_cli_token_state(&home, state);
+    let (received, url) = events_server(true);
+    run_against(&home, &url, NOWHERE, NOWHERE);
+    assert_eq!(sent_with(&received), "pk.kept");
+    deliveries(&home, 9);
+    let state = read_cli_token_state(&home);
+    assert!(state.get("callers").is_none(), "{state}");
+}
+
+/// Three fetches in a row that find no usable token quiet telemetry for an
+/// hour; a different token served once it is over starts the count again.
+#[test]
+fn fetches_with_no_usable_token_quiet_telemetry() {
+    let home = scratch("send-fetch-quiet");
+    save_cli_token_state(&home, serde_json::json!({}));
+    for n in 1..=3 {
+        let (fetched, token_url) = answer_once("200 OK", r#"{"token":"sk.not-public"}"#);
+        run_against(&home, NOWHERE, &token_url, NOWHERE);
+        fetched
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the endpoint was asked");
+        cli_token_state(&home, &format!(r#""count":{n}"#));
+        deliveries(&home, 2 * n);
+    }
+
+    let (fetched, token_url) = answer_once("200 OK", r#"{"token":"pk.new"}"#);
+    run_against(&home, NOWHERE, &token_url, NOWHERE);
+    let lines = deliveries(&home, 7);
+    assert_eq!(lines[6]["reason"], "quiet", "{lines:?}");
+    assert!(
+        fetched.recv_timeout(Duration::from_millis(500)).is_err(),
+        "fetched while quiet"
+    );
+
+    let mut state = read_cli_token_state(&home);
+    state["callers"]["telemetry"]["quiet_until"] = 1.into();
+    save_cli_token_state(&home, state);
+    let (received, url) = events_server(true);
+    run_against(&home, &url, &token_url, NOWHERE);
+    assert_eq!(sent_with(&received), "pk.new");
+    let state = cli_token_state(&home, "pk.new");
+    assert!(state.get("callers").is_none(), "{state}");
+}
+
+/// Only an answer that went through ends telemetry's count: a `500` says
+/// nothing about whether the API takes the token.
+#[test]
+fn only_an_accepted_event_ends_the_count() {
+    let home = scratch("send-count-ends");
+    save_cli_token_state(
+        &home,
+        serde_json::json!({"token": "pk.kept", "callers": {"telemetry": {"count": 2}}}),
+    );
+    let (heads, events_url) = answer_each(&[("500 Internal Server Error", "{}")]);
+    run_against(&home, &events_url, NOWHERE, NOWHERE);
+    assert_eq!(token_sent(&heads).0, "pk.kept");
+    let lines = deliveries(&home, 2);
+    assert_eq!(lines[1]["status"], 500, "{lines:?}");
+    let state = read_cli_token_state(&home);
+    assert_eq!(state["callers"]["telemetry"]["count"], 2, "{state}");
+
+    let (received, url) = events_server(true);
+    run_against(&home, &url, NOWHERE, NOWHERE);
+    assert_eq!(sent_with(&received), "pk.kept");
+    deliveries(&home, 4);
+    let state = read_cli_token_state(&home);
+    assert!(state.get("callers").is_none(), "{state}");
+}
+
+/// A refusal the Tokens API cannot explain counts too, as does a fetch
+/// after it that gets no answer: sending the same token on every run would
+/// most likely be refused again, and cost a check each time.
+#[test]
+fn an_unexplained_refusal_counts_too() {
+    let home = scratch("send-unknown");
+    save_cli_token_state(&home, serde_json::json!({"token": "pk.kept"}));
+    let (_, events_url) = answer_each(&[("403 Forbidden", r#"{"message":"Forbidden"}"#)]);
+    let (checked, tokens_url) = answer_once("500 Internal Server Error", "{}");
+    run_against(&home, &events_url, NOWHERE, &tokens_url);
+    checked
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the token was checked");
+    let state = cli_token_state(&home, r#""count":1"#);
+    assert_eq!(state["token"], "pk.kept");
+    assert_eq!(state["rejected"], false);
+}
+
+/// A CLI token that cannot be used drops the event, even for a user who has
+/// a token: none on disk and the endpoint dead, which only the child finds
+/// out; or telemetry quiet, known before anything is spawned, even with a
+/// good token on disk.
+#[test]
+fn an_unusable_clis_token_sends_nothing_even_with_a_users_token() {
     let later = now() + 3000;
     for (name, state) in [
+        ("endpoint-dead", None),
         (
-            "paused",
-            serde_json::json!({"token": "pk.old", "rejected": true,
-                "failures": 3, "retry_at": later}),
-        ),
-        (
-            "resting",
-            serde_json::json!({"token": "pk.kept", "failures": 3, "retry_at": later,
-                "cooldowns": {"telemetry": {"failures": 3, "until": later}}}),
+            "quiet",
+            Some(serde_json::json!({"token": "pk.kept",
+                "callers": {"telemetry": {"count": 3, "quiet_until": later}}})),
         ),
     ] {
-        let home = scratch(&format!("send-override-{name}"));
-        save_cli_token_state(&home, state);
-        let (received, url) = events_server(true);
-        let out = command(&home)
-            .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-            .env("MAPBOX_CLI_TOKEN", "pk.cli")
-            .args(["config", "list"])
-            .output()
-            .expect("run mapbox");
-        assert!(out.status.success());
-        assert_eq!(sent_with(&received), "pk.cli", "{name}");
+        let home = scratch(&format!("send-nothing-{name}"));
+        log_in(&home, "tk.login");
+        let quiet = state.is_some();
+        if let Some(state) = state {
+            save_cli_token_state(&home, state);
+        }
+        let (arrived, lines) = try_sending(&home, NOWHERE);
+        assert!(!arrived, "{name}: sent");
+        let last = lines.last().expect("a delivery line");
+        if !quiet {
+            assert_eq!(last["stage"], "failed", "{name}: {lines:?}");
+            assert_eq!(last["error"], "no token to send with", "{name}");
+        } else {
+            assert_eq!(last["stage"], "no_token", "{name}: {lines:?}");
+            assert_eq!(last["reason"], "quiet", "{name}: {lines:?}");
+        }
     }
+}
+
+/// Telemetry's count is its own: another caller's quiet period does not
+/// hold it, nor does the pause or rest an earlier build wrote, which an
+/// upgrade must not leave anyone waiting out.
+#[test]
+fn no_wait_but_telemetrys_own_holds_it() {
+    let later = now() + 3000;
+    for (name, state, expected) in [
+        (
+            "other-caller",
+            serde_json::json!({"callers": {"other": {"count": 3, "quiet_until": later}}}),
+            "pk.new",
+        ),
+        (
+            "earlier-build-pause",
+            serde_json::json!({"token": "pk.old", "rejected": true,
+                "failures": 3, "retry_at": later}),
+            "pk.new",
+        ),
+        (
+            "earlier-build-rest",
+            serde_json::json!({"token": "pk.kept", "failures": 3, "retry_at": later,
+                "cooldowns": {"telemetry": {"failures": 3, "until": later,
+                "misses": 3, "retry_at": later}}}),
+            "pk.kept",
+        ),
+    ] {
+        let home = scratch(&format!("send-not-held-{name}"));
+        save_cli_token_state(&home, state);
+        let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.new"}"#);
+        let (received, url) = events_server(true);
+        run_against(&home, &url, &token_url, NOWHERE);
+        assert_eq!(sent_with(&received), expected, "{name}");
+        if name == "other-caller" {
+            let state = cli_token_state(&home, "pk.new");
+            assert_eq!(state["callers"]["other"]["count"], 3, "{state}");
+            assert!(state["callers"].get("telemetry").is_none(), "{state}");
+        }
+    }
+}
+
+/// Telemetry's quiet period is about the fetched token, so an override is
+/// sent through it.
+#[test]
+fn an_override_is_sent_while_telemetry_is_quiet() {
+    let home = scratch("send-override-quiet");
+    save_cli_token_state(
+        &home,
+        serde_json::json!({"token": "pk.kept",
+            "callers": {"telemetry": {"count": 3, "quiet_until": now() + 3000}}}),
+    );
+    let (received, url) = events_server(true);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_CLI_TOKEN", "pk.cli")
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert_eq!(sent_with(&received), "pk.cli");
 }

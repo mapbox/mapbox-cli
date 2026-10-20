@@ -494,14 +494,14 @@ The CLI has a token of its own, for requests it makes for itself.
 Telemetry uses only that token, never yours: `MAPBOX_CLI_TOKEN` when it
 holds a public `pk.` token, or a public token fetched from `https://cli.mapbox.com/config/token.json` and
 kept in `~/.mapbox/cli-token.json`. With neither usable, the event is
-dropped. It is replaced only when the Tokens API says it is revoked,
-invalid, expired or malformed, not when one API refuses it; the event that
-was refused is not sent again, and the next run's goes with the new token.
-A refusal of a valid token, or one the Tokens API cannot explain, counts;
-the third in a row pauses telemetry's sending with it for an hour, as three
-fetches in a row that find no usable token pause fetching. During that
-hour the endpoint is still asked for a new token as often as fetching
-allows, so a rotated token is used on the next run. The token is
+dropped, and an event that was refused is never sent again. A refusal is
+checked with the Tokens API and the endpoint asked for a new token at
+once: a token that is revoked, invalid, expired or malformed is replaced,
+and a different token served is used from the next run on. Three failures
+in a row, each a fetch that finds no usable token or a refusal the
+endpoint has no different token for, stop telemetry sending and fetching
+for an hour. That count is telemetry's own, and `MAPBOX_CLI_TOKEN` is sent
+whatever it says. The token is
 restricted to `https://cli.mapbox.com/`, so every request with it carries
 that as its `Referer`. The CLI's token is only used for what
 `src/cli_token.rs` lists for it: telemetry, and `mapbox report`, which

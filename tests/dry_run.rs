@@ -659,7 +659,7 @@ fn report_needs_a_message_and_takes_no_data() {
 
 /// What `report` sends with, and what it says, when it cannot use the CLI's
 /// token. Every case here is decided before a request: the token endpoint
-/// is a dead port, and a cooldown is written to disk.
+/// is a dead port, and telemetry's quiet period is written to disk.
 mod report_token {
     use super::*;
     use std::io::{Read, Write};
@@ -765,16 +765,24 @@ mod report_token {
         );
     }
 
-    /// Someone ran it, so a rest telemetry might take does not hold it back:
+    /// Telemetry's quiet period, after its own failures in a row.
+    fn telemetry_quiet() -> String {
+        format!(
+            r#""callers":{{"telemetry":{{"count":3,"quiet_until":{}}}}}"#,
+            now() + 3600
+        )
+    }
+
+    /// Someone ran it, so telemetry's quiet period does not hold it back:
     /// it sends with the CLI's token.
     #[test]
-    fn a_cooldown_does_not_hold_report_back() {
+    fn telemetrys_quiet_period_does_not_hold_report_back() {
         let config = config_dir("report-not-resting");
         write_state(
             &config,
             &format!(
-                r#"{{"token":"pk.saved","overridden":true,"cooldowns":{{"report":{{"failures":3,"until":{}}}}}}}"#,
-                now() + 3600
+                r#"{{"token":"pk.saved","overridden":true,{}}}"#,
+                telemetry_quiet()
             ),
         );
         let out = sent_nowhere(&config, &["--debug", "report", "A test"])
@@ -788,17 +796,15 @@ mod report_token {
         assert!(!err.contains("recently"), "{err}");
     }
 
-    /// Nor does the endpoint's backoff: with the kept token dead, it asks
-    /// for a new one there and then, and sends with it.
+    /// Nor does it hold a fetch: with the kept token dead, it asks for a new
+    /// one there and then, and sends with it.
     #[test]
-    fn report_fetches_through_the_backoff() {
+    fn report_fetches_while_telemetry_is_quiet() {
         let config = config_dir("report-through-backoff");
+        let quiet = telemetry_quiet();
         write_state(
             &config,
-            &format!(
-                r#"{{"token":"pk.dead","rejected":true,"overridden":true,"failures":3,"retry_at":{}}}"#,
-                now() + 3600
-            ),
+            &format!(r#"{{"token":"pk.dead","rejected":true,"overridden":true,{quiet}}}"#),
         );
         let out = sent_nowhere(&config, &["--debug", "report", "A test"])
             .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", token_endpoint("pk.fresh"))
@@ -811,19 +817,17 @@ mod report_token {
         );
         let state = std::fs::read_to_string(config.join("cli-token.json")).expect("the state");
         assert!(state.contains(r#""token":"pk.fresh""#), "{state}");
+        assert!(state.contains(&quiet), "telemetry's count changed: {state}");
     }
 
-    /// A command fetches past the backoff, so the reason it gives is what
-    /// that fetch found, not the backoff's wait, which it never waited for.
+    /// A command fetches whatever telemetry's count, so the reason it gives
+    /// is what that fetch found, not a wait it never waited for.
     #[test]
-    fn an_unreachable_endpoint_is_reported_through_the_backoff() {
+    fn an_unreachable_endpoint_is_reported_while_telemetry_is_quiet() {
         let config = config_dir("report-unreachable-backoff");
         write_state(
             &config,
-            &format!(
-                r#"{{"overridden":true,"failures":3,"retry_at":{}}}"#,
-                now() + 3600
-            ),
+            &format!(r#"{{"overridden":true,{}}}"#, telemetry_quiet()),
         );
         let out = run(&config, &["-o", "json", "report", "A test"]);
         assert_eq!(error_code(&out), "cli_token_unavailable");
@@ -832,12 +836,12 @@ mod report_token {
         assert!(!err.contains("trying again"), "{err}");
     }
 
-    /// A miss on a command's fetch does not count toward the backoff, which
-    /// paces telemetry's fetches in the background.
+    /// A miss on a command's fetch does not count toward telemetry's quiet
+    /// period, which paces requests in the background.
     #[test]
-    fn a_commands_miss_leaves_the_backoff_alone() {
+    fn a_commands_miss_leaves_telemetrys_count_alone() {
         let config = config_dir("report-miss-uncounted");
-        let state = r#"{"overridden":true,"failures":2}"#;
+        let state = r#"{"overridden":true,"callers":{"telemetry":{"count":2,"quiet_until":0}}}"#;
         write_state(&config, state);
         let out = command(&config)
             .env(

@@ -40,12 +40,15 @@ that may never merge. They are not releases and are not listed here.
     from source fetches the token like a release does.
   - Keeping the token creates `~/.mapbox` if it is missing, even on a run
     whose only network use is telemetry.
-  - When an API refuses the token, the Tokens API is asked why. Only a
-    revoked, invalid, expired or malformed token is replaced, at once.
-    Three fetches in a row that find no usable token, or three refusals
-    in a row of a valid one, pause that for an hour. While telemetry is
-    paused after refusals, a different token served at the endpoint ends
-    that pause on the next run.
+  - When an API refuses the token, the Tokens API is asked why and the
+    endpoint asked for a new token at once. A revoked, invalid, expired or
+    malformed token is replaced; a different token served is used from the
+    next run on.
+  - Three failures in a row, each a fetch that finds no usable token or a
+    refusal with no different token served, stop telemetry sending and
+    fetching for an hour. The count is telemetry's own: it never holds
+    `mapbox report` or `MAPBOX_CLI_TOKEN`, and the waits an earlier dev
+    build kept in `cli-token.json` are ignored.
 
 - `tilesets query` renders as a numbered list under `-o text` again, as
   documented. It had printed pretty JSON since 0.2.0, when the command moved

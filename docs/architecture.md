@@ -214,4 +214,6 @@ otherwise the one every build fetches from
 `https://cli.mapbox.com/config/token.json` and keeps in
 `~/.mapbox/cli-token.json` until the Tokens API says it is dead
 (`src/cli_token/fetch.rs`). With no usable CLI token the event is dropped,
-and a send that fails is not tried again.
+and a send that fails is not tried again. Three failures in a row (a fetch
+with no usable token, or a refusal with no different token served) quiet
+telemetry for an hour, a count kept per caller in that same file.

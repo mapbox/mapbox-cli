@@ -17,11 +17,12 @@
 //!    secret token beside it.
 //! 2. Otherwise the token published on the release channel, fetched and kept
 //!    on disk until the Tokens API calls it dead. See [`fetch`] for when it
-//!    is fetched again, and for a caller's rest from it.
+//!    is fetched again, and for each caller's quiet periods, which hold
+//!    this token only: an override is sent whatever its caller's count.
 //!
 //! One token, one attempt: an event is never sent twice. A refusal is still
-//! checked at once ([`send_with_cli_token`]), and a dead token replaced
-//! there and then, so the next run's event goes with the new one.
+//! checked at once ([`send_with_cli_token`]), and the endpoint asked for a
+//! different token there and then, so the next run's event goes with it.
 //!
 //! # What may use the CLI's token
 //!
@@ -34,13 +35,13 @@
 //! environment keeps the same token.
 //!
 //! Either way the token is sent through [`send_with_cli_token`], which holds
-//! the rules: check a refusal at once, replace a dead token, rest from an API
-//! that refuses a valid one. A command, unlike telemetry, sends again with a
-//! fresh token, and one that cannot use the CLI's token falls back to the
-//! user's, and with none says why: unavailable right now ([`Unavailable`])
-//! or refused by this API ([`Refusal`]). A command's `MAPBOX_CLI_TOKEN` is
-//! sent whatever it holds, since its request carries the user's token
-//! anyway when the CLI's cannot be used.
+//! the rules: check a refusal at once, replace a dead token, and count a
+//! background caller's failures. A command, unlike telemetry, sends again
+//! with a fresh token, and one that cannot use the CLI's token falls back to
+//! the user's, and with none says why: unavailable right now
+//! ([`Unavailable`]) or refused by this API ([`Refusal`]). A command's
+//! `MAPBOX_CLI_TOKEN` is sent whatever it holds, since its request carries
+//! the user's token anyway when the CLI's cannot be used.
 //!
 //! # The token is public
 //!
@@ -63,14 +64,15 @@ pub(crate) use fetch::{Refusal, Unavailable};
 /// for a token anyone can read.
 pub(crate) const REFERER: &str = "https://cli.mapbox.com/";
 
-/// Telemetry's name as a caller of the CLI's token, for its cooldown.
+/// Telemetry's name as a caller of the CLI's token, for its own count of
+/// failures.
 pub(crate) const TELEMETRY_CALLER: &str = "telemetry";
 
 /// How a command listed in [`CLI_TOKEN_COMMANDS`] uses the CLI's token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Use {
     /// The CLI's token first, and the user's own only while the CLI's
-    /// cannot be used: unavailable, resting, or refused by this API.
+    /// cannot be used: unavailable, or refused by this API.
     Preferred,
 }
 
@@ -141,8 +143,9 @@ fn preferred_token(fetch: bool) -> Result<CommandToken, Unavailable> {
     if !fetch {
         return Err(Unavailable::NotFetched);
     }
-    // A command is not held by the backoff, which paces background fetches:
-    // someone is waiting, and the endpoint may have a new token by now.
+    // A command is not held by any caller's quiet period, which paces
+    // requests nobody waits on: someone is waiting, and the endpoint may
+    // have a new token by now.
     fetch::token_now().map(|token| given(token, TokenSource::Fetched))
 }
 
@@ -238,11 +241,11 @@ pub(crate) trait Ledger {
 
 /// `<config dir>/cli-token.json`, through [`fetch`], by kind of caller.
 pub(crate) enum Disk {
-    /// Nobody is waiting, as for telemetry: paced, and never sent again. A
-    /// dead token is still replaced at once, when the backoff allows, so
-    /// that the next run sends with the new one.
+    /// Nobody is waiting, as for telemetry: never sent again, and counted
+    /// against the caller ([`fetch`]). A refusal still asks the endpoint at
+    /// once, so that the next run sends with a token rotated meanwhile.
     Background,
-    /// Someone ran it and is waiting: never paced, and any refusal tries a
+    /// Someone ran it and is waiting: keeps no count, and any refusal tries a
     /// token fetched there and then, so a token republished or fixed in the
     /// Console works on the next try. Not when this run `fetched` the token
     /// already: asking again at once would only get the same one back.
@@ -255,22 +258,14 @@ pub(crate) enum Disk {
 impl Ledger for Disk {
     fn refused(&mut self, caller: &str, token: &str) -> Refusal {
         match self {
-            Disk::Background => {
-                let refusal = fetch::refused(caller, token, true);
-                if refusal == Refusal::Dead {
-                    // Kept on disk for the next run; this one's event is not
-                    // sent again.
-                    let _ = fetch::token();
-                }
-                refusal
-            }
+            Disk::Background => fetch::refused(caller, token, true),
             Disk::Command { .. } => fetch::refused(caller, token, false),
             Disk::Unchecked => Refusal::NotFetched,
         }
     }
-    fn accepted(&mut self, caller: &str, token: &str) {
-        if !matches!(self, Disk::Unchecked) {
-            fetch::accepted(caller, token);
+    fn accepted(&mut self, caller: &str, _: &str) {
+        if matches!(self, Disk::Background) {
+            fetch::accepted(caller);
         }
     }
     fn retries(&self) -> bool {
@@ -288,12 +283,12 @@ impl Ledger for Disk {
 /// Sends with the CLI's `token` on `caller`'s behalf: the one place the
 /// rules for using it live, for telemetry and commands alike.
 ///
-/// A `2xx` ends `caller`'s cooldown. A `401` or `403` is checked with the
-/// Tokens API at once ([`fetch::refused`]); when the ledger says it is worth
-/// it ([`Ledger::retries`]) and a different token is to be had, the request
-/// is sent once more with it, since a refused request was not acted on.
-/// Otherwise the refusal is handed back. `status` is an answer's HTTP status,
-/// or `None` when there was no answer.
+/// A `2xx` ends `caller`'s count of failures. A `401` or `403` is checked
+/// with the Tokens API at once ([`fetch::refused`]); when the ledger says it
+/// is worth it ([`Ledger::retries`]) and a different token is to be had, the
+/// request is sent once more with it, since a refused request was not acted
+/// on. Otherwise the refusal is handed back. `status` is an answer's HTTP
+/// status, or `None` when there was no answer.
 pub(crate) fn send_with_cli_token<R>(
     caller: &str,
     mut token: String,
@@ -512,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn in_the_background_any_refusal_is_handed_back_without_a_fetch() {
+    fn in_the_background_any_refusal_is_handed_back_without_a_resend() {
         for verdict in [Refusal::Dead, Refusal::Forbidden, Refusal::Unknown] {
             let mut ledger = FakeLedger {
                 verdict: Some(verdict),
@@ -523,7 +518,7 @@ mod tests {
             assert_eq!(outcome, Sent::Refused(Some(403), verdict));
             assert_eq!(sent, ["pk.old"]);
             assert_eq!(ledger.refused, ["pk.old"], "{verdict:?} not checked");
-            assert!(ledger.fresh.is_some(), "{verdict:?} fetched a new token");
+            assert!(ledger.fresh.is_some(), "{verdict:?} asked to resend");
         }
     }
 

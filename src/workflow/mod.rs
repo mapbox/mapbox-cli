@@ -556,7 +556,7 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
             "summary": workflow.summary,
             "description": workflow.description,
             "source": source_label(&found.meta),
-                    "commit": found.meta.commit,
+            "commit": found.meta.commit,
             "path": found.root,
             "inputs": inputs,
             "steps": steps,
@@ -611,11 +611,12 @@ fn install(app: &Command, matches: &ArgMatches, debug: bool, mode: Mode) -> Resu
         .keys()
         .map(|path| definition::slash_path(path))
         .collect();
+    store::recover_name(&workflow.name)?;
     let target = store::root_path()?.join(&workflow.name);
     let summary = json!({
         "name": workflow.name,
         "source": source_label(&package.meta),
-                    "commit": package.meta.commit,
+        "commit": package.meta.commit,
         "path": target,
         "files": files,
         "dry_run": dry_run,

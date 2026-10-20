@@ -111,11 +111,11 @@ jsonc-parser = { version = "0.34.0", features = ["serde", "serde_json"] }
 # OSC 11 is known at once instead of after the timeout. Asked only by a run
 # that shows help; see src/output/theme.rs.
 terminal-colorsaurus = "1"
-# Lets `workflow run` outlive a Ctrl-C long enough to remove its working
+# Lets `workflow run` outlive a Ctrl-C, SIGTERM or SIGHUP long enough to remove its working
 # directory, which a process killed by SIGINT never gets to do. Installing
 # a signal handler takes `unsafe` this crate does not have. Installed by
 # that command only; every other command keeps the default.
-ctrlc = "3"
+ctrlc = { version = "3", features = ["termination"] }
 
 [target.'cfg(windows)'.dependencies]
 # For `src/detach.rs`: keeping the parent's standard handles out of a detached

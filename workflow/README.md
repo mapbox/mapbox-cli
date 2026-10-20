@@ -108,7 +108,7 @@ Each command step runs this `mapbox` binary again, with `--output json`, and its
 - Global options given to `mapbox workflow run` (`--profile`, `--username`, `--use-login`, `--timeout`, `--yes`, `--debug`, `--token`) reach every command step that does not set its own.
 - `stdin` is sent to the command, for `--data @-`. Without it, the command reads the terminal, which is where a confirmation prompt gets its answer.
 - A step cannot run `mapbox workflow`.
-- `save: <file name>` keeps the command's stdout as that file in the run's working directory instead of reading it as the output, which is how a binary response, such as `styles download`'s ZIP, reaches a later step. The step's output is then `{"path": …, "bytes": …}`. The directory is readable by its owner only, and is removed when the run ends, including by Ctrl-C. Only a run killed outright leaves it behind.
+- `save: <file name>` keeps the command's stdout as that file in the run's working directory instead of reading it as the output, which is how a binary response, such as `styles download`'s ZIP, reaches a later step. The step's output is then `{"path": …, "bytes": …}`. The directory is readable by its owner only, and is removed when the run ends, including by Ctrl-C and, on Unix, SIGTERM or SIGHUP. A run killed outright, or a closed console window on Windows, leaves it behind.
 
 ### Script steps
 

@@ -466,19 +466,13 @@ pub fn install(package: &Package, force: bool) -> Result<PathBuf> {
     std::fs::create_dir_all(&root)
         .with_context(|| format!("Could not create {}", root.display()))?;
     let target = root.join(name);
-    let previous = root.join(format!(".{name}.previous"));
-    // Left only by an install that stopped between moving the old copy
-    // aside and moving the new one in: the old copy is the workflow, so it
-    // goes back before anything else is decided.
-    if !target.exists() && previous.exists() {
-        std::fs::rename(&previous, &target)
-            .with_context(|| format!("Could not restore {}", target.display()))?;
-    }
+    let previous = previous_path(&root, name);
+    recover(&root, name)?;
     if target.exists() && !force {
         return Err(already_installed(name, &target, None));
     }
 
-    let staging = root.join(format!(".{name}.staging"));
+    let staging = staging_path(&root, name);
     let _ = std::fs::remove_dir_all(&staging);
     let result = (|| -> Result<()> {
         for (relative, bytes) in &package.files {
@@ -502,6 +496,32 @@ pub fn install(package: &Package, force: bool) -> Result<PathBuf> {
     })();
     let _ = std::fs::remove_dir_all(&staging);
     result.map(|()| target)
+}
+
+fn previous_path(root: &Path, name: &str) -> PathBuf {
+    root.join(format!(".{name}.previous"))
+}
+
+fn staging_path(root: &Path, name: &str) -> PathBuf {
+    root.join(format!(".{name}.staging"))
+}
+
+/// Puts back the copy an install moved aside, when it stopped before moving
+/// the new one in: that copy is then the workflow. Called wherever an
+/// installed workflow is looked for, so a crash in between never reads as
+/// "not installed".
+pub fn recover_name(name: &str) -> Result<()> {
+    check_name(name)?;
+    recover(&root_path()?, name)
+}
+
+fn recover(root: &Path, name: &str) -> Result<()> {
+    let (target, previous) = (root.join(name), previous_path(root, name));
+    if !target.exists() && previous.exists() {
+        std::fs::rename(&previous, &target)
+            .with_context(|| format!("Could not restore {}", target.display()))?;
+    }
+    Ok(())
 }
 
 /// Moves `staged` into `target`. An existing `target` is moved aside to
@@ -573,7 +593,10 @@ fn not_installed(name: &str) -> anyhow::Error {
 /// holding [`META_FILE`] counts.
 pub fn installed_dir(name: &str) -> Result<Option<PathBuf>> {
     check_name(name)?;
-    let dir = root_path()?.join(name);
+    let root = root_path()?;
+    // A failed restore leaves the copy where it was; `install` reports it.
+    let _ = recover(&root, name);
+    let dir = root.join(name);
     Ok(dir.join(META_FILE).is_file().then_some(dir))
 }
 
@@ -606,6 +629,21 @@ pub fn list() -> Result<Vec<(String, Result<Installed>)>> {
     let Ok(entries) = std::fs::read_dir(&root) else {
         return Ok(vec![]);
     };
+    // First, so a workflow an interrupted install left aside is listed.
+    let entries: Vec<_> = entries.flatten().map(|entry| entry.file_name()).collect();
+    for name in &entries {
+        let name = name.to_string_lossy();
+        if let Some(moved) = name
+            .strip_prefix('.')
+            .and_then(|rest| rest.strip_suffix(".previous"))
+            .filter(|moved| is_workflow_name(moved))
+        {
+            let _ = recover(&root, moved);
+        }
+    }
+    let Ok(entries) = std::fs::read_dir(&root) else {
+        return Ok(vec![]);
+    };
     let mut out = vec![];
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -625,6 +663,12 @@ pub fn list() -> Result<Vec<(String, Result<Installed>)>> {
 pub fn uninstall(name: &str) -> Result<PathBuf> {
     let dir = installed_dir(name)?.ok_or_else(|| not_installed(name))?;
     std::fs::remove_dir_all(&dir).with_context(|| format!("Could not remove {}", dir.display()))?;
+    // What an earlier install left behind, which would otherwise come back
+    // as this workflow through `recover`.
+    let root = root_path()?;
+    for leftover in [previous_path(&root, name), staging_path(&root, name)] {
+        let _ = std::fs::remove_dir_all(leftover);
+    }
     Ok(dir)
 }
 
@@ -700,6 +744,23 @@ mod tests {
         assert!(format!("{err:#}").contains("disk full"), "{err:#}");
         assert_eq!(content(&target), "old");
         assert!(!previous.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// An install that stopped between its two renames left the old copy
+    /// aside and none in place; it is the workflow, so it comes back.
+    #[test]
+    fn a_copy_left_aside_is_put_back() {
+        let root = scratch_dir("recover");
+        holding(&previous_path(&root, "demo"), "old");
+        recover(&root, "demo").expect("recovered");
+        assert_eq!(content(&root.join("demo")), "old");
+        assert!(!previous_path(&root, "demo").exists());
+
+        // With a copy in place, one aside is a leftover and stays put.
+        holding(&previous_path(&root, "demo"), "older");
+        recover(&root, "demo").expect("nothing to do");
+        assert_eq!(content(&root.join("demo")), "old");
         let _ = std::fs::remove_dir_all(root);
     }
 

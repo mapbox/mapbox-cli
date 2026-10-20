@@ -267,6 +267,11 @@ fn run_steps(
 
     let display = Display::for_stderr(total, inherited.quiet);
     for (index, step) in workflow.steps.iter().enumerate() {
+        // A Ctrl-C between steps reached no child, so nothing else stops the
+        // next one from starting.
+        if INTERRUPTED.load(Ordering::SeqCst) {
+            return Err(cancelled(&format!("before step `{}`", step.id)));
+        }
         let title = step.name.as_deref().unwrap_or(&step.id);
         if dry_run && !step.dry_run {
             display.skipped(index, title, &step.label());
@@ -330,14 +335,7 @@ fn run_steps(
         let interrupted = interrupted(result.is_err());
         view.finish(result.is_ok() && !interrupted);
         if interrupted {
-            return Err(CliError::new(
-                "cancelled",
-                format!(
-                    "Interrupted during step `{}`; the steps after it did not run.",
-                    step.id
-                ),
-            )
-            .into());
+            return Err(cancelled(&format!("during step `{}`", step.id)));
         }
         outputs.insert(step.id.clone(), result?);
     }
@@ -348,13 +346,24 @@ fn run_steps(
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
-/// Ctrl-C reaches the running step's child as well as this process. The
+/// Ctrl-C reaches the running step's child as well as this process, and so
+/// does the SIGHUP of a closed terminal; a SIGTERM reaches only this one,
+/// which then stops once the current step ends. The
 /// child stops; this process only notes it and fails once the child has
 /// gone, so the run's [`Workdir`] is dropped rather than left in place by a
 /// process that died holding it.
 fn catch_interrupt() {
-    // Fails only when a handler is already set, and only a run sets one.
+    // On failure Ctrl-C keeps its default, which stops the run as before
+    // but leaves the directory behind; not worth failing the run over.
     let _ = ctrlc::set_handler(|| INTERRUPTED.store(true, Ordering::SeqCst));
+}
+
+fn cancelled(when: &str) -> anyhow::Error {
+    CliError::new(
+        "cancelled",
+        format!("Interrupted {when}; the steps after it did not run."),
+    )
+    .into()
 }
 
 /// Whether Ctrl-C was pressed. `ctrlc` runs the handler on a thread of its

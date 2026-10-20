@@ -5080,7 +5080,7 @@ of these is `invalid_workflow`, with every problem listed at once.
 The ref is resolved to a commit first, and that commit is read as one tarball
 through the GitHub API, so a branch that moves in between cannot mix the two.
 The commit is recorded beside the workflow in `.install.json` and reported as
-`commit` by `install` and `list` (`null` for a local install).
+`commit` by `install`, `list` and `show` (`null` for a local install).
 `mapbox/mapbox-cli` is public and needs no token. For a private repository
 named with `--repo`, set `GH_TOKEN` or `GITHUB_TOKEN`. It is sent only to
 `api.github.com`. Without one, a private repository answers 404,
@@ -5088,8 +5088,9 @@ exactly as a ref that does not exist does, and the error says both.
 
 **An installed workflow stops the install** unless `--force` is given. The new
 copy is staged and renamed into place, and the old one is moved aside until
-then and moved back if that fails, so a failed or interrupted install leaves
-the old copy or the new one. Only regular files are taken. A symlink in a local
+then and moved back if that fails, so a failed install leaves the old copy.
+One interrupted between the two moves leaves the old copy aside, and the next
+`mapbox workflow` command puts it back. Only regular files are taken. A symlink in a local
 directory is refused, and an archive entry whose path would leave the
 workflow's directory stops the read.
 
@@ -5475,7 +5476,7 @@ faults and are not:
 | `invalid_file` | A file could not be read: one named by `--file`, or one named by `--data @<path>`. Also a `@<path>` that is not valid UTF-8, which a JSON body has to be. |
 | `binary_response` | The response was bytes and stdout is a terminal. Redirect it to a file. |
 | `missing_subcommand` | A command group was named with no operation. |
-| `cancelled` | A delete was declined at the confirmation prompt, and nothing was sent; or `workflow run` was interrupted with Ctrl-C, and the steps after the current one did not run. |
+| `cancelled` | A delete was declined at the confirmation prompt, and nothing was sent; or `workflow run` was interrupted (Ctrl-C, or on Unix SIGTERM or SIGHUP), and the steps after the current one did not run. |
 | `cli_token_unavailable` | A command that prefers the CLI's own token (`report`) could not use it — it could not be fetched, or it is revoked and no new one is published yet — and you have no token of your own to fall back to. |
 | `cli_token_forbidden` | This API refused the CLI's own token, even after fetching it afresh, and you have no token of your own to fall back to. |
 | `usage` | Anything else clap rejected. Exit code 2, not 1. |

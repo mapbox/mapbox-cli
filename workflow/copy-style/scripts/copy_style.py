@@ -276,8 +276,10 @@ def carry_out(plan):
         progress("pointing the sprite and glyphs at the copy")
         mapbox(target, "styles", "update", created["style"], "--data", "@-", input=json.dumps(updated))
         note(f"Pointed its sprite and glyphs at {plan['target_owner']}")
-    except Failed as failure:
-        lines = [str(failure)]
+    # Ctrl-C too: `mapbox workflow run` stops on it, and what was created
+    # by then needs the same list.
+    except (Failed, KeyboardInterrupt) as failure:
+        lines = [str(failure) if isinstance(failure, Failed) else "Interrupted."]
         if created["style"] or created["fonts"]:
             lines.append("")
             lines.append(f"Created in {plan['target_owner']} before the failure:")

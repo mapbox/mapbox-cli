@@ -3,8 +3,9 @@
 //! A command step's `save` writes there, and a script finds it through
 //! [`ENV`]. It is created under the system's temporary directory with a
 //! random name, readable by its owner only, and removed when the run ends —
-//! including by Ctrl-C, which the runner turns into an ordinary failure for
-//! this reason. A run that is killed outright still leaves it behind.
+//! including by Ctrl-C, SIGTERM or SIGHUP, which the runner turns into an
+//! ordinary failure for this reason. A run that is killed outright, or whose
+//! Windows console is closed, still leaves it behind.
 
 use std::path::{Path, PathBuf};
 

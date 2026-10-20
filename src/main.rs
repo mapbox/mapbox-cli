@@ -1698,8 +1698,8 @@ fn try_cli_token(
     cli_attempt(command, sent)
 }
 
-/// What a command's send with the CLI's token came to, for its caller: the
-/// result, or why the user's token should stand in.
+/// Turns a command's send with the CLI's token into either the result or
+/// the reason to fall back to the user's token.
 fn cli_attempt(command: &str, sent: cli_token::Sent<Result<()>>) -> CliAttempt {
     let (result, refusal) = match sent {
         cli_token::Sent::Answered(result) => match rate_limited(result) {
@@ -3026,8 +3026,8 @@ mod cli_attempt_tests {
         }
     }
 
-    /// A refusal is never the command's answer: the user's token may stand
-    /// in, and with none the error says why the CLI's could not be used.
+    /// With no user token, the error says why the CLI's token could not be
+    /// used.
     #[test]
     fn a_refusal_lets_the_users_token_stand_in() {
         for (refusal, code) in [

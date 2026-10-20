@@ -1067,8 +1067,8 @@ pub fn logout(profile: Option<&str>, mode: Mode) -> Result<()> {
     let path = credentials_path(profile)?;
     let had_credentials = path.exists();
     if had_credentials {
-        // Waits out another run's refresh in flight, which would otherwise
-        // write the login back.
+        // Wait for another run's login refresh to finish, so it can't write
+        // the login back after it is removed.
         let _lock = CredentialLock::acquire(profile).ok();
         crate::run_record::set_auth_step("remove_credentials");
         std::fs::remove_file(&path)?;

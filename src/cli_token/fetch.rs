@@ -2,9 +2,9 @@
 //! kept on disk until the Tokens API calls it dead.
 //!
 //! The token is published at `https://cli.mapbox.com/config/token.json` as
-//! `{"token": "pk...."}`, so rotating it needs no release. It is fetched
-//! when there is none on disk or the one there is dead, and after a caller
-//! in the background is refused, and saved to `<config dir>/cli-token.json`.
+//! `{"token": "pk...."}`, so rotating it needs no release. It is saved to
+//! `<config dir>/cli-token.json`, and fetched again when the saved one is
+//! missing or dead, or right after a background caller is refused.
 //!
 //! # A refusal
 //!
@@ -12,32 +12,30 @@
 //! refusing it for one endpoint. So [`refused`] asks the Tokens API about
 //! the token itself, and only a revoked, invalid, expired or malformed one is
 //! marked dead. A fetch right after a rotation can still return the revoked
-//! token: the edge caches the file for a few minutes, and the secret may not
-//! be republished yet. So the dead token served again is checked once more,
-//! since a token called invalid for something fixed in the Console stays the
-//! same string; it is taken back if the Tokens API now calls it valid.
+//! token, because the CDN caches the file for a few minutes and the new
+//! token may not be published yet. A token marked invalid can also be fixed
+//! in the Console without changing. So when the endpoint serves the dead
+//! token again, it is checked once more and used again if the Tokens API now
+//! says it is valid.
 //!
-//! # Each caller's quiet periods
+//! # Quiet periods, per caller
 //!
-//! Only the token is shared. Each caller in the background, today only
-//! telemetry, keeps its own count of failures in a row ([`Failures`]): a
-//! fetch that found no usable token, or a refusal that the fetch right after
-//! it did not answer with a different token, whether the Tokens API called
-//! the refused one dead or not. A request that went through ends the count,
-//! and so does a different token served, which is a fresh start. The third
-//! failure in a row quiets the caller for an hour, during which it sends and
-//! fetches nothing; once that is over, the next three quiet it again. So while
-//! nothing changes, a caller asks the endpoint at most three times an hour.
+//! The token is shared, but each background caller (today only telemetry)
+//! keeps its own count of failures in a row ([`Failures`]). A failure is a
+//! fetch that found no usable token, or a refusal after which the fetch did
+//! not return a different token. A successful request resets the count, and
+//! so does a new token. After three failures in a row the caller goes quiet
+//! for an hour: it sends and fetches nothing. So while nothing changes, a
+//! caller contacts the endpoint at most three times an hour.
 //!
-//! Nothing one caller does changes another's count, so one caller's failures
-//! never stop another from trying. A command someone is waiting on, such as
-//! `mapbox report`, keeps no count and is never held by one ([`token_now`]).
+//! One caller's failures never stop another caller. A command someone is
+//! waiting on, such as `mapbox report`, keeps no count and never goes quiet
+//! ([`token_now`]).
 //!
-//! A fetch that never got an answer, with no token to send with, does not
-//! count: that is this machine being offline, not the endpoint being stale,
-//! and it is asked again on the next run. After a refusal it does: the API
-//! has just answered, and sending a refused token on every run would cost a
-//! check each time.
+//! A fetch that gets no response, with no token on disk, does not count: the
+//! machine is probably offline, and the next run tries again. After a
+//! refusal it does count, because the API just responded, and sending a
+//! refused token on every run would cost a check each time.
 //!
 //! # Where it is fetched from
 //!
@@ -76,7 +74,6 @@ const STATE_FILE: &str = "cli-token.json";
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 
 const HOUR: u64 = 60 * 60;
-/// Failures in a row before an hour's quiet.
 const FAILURES_BEFORE_QUIET: u32 = 3;
 
 /// Long enough for any `pk.` token; anything longer is not one.
@@ -111,7 +108,6 @@ impl std::fmt::Display for Unavailable {
     }
 }
 
-/// What a fetch got back, before [`judge`] decides on it.
 #[derive(Debug)]
 pub(crate) enum Fetched {
     /// The body's `token`, unchecked.
@@ -124,10 +120,10 @@ pub(crate) enum Fetched {
 
 /// What is kept on disk between runs.
 ///
-/// An earlier build also kept a pause shared by every caller (`failures`,
-/// `retry_at`) and per-caller rests (`cooldowns`). They are not read, so a
-/// file it wrote loads with no wait in it rather than holding anyone in one
-/// after an upgrade, and the next write drops them.
+/// An earlier build also stored a backoff shared by all callers (`failures`,
+/// `retry_at`) and one per caller (`cooldowns`). Those fields are ignored so
+/// that nobody waits on an old backoff after an upgrade. The next write
+/// removes them.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct State {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -137,9 +133,9 @@ struct State {
     /// Cleared if the endpoint serves it again and it now checks valid.
     #[serde(default)]
     rejected: bool,
-    /// Each background caller's own failures, by the name [`token_for`]
-    /// takes. Kept across a change of token: a caller's count is about it,
-    /// not about the token, and only the caller itself ends it.
+    /// Each background caller's failures, keyed by the name passed to
+    /// [`token_for`]. Kept when the token changes: the count belongs to the
+    /// caller, and only that caller resets it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     callers: BTreeMap<String, Failures>,
     /// Whether it was written with an endpoint overridden ([`overridden`]).
@@ -149,10 +145,10 @@ struct State {
     overridden: bool,
 }
 
-/// One caller's failures in a row, and the quiet period the last third of
-/// them started. Never longer than an hour: a token that is valid but
-/// refused is a configuration someone can fix in the Console without the
-/// token changing, and a fix should not wait long to be seen.
+/// One caller's failures in a row, and when its quiet period ends. A quiet
+/// period lasts at most an hour, because a valid token that is refused can
+/// be fixed in the Console without changing, and the fix should take effect
+/// soon.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Failures {
     #[serde(default)]
@@ -184,17 +180,15 @@ impl State {
     }
 }
 
-/// The CLI's token for `caller` — today only `telemetry` — or `None` while
-/// it is quiet or there is none to be had: the one on disk while it is not
-/// dead, otherwise a fresh one from the endpoint.
+/// The CLI's token for `caller` (today only `telemetry`): the saved one if
+/// it is not dead, otherwise a new one from the endpoint. `None` while the
+/// caller is quiet or no token is available.
 pub(crate) fn token_for(caller: &str) -> Option<String> {
     decided(caller, |state, now| {
         acquire(state, caller, now, || get(&endpoint()), check)
     })
 }
 
-/// Runs `decide` on the state on disk for `caller`, and saves what it
-/// changed.
 fn decided(caller: &str, decide: impl FnOnce(&mut State, u64) -> Option<String>) -> Option<String> {
     let mut state = read_state().unwrap_or_default();
     let before = state.clone();
@@ -203,8 +197,8 @@ fn decided(caller: &str, decide: impl FnOnce(&mut State, u64) -> Option<String>)
     token
 }
 
-/// [`token_for`]'s decision, with the clock, the endpoint and the Tokens API
-/// passed in.
+/// [`token_for`]'s logic, with the clock, the endpoint and the Tokens API
+/// passed in for tests.
 fn acquire(
     state: &mut State,
     caller: &str,
@@ -225,7 +219,8 @@ fn acquire(
             let token = judge(state, fetched, check);
             match token.as_deref() {
                 None => state.fail(caller, now),
-                // A fresh start. The dead token taken back is not one.
+                // A new token resets the count. The same dead token taken
+                // back does not.
                 Some(token) if Some(token) != kept.as_deref() => {
                     state.callers.remove(caller);
                 }
@@ -236,7 +231,7 @@ fn acquire(
     }
 }
 
-/// Records that `caller`'s request went through, which ends its count.
+/// Resets `caller`'s failure count after a successful request.
 pub(crate) fn accepted(caller: &str) {
     if let Some(mut state) = read_state().filter(|state| state.callers.contains_key(caller)) {
         let before = state.clone();
@@ -245,13 +240,12 @@ pub(crate) fn accepted(caller: &str) {
     }
 }
 
-/// The CLI's token, asking the endpoint now even with a token on disk: for a
-/// command someone is waiting on, so that a token republished or
-/// reconfigured is picked up at once. No caller's quiet period holds it.
+/// Fetches the CLI's token now, even if one is saved. This is for a command
+/// someone is waiting on, so a republished or reconfigured token is picked up
+/// right away. Quiet periods don't apply.
 ///
-/// Only a token it gets is saved. Nothing is counted: a caller's count paces
-/// requests nobody is waiting on, and a command retried by hand must not
-/// lengthen it.
+/// Only a token it gets is saved, and no failure is counted: the count paces
+/// background requests, and a user retrying a command must not extend it.
 pub(crate) fn token_now() -> Result<String, Unavailable> {
     let mut state = read_state().unwrap_or_default();
     let before = state.clone();
@@ -273,15 +267,15 @@ pub(crate) fn saved_token() -> Option<String> {
     read_state()?.usable_token().map(str::to_owned)
 }
 
-/// Writes what a run decided onto what is on disk now. A fetch or a check
-/// can take seconds, and another run may have written meanwhile: if the
-/// token or its verdict changed on disk, that run's stands, so a token
-/// another run saved is never lost. `caller`'s own count is written as this
-/// run left it, and every other caller's as it is on disk.
+/// Merges what this run decided into what is on disk now. A fetch or a
+/// check can take seconds, and another run may have written the file
+/// meanwhile. If that run changed the token or its verdict, its change wins,
+/// so a token another run saved is never lost. `caller`'s count is written
+/// as this run left it; other callers' counts are kept from disk.
 ///
-/// So two runs of one caller that fail at once can count one failure, not
-/// two, having read the same count. That only ever costs an extra try
-/// before the quiet period, never starts one early.
+/// Two runs of the same caller that fail at the same time can read the same
+/// count and record one failure instead of two. That only allows an extra
+/// try before the quiet period; it never starts one early.
 fn save(before: &State, state: State, caller: Option<&str>) {
     if state != *before {
         write_state(&merged(
@@ -293,8 +287,8 @@ fn save(before: &State, state: State, caller: Option<&str>) {
     }
 }
 
-/// [`save`]'s decision: what to write, given the state the run started
-/// from, what it decided, and what is on disk now.
+/// The state [`save`] writes, from the state this run started with, what it
+/// decided, and what is on disk now.
 fn merged(before: &State, state: State, mut disk: State, caller: Option<&str>) -> State {
     if disk.token == before.token && disk.rejected == before.rejected {
         disk.token = state.token;
@@ -312,8 +306,8 @@ fn merged(before: &State, state: State, mut disk: State, caller: Option<&str>) -
     disk
 }
 
-/// Why [`token_for`] cannot have one for `caller`, judged without the
-/// network: `quiet` after its own failures. `None` when it may.
+/// Why [`token_for`] has no token for `caller`, checked without the network.
+/// Today the only reason is `quiet`. `None` when it may have one.
 pub(crate) fn no_token_for(caller: &str) -> Option<&'static str> {
     let state = read_state().unwrap_or_default();
     state.quiet(caller, now()).then_some("quiet")
@@ -323,14 +317,14 @@ pub(crate) fn no_token_for(caller: &str) -> Option<&'static str> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Refusal {
     /// The token itself is revoked, invalid, expired or malformed. It is
-    /// marked, so the next fetch replaces it.
+    /// marked dead, so the next fetch replaces it.
     Dead,
     /// The token is fine; this API does not accept it.
     Forbidden,
-    /// The Tokens API could not say. The token is kept, and counted against
-    /// a caller in the background as for [`Refusal::Forbidden`]: sending it
-    /// again at once would most likely be refused again, and cost another
-    /// check.
+    /// The Tokens API could not say. The token is kept but counts as a
+    /// failure for a background caller, as with [`Refusal::Forbidden`]:
+    /// sending it again right away would likely be refused again and cost
+    /// another check.
     Unknown,
     /// Not checked: `token` is not the one on disk. Another run saved a new
     /// one meanwhile, or the state cannot be written at all, in which case
@@ -342,11 +336,11 @@ pub(crate) enum Refusal {
 /// Asks the Tokens API, at once, why `caller`'s request with the fetched
 /// `token` was refused, and marks a dead token.
 ///
-/// For a caller in the `background`, such as telemetry, the endpoint is
-/// then asked right away, so a token rotated or republished is on disk for
-/// the next run: a different one served starts the caller's count over, and
-/// anything else counts a failure. A command someone is waiting on keeps no
-/// count; it tries a fresh token itself ([`token_now`]).
+/// For a `background` caller such as telemetry, it then fetches the token
+/// again right away, so a rotated or republished token is saved for the next
+/// run. A different token resets the caller's count; anything else counts as
+/// a failure. A command someone is waiting on keeps no count and fetches a
+/// fresh token itself ([`token_now`]).
 pub(crate) fn refused(caller: &str, token: &str, background: bool) -> Refusal {
     if read_state()
         .filter(|state| state.token.as_deref() == Some(token))
@@ -374,9 +368,8 @@ pub(crate) fn refused(caller: &str, token: &str, background: bool) -> Refusal {
 }
 
 /// The fetch after a background caller's `refused` token, with its answer
-/// and the Tokens API passed in. Nothing at all, the same token again, or
-/// the dead one still dead, is one failure; this run's event is not sent
-/// again either way.
+/// and the Tokens API passed in. No token, the same token again, or the dead
+/// token still dead counts as one failure.
 fn refetch(
     state: &mut State,
     caller: &str,
@@ -416,16 +409,15 @@ fn verdict(code: Option<&str>) -> Refusal {
     }
 }
 
-/// What a fetch's answer does to the token on disk, and the token it gives,
-/// if any. A token that is new replaces what is kept. The dead one served
-/// again is taken back only if it now checks valid. Callers' counts are left
-/// to the caller.
+/// Applies a fetch's result to the saved token and returns the token to use,
+/// if any. A new token replaces the saved one. The dead token served again
+/// is used only if it now checks valid. Failure counts are left to the
+/// caller.
 fn judge(
     state: &mut State,
     fetched: Fetched,
     check: impl FnOnce(&str) -> Refusal,
 ) -> Option<String> {
-    // Not a `pk.` token, or no token at all.
     let Fetched::Token(token) = fetched else {
         return None;
     };
@@ -446,16 +438,16 @@ fn judge(
     Some(token)
 }
 
-/// Whether a quiet period until `until` still holds at `now`. One further
-/// out than the longest, an hour, is a clock that went backwards or an
-/// edited file, and is not honored.
+/// Whether a quiet period that ends at `until` is still on at `now`. An end
+/// more than an hour away means the clock went backwards or the file was
+/// edited, so it is ignored.
 fn holds(until: u64, now: u64) -> bool {
     now < until && until <= now + HOUR
 }
 
 /// Whether `value` looks like a public token and nothing else. Checked on
-/// what the endpoint returns, on what is read back from disk and on
-/// telemetry's `MAPBOX_CLI_TOKEN`, since all end up in a request.
+/// what the endpoint returns, what is read back from disk, and telemetry's
+/// `MAPBOX_CLI_TOKEN`, since each ends up in a request.
 pub(super) fn is_plausible(value: &str) -> bool {
     value.starts_with("pk.")
         && value.len() <= MAX_TOKEN_LEN
@@ -565,9 +557,9 @@ mod tests {
             .map_or(0, |failures| failures.count)
     }
 
-    /// Runs [`acquire`] for telemetry with an endpoint that answers `answer`
-    /// and a Tokens API that still calls the token dead, and says whether
-    /// the endpoint was asked.
+    /// Runs [`acquire`] for telemetry, with the endpoint returning `answer`
+    /// and the Tokens API calling the token dead. Also returns whether the
+    /// endpoint was asked.
     fn run(state: &mut State, now: u64, answer: Fetched) -> (Option<String>, bool) {
         let (result, asked, _) = run_checked(state, now, answer, Refusal::Dead);
         (result, asked)
@@ -791,7 +783,7 @@ mod tests {
     }
 
     /// Runs [`refetch`] for telemetry after `pk.old` was refused, with the
-    /// endpoint answering `answer` and the Tokens API calling a dead token
+    /// endpoint returning `answer` and the Tokens API calling a dead token
     /// still dead.
     fn refused_then(state: &mut State, now: u64, answer: Fetched) {
         refetch(state, CALLER, "pk.old", now, answer, |_| Refusal::Dead);
@@ -845,7 +837,7 @@ mod tests {
         assert_eq!(written.callers[CALLER], failed.callers[CALLER]);
         assert!(written.callers.contains_key("other"), "another's is kept");
 
-        // A count this run did not change is not written over another run's.
+        // If this run didn't change the count, another run's count is kept.
         let mut counted = before.clone();
         counted.fail(CALLER, NOW);
         counted.fail(CALLER, NOW);
@@ -931,8 +923,6 @@ mod tests {
         );
     }
 
-    /// A file an earlier build wrote, paused for everyone and resting
-    /// telemetry, loads with no wait in it.
     #[test]
     fn an_earlier_builds_waits_are_not_read() {
         let old = format!(

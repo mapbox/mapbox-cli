@@ -6,10 +6,9 @@
 //! delivery change — a new endpoint, batching — happen without touching them.
 //!
 //! [`deliver`] hands the event to [`HttpSink`], which sends it to Mapbox
-//! Events, when [`crate::cli_token`] has a CLI token it could send it with.
-//! Never the user's: see that module for why. Otherwise the event is
-//! dropped: nothing would ever send a copy kept on disk, so keeping one
-//! would only store usage data for nobody. The state
+//! Events, when [`crate::cli_token`] has a CLI token for it. Never the
+//! user's token; that module explains why. Otherwise the event is dropped
+//! rather than saved, because nothing would ever send a saved copy. The state
 //! files below are still written, since building the event reads them.
 //!
 //! It also owns the directory, `~/.mapbox/.telemetry` (or under
@@ -37,8 +36,8 @@ const DIR: &str = ".telemetry";
 const KEEP_DAYS: u64 = 7;
 
 /// Production Mapbox Events, for every build. The CLI's token is a
-/// production token whatever the channel, so a build from source sends
-/// where a release does rather than to a staging host it means nothing to.
+/// production token on every channel, so a build from source sends where a
+/// release does; staging would not accept the token.
 const ENDPOINT: &str = "https://events.mapbox.com/events/v2";
 
 /// Set by [`HttpSink`] on the child it spawns, and read by [`is_send_child`]
@@ -63,8 +62,8 @@ const URL_ENV: &str = "MAPBOX_INTERNAL_TELEMETRY_URL";
 const DELIVERY_LOG_ENV: &str = "MAPBOX_INTERNAL_TELEMETRY_LOG";
 const DELIVERY_DIR: &str = "deliveries";
 
-/// The send's budget. Nobody is waiting for the child, which may also check
-/// a refused token and fetch its replacement.
+/// The child's time budget. Nobody waits for it, and besides the send it may
+/// check a refused token and fetch a new one.
 const SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Ample for one event; anything larger on stdin is not one of ours.
@@ -75,8 +74,8 @@ const MAX_EVENT_BYTES: u64 = 64 * 1024;
 ///
 /// The event goes to the child on stdin rather than argv, which is visible
 /// in `ps`. The child sends through [`cli_token::send`], which may check a
-/// refused token and fetch a new one: the reason it runs there and not in
-/// the parent, which is about to exit. One attempt; the event is dropped on
+/// refused token and fetch a new one; that runs in the child because the
+/// parent is about to exit. One attempt; the event is dropped on
 /// any failure. Best-effort by contract: it reports nothing and must not fail
 /// the command, block its exit, or write to stdout.
 struct HttpSink {
@@ -93,8 +92,7 @@ impl HttpSink {
             return;
         };
         let mut command = Command::new(exe);
-        // The child never sends with the user's token, so it is not handed
-        // one.
+        // The child never sends with the user's token, so don't pass it one.
         command
             .env(SEND_ENV, "1")
             .env(URL_ENV, &self.url)
@@ -125,8 +123,6 @@ impl HttpSink {
     }
 }
 
-/// Hands `line` to [`HttpSink`] when [`cli_token`] has a CLI token it could
-/// send it with, and drops it otherwise.
 pub(crate) fn deliver(line: &str) {
     match cli_token::no_token_for(cli_token::TELEMETRY_CALLER) {
         None => HttpSink { url: send_url() }.deliver(line),
@@ -184,8 +180,8 @@ fn send(url: &str, event: &serde_json::Value) {
 fn post(url: &str, event: &serde_json::Value) -> Result<(u16, Duration), String> {
     let body = serde_json::to_string(&[event]).map_err(|err| err.to_string())?;
     let client = http::client().map_err(|err| err.to_string())?;
-    // Set as the request is built, so the time is the POST alone, not the
-    // token fetch that may come before it.
+    // Reset when the request is built, so the time covers only the POST, not
+    // a token fetch before it.
     let started = std::cell::Cell::new(Instant::now());
     let response = cli_token::send(cli_token::TELEMETRY_CALLER, || {
         started.set(Instant::now());

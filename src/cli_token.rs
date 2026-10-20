@@ -1,47 +1,43 @@
 //! Requests the CLI makes for itself rather than for the user, and the token
 //! they carry.
 //!
-//! # Telemetry sends with the CLI's token alone
+//! # Telemetry uses only the CLI's token
 //!
-//! Mapbox Events keeps the token an event was sent with beside the event,
-//! and the request logs record it as `access_token`. A user's token there
-//! would store a login's `tk.` token, with its write scopes, or a secret
-//! `sk.` one, and make it a key shared between those records. So [`send`]
-//! never takes the user's token, and with no usable CLI token the event is
-//! dropped. It sends with:
+//! Mapbox Events stores the token each event was sent with, and its request
+//! logs record it as `access_token`. A user's token there would leave a login
+//! (`tk.`, with write scopes) or secret (`sk.`) token in those records, and
+//! the token would link them together. So [`send`] never uses the user's
+//! token. With no usable CLI token, the event is dropped. It sends with:
 //!
-//! 1. `MAPBOX_CLI_TOKEN` at run time, when set: the CLI's token chosen by a
-//!    developer, such as one for staging. Never checked, counted or
-//!    replaced, but only ever a `pk.` token, as a fetched one must be;
-//!    anything else drops the event rather than storing a user's or a
-//!    secret token beside it.
-//! 2. Otherwise the token published on the release channel, fetched and kept
-//!    on disk until the Tokens API calls it dead. See [`fetch`] for when it
-//!    is fetched again, and for each caller's quiet periods, which hold
-//!    this token only: an override is sent whatever its caller's count.
+//! 1. `MAPBOX_CLI_TOKEN`, when set. A developer sets it to use another CLI
+//!    token, such as one for staging. It is never checked, counted or
+//!    replaced, but it must be a `pk.` token; anything else drops the event.
+//! 2. Otherwise the token published for the release channel, fetched and
+//!    saved until the Tokens API says it is dead. [`fetch`] explains when it
+//!    is fetched again and when a caller goes quiet. Quiet periods apply to
+//!    this token only, never to `MAPBOX_CLI_TOKEN`.
 //!
-//! One token, one attempt: an event is never sent twice. A refusal is still
-//! checked at once ([`send_with_cli_token`]), and the endpoint asked for a
-//! different token there and then, so the next run's event goes with it.
+//! An event is sent at most once. If it is refused, the token is still
+//! checked right away ([`send_with_cli_token`]) and a new one fetched, so the
+//! next run's event can use it.
 //!
 //! # What may use the CLI's token
 //!
 //! Every request made with the CLI's token is billed to the account that
-//! owns it. So it is decided by what the request is for, not where it goes:
-//! a request the CLI makes for itself goes through [`send`], and its caller
-//! is named in this file (today only [`TELEMETRY_CALLER`]); a command must be
-//! in [`CLI_TOKEN_COMMANDS`], which also says how it uses it ([`Use`]).
-//! Where the request is sent does not matter, so a URL overridden from the
-//! environment keeps the same token.
+//! owns it. So what a request is for decides whether it may use the token,
+//! not where it goes. The CLI's own requests go through [`send`], and each
+//! caller is named in this file (today only [`TELEMETRY_CALLER`]). A command
+//! must be listed in [`CLI_TOKEN_COMMANDS`], with how it uses the token
+//! ([`Use`]). A URL overridden from the environment keeps the same token.
 //!
 //! Either way the token is sent through [`send_with_cli_token`], which holds
-//! the rules: check a refusal at once, replace a dead token, and count a
-//! background caller's failures. A command, unlike telemetry, sends again
-//! with a fresh token, and one that cannot use the CLI's token falls back to
-//! the user's, and with none says why: unavailable right now
-//! ([`Unavailable`]) or refused by this API ([`Refusal`]). A command's
-//! `MAPBOX_CLI_TOKEN` is sent whatever it holds, since its request carries
-//! the user's token anyway when the CLI's cannot be used.
+//! the rules: check a refusal right away, replace a dead token, and count a
+//! background caller's failures. Unlike telemetry, a command retries with a
+//! fresh token. If it still cannot use the CLI's token, it falls back to the
+//! user's. With no user token, it says why: the CLI's token is unavailable
+//! ([`Unavailable`]) or this API refused it ([`Refusal`]). A command sends
+//! `MAPBOX_CLI_TOKEN` without the `pk.` check, because it would fall back to
+//! the user's token anyway.
 //!
 //! # The token is public
 //!
@@ -64,15 +60,14 @@ pub(crate) use fetch::{Refusal, Unavailable};
 /// for a token anyone can read.
 pub(crate) const REFERER: &str = "https://cli.mapbox.com/";
 
-/// Telemetry's name as a caller of the CLI's token, for its own count of
-/// failures.
+/// Telemetry's caller name. Each caller keeps its own failure count.
 pub(crate) const TELEMETRY_CALLER: &str = "telemetry";
 
 /// How a command listed in [`CLI_TOKEN_COMMANDS`] uses the CLI's token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Use {
-    /// The CLI's token first, and the user's own only while the CLI's
-    /// cannot be used: unavailable, or refused by this API.
+    /// The CLI's token first, and the user's only when the CLI's is
+    /// unavailable or this API refuses it.
     Preferred,
 }
 
@@ -143,9 +138,8 @@ fn preferred_token(fetch: bool) -> Result<CommandToken, Unavailable> {
     if !fetch {
         return Err(Unavailable::NotFetched);
     }
-    // A command is not held by any caller's quiet period, which paces
-    // requests nobody waits on: someone is waiting, and the endpoint may
-    // have a new token by now.
+    // Quiet periods don't apply to commands: someone is waiting, and the
+    // endpoint may have a new token by now.
     fetch::token_now().map(|token| given(token, TokenSource::Fetched))
 }
 
@@ -168,14 +162,12 @@ pub(crate) fn send_for_command<R>(
     send_with_cli_token(command, given.token, &mut ledger, send, status)
 }
 
-/// Sends `request` once with the CLI's token attached as `access_token`, on
-/// `caller`'s behalf: `MAPBOX_CLI_TOKEN` when set, otherwise the fetched
-/// token by [`send_with_cli_token`]'s rules, which for a caller in the
-/// background never send again ([`Disk::Background`]).
+/// Sends `request` once for `caller`, with the CLI's token as
+/// `access_token`: `MAPBOX_CLI_TOKEN` when set, otherwise the fetched token.
+/// A refused request is never sent again ([`Disk::Background`]).
 ///
-/// `None` when there is no CLI token to use right now; an error when the
-/// request could not be sent at all; otherwise the answer, a refusal
-/// included.
+/// Returns `None` when there is no CLI token to use, an error when the
+/// request could not be sent, and otherwise the response, even a refusal.
 pub(crate) fn send(
     caller: &str,
     request: impl Fn() -> RequestBuilder,
@@ -199,21 +191,21 @@ pub(crate) fn send(
     }
 }
 
-/// Which CLI token [`send`] uses.
 #[derive(Debug, PartialEq, Eq)]
 enum Chosen {
     Override(String),
     Fetched(String),
 }
 
-/// `MAPBOX_CLI_TOKEN` when it is set to something, without loading the
-/// fetched token at all, so a developer's override never costs a fetch.
+/// Prefers `MAPBOX_CLI_TOKEN`, and loads the fetched token only when it is
+/// unset, so an override never causes a fetch.
 fn chosen(
     override_token: Option<&str>,
     fetched: impl FnOnce() -> Option<String>,
 ) -> Option<Chosen> {
     match usable(override_token) {
-        // Not the fetched token instead: whoever set it meant another one.
+        // Don't fall back to the fetched token: whoever set the override
+        // wanted a different one.
         Some(token) => fetch::is_plausible(token).then(|| Chosen::Override(token.to_owned())),
         None => fetched().map(Chosen::Fetched),
     }
@@ -233,22 +225,22 @@ pub(crate) enum Sent<R> {
 pub(crate) trait Ledger {
     fn refused(&mut self, caller: &str, token: &str) -> Refusal;
     fn accepted(&mut self, caller: &str, token: &str);
-    /// Whether a refused request is sent again with a
-    /// [`fresh`](Ledger::fresh) token.
+    /// Whether to retry a refused request with a [`fresh`](Ledger::fresh)
+    /// token.
     fn retries(&self) -> bool;
     fn fresh(&mut self) -> Option<String>;
 }
 
 /// `<config dir>/cli-token.json`, through [`fetch`], by kind of caller.
 pub(crate) enum Disk {
-    /// Nobody is waiting, as for telemetry: never sent again, and counted
-    /// against the caller ([`fetch`]). A refusal still asks the endpoint at
-    /// once, so that the next run sends with a token rotated meanwhile.
+    /// Nobody is waiting, as with telemetry. A refused request is never sent
+    /// again and counts as a failure for the caller ([`fetch`]). The refusal
+    /// still fetches a new token right away, so the next run can use it.
     Background,
-    /// Someone ran it and is waiting: keeps no count, and any refusal tries a
-    /// token fetched there and then, so a token republished or fixed in the
-    /// Console works on the next try. Not when this run `fetched` the token
-    /// already: asking again at once would only get the same one back.
+    /// Someone ran it and is waiting. No failures are counted, and a refusal
+    /// retries with a newly fetched token, so a token republished or fixed in
+    /// the Console works on the next try. If this run already `fetched` the
+    /// token, it doesn't retry: fetching again would return the same token.
     Command { fetched: bool },
     /// A token not from the endpoint (`MAPBOX_CLI_TOKEN`): the file is not
     /// touched, and a refusal is handed back as it is.
@@ -274,7 +266,7 @@ impl Ledger for Disk {
     fn fresh(&mut self) -> Option<String> {
         match self {
             Disk::Command { .. } => fetch::token_now().ok(),
-            // Never asked: neither sends again.
+            // Never called: neither of these retries.
             Disk::Background | Disk::Unchecked => None,
         }
     }
@@ -283,12 +275,12 @@ impl Ledger for Disk {
 /// Sends with the CLI's `token` on `caller`'s behalf: the one place the
 /// rules for using it live, for telemetry and commands alike.
 ///
-/// A `2xx` ends `caller`'s count of failures. A `401` or `403` is checked
-/// with the Tokens API at once ([`fetch::refused`]); when the ledger says it
-/// is worth it ([`Ledger::retries`]) and a different token is to be had, the
-/// request is sent once more with it, since a refused request was not acted
-/// on. Otherwise the refusal is handed back. `status` is an answer's HTTP
-/// status, or `None` when there was no answer.
+/// A `2xx` resets `caller`'s failure count. A `401` or `403` is checked with
+/// the Tokens API right away ([`fetch::refused`]). If the ledger allows a
+/// retry ([`Ledger::retries`]) and a different token is available, the
+/// request is sent once more with it. That is safe because a refused request
+/// had no effect. Otherwise the refusal is returned. `status` gives a
+/// response's HTTP status, or `None` when there was no response.
 pub(crate) fn send_with_cli_token<R>(
     caller: &str,
     mut token: String,
@@ -318,9 +310,9 @@ pub(crate) fn send_with_cli_token<R>(
     }
 }
 
-/// Why [`send`] has no CLI token it could try for `caller`, judged without
-/// the network, so a caller can skip work that would only find nothing to
-/// send with. `None` when it may have one.
+/// Why [`send`] has no CLI token to try for `caller`, checked without the
+/// network so a caller can skip work that could not be sent anyway. `None`
+/// when it may have one.
 pub(crate) fn no_token_for(caller: &str) -> Option<&'static str> {
     match usable(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref()) {
         Some(token) => (!fetch::is_plausible(token)).then_some("override_not_public"),
@@ -413,9 +405,8 @@ mod tests {
         assert_eq!(for_command("styles list", true), None);
     }
 
-    /// A ledger that answers every refusal with `verdict`, sends again as a
-    /// command does when it `retries`, with `fresh` to hand out once, and
-    /// records what it was told.
+    /// Returns `verdict` for every refusal and hands out `fresh` once.
+    /// Records every token it is given.
     #[derive(Default)]
     struct FakeLedger {
         retries: bool,
@@ -441,7 +432,7 @@ mod tests {
         }
     }
 
-    /// A command's ledger, as [`Disk::Command`] for a token from disk.
+    /// Acts like [`Disk::Command`] for a token loaded from disk.
     fn command_ledger(verdict: Refusal, fresh: &str) -> FakeLedger {
         FakeLedger {
             retries: true,

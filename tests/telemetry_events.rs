@@ -10,9 +10,9 @@
 //! pointed at a dead port, and a run with no token drops its event, so most
 //! runs here are given `MAPBOX_CLI_TOKEN` to send with. The tests of the
 //! fetched token point `MAPBOX_INTERNAL_CLI_TOKEN_URL`, and the Tokens API
-//! check behind `MAPBOX_INTERNAL_TOKENS_URL`, at loopback servers. An event
-//! is only ever sent with the CLI's token, never the user's, so a user's
-//! token in a test here is there to show that it is not sent.
+//! check behind `MAPBOX_INTERNAL_TOKENS_URL`, at loopback servers. Events are
+//! never sent with the user's token, so any user token in these tests is
+//! there to show it is not sent.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -564,8 +564,6 @@ fn without_the_switch_there_is_no_delivery_log() {
         .exists());
 }
 
-/// Every token of the user's at once, and the event still goes with the
-/// CLI's: none of them is stored beside it in Mapbox Events.
 #[test]
 fn a_users_token_never_reaches_the_send() {
     for args in USER_TOKEN_RUNS {
@@ -596,8 +594,7 @@ fn a_users_token_never_reaches_the_send() {
     }
 }
 
-/// The CLI's token goes with the event whatever URL it is sent to, so an
-/// overridden one keeps it, and its `Referer`.
+/// An overridden URL still gets the CLI's token and its `Referer`.
 #[test]
 fn an_overridden_url_keeps_the_clis_token() {
     let home = scratch("send-cli-token-only");
@@ -632,7 +629,7 @@ fn referer(head: &str) -> Option<String> {
     })
 }
 
-/// A stored login holding `token`, with no `exp`, so it never needs a
+/// Saves a login holding `token`. It has no `exp`, so it never needs a
 /// refresh.
 fn log_in(home: &Path, token: &str) {
     std::fs::write(
@@ -655,8 +652,8 @@ fn sent_with(received: &mpsc::Receiver<Received>) -> String {
         .to_string()
 }
 
-/// A login on disk is never read for telemetry, so a read-only command's
-/// event neither creates a lock file nor tightens the directory's mode.
+/// Telemetry never reads the saved login, so sending creates no lock file
+/// and doesn't change the directory's permissions.
 #[cfg(unix)]
 #[test]
 fn the_send_leaves_a_login_and_its_directory_alone() {
@@ -829,8 +826,6 @@ fn cli_token_state(home: &Path, contains: &str) -> Value {
     }
 }
 
-/// With no `MAPBOX_CLI_TOKEN`, the event goes with the token fetched from
-/// the endpoint, which is kept for the next run.
 #[test]
 fn the_fetched_token_sends_the_event_and_is_kept() {
     let home = scratch("send-fetched");
@@ -979,7 +974,6 @@ fn keeping_a_fetched_token_leaves_the_directory_mode_alone() {
     );
 }
 
-/// Unix seconds now, for a state file whose waits are still running.
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -987,7 +981,8 @@ fn now() -> u64 {
         .as_secs()
 }
 
-/// Writes the CLI token's state as a dev build pointed at loopback keeps it.
+/// Marks the state `overridden`, as a dev build pointed at loopback writes
+/// it; otherwise the run would not trust it.
 fn save_cli_token_state(home: &Path, state: Value) {
     let mut state = state;
     state["overridden"] = Value::Bool(true);
@@ -995,7 +990,7 @@ fn save_cli_token_state(home: &Path, state: Value) {
         .expect("write the state");
 }
 
-/// The `access_token` and `Referer` of the next request `heads` passes on.
+/// The `access_token` and `Referer` of the next request in `heads`.
 fn token_sent(heads: &mpsc::Receiver<String>) -> (String, Option<String>) {
     let head = heads
         .recv_timeout(Duration::from_secs(10))
@@ -1011,8 +1006,8 @@ fn token_sent(heads: &mpsc::Receiver<String>) -> (String, Option<String>) {
 
 const CLI_REFERER: Option<&str> = Some("https://cli.mapbox.com/");
 
-/// Runs that each hold a token of the user's, for the tests that show none
-/// is sent: typed, from the login, and paths that never resolve one.
+/// Runs where the user has a token: passed with `--token`, from the login,
+/// and commands that never resolve one.
 const USER_TOKEN_RUNS: [&[&str]; 5] = [
     &["--token", "sk.typed", "config", "list"],
     &["--use-login", "config", "list"],
@@ -1021,8 +1016,6 @@ const USER_TOKEN_RUNS: [&[&str]; 5] = [
     &["styles", "list", "--schema"],
 ];
 
-/// Every token of the user's at once, and the event still goes with the
-/// fetched CLI token, as it does with the override.
 #[test]
 fn a_logged_in_run_sends_with_the_clis_token() {
     for args in USER_TOKEN_RUNS {
@@ -1053,8 +1046,8 @@ fn a_logged_in_run_sends_with_the_clis_token() {
     }
 }
 
-/// Runs `config list` with a token in the environment, which is never sent,
-/// and says whether an event arrived, with the delivery log.
+/// Runs `config list` with a user token in the environment. Returns whether
+/// an event arrived, and the delivery log.
 fn try_sending(home: &Path, token_url: &str) -> (bool, Vec<Value>) {
     let (received, url) = events_server(true);
     let out = command(home)
@@ -1075,8 +1068,8 @@ fn try_sending(home: &Path, token_url: &str) -> (bool, Vec<Value>) {
     (arrived, lines)
 }
 
-/// A `403` to the CLI's token, which the Tokens API calls valid: the event
-/// is dropped, not sent again with any other token.
+/// A `403` for a token the Tokens API calls valid. The event is dropped, not
+/// resent with another token.
 #[test]
 fn a_refused_clis_token_is_not_sent_again() {
     let home = scratch("send-refused-once");
@@ -1099,8 +1092,8 @@ fn a_refused_clis_token_is_not_sent_again() {
         token_sent(&heads),
         ("pk.kept".to_string(), CLI_REFERER.map(str::to_owned))
     );
-    // The child is done once the failure is counted, so a resend would
-    // have arrived by the end of the wait below.
+    // The count is written when the child finishes, so a resend would show
+    // up within the wait below.
     cli_token_state(&home, r#""count":1"#);
     assert!(
         heads.recv_timeout(Duration::from_secs(1)).is_err(),
@@ -1108,9 +1101,6 @@ fn a_refused_clis_token_is_not_sent_again() {
     );
 }
 
-/// Rotation, healthy token: the old one is revoked and a new one served.
-/// The `401` replaces it at once, but this run's event is not sent again;
-/// the next run's goes with the new token.
 #[test]
 fn a_revoked_token_is_replaced_for_the_next_run_without_a_resend() {
     let home = scratch("send-rotated-revoked");
@@ -1119,8 +1109,8 @@ fn a_revoked_token_is_replaced_for_the_next_run_without_a_resend() {
         ("401 Unauthorized", r#"{"message":"Not Authorized"}"#),
         ("204 No Content", ""),
     ]);
-    // A `401` around the verdict, which the real endpoint has not been seen
-    // to send: the `code` still decides.
+    // The real Tokens API hasn't been seen to wrap its verdict in a `401`,
+    // but if it does, the `code` still decides.
     let (_, tokens_url) = answer_once("401 Unauthorized", r#"{"code":"TokenRevoked"}"#);
     let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.new"}"#);
     let out = command(&home)
@@ -1138,7 +1128,8 @@ fn a_revoked_token_is_replaced_for_the_next_run_without_a_resend() {
         "the event was sent again"
     );
 
-    // The endpoint is gone now; the replacement is on disk.
+    // The token endpoint answered only once, so this run must use the saved
+    // token.
     let (received, url) = events_server(true);
     let out = command(&home)
         .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
@@ -1150,9 +1141,8 @@ fn a_revoked_token_is_replaced_for_the_next_run_without_a_resend() {
     assert_eq!(sent_with(&received), "pk.new");
 }
 
-/// An override is the CLI's token only if it is a public one: a secret or
-/// login token there drops the event rather than reaching Mapbox Events,
-/// and the fetched token is not sent instead.
+/// An `sk.` or `tk.` override drops the event, and the fetched token is not
+/// sent instead.
 #[test]
 fn an_override_that_is_not_public_sends_nothing() {
     for token in ["sk.x", "tk.x"] {
@@ -1183,9 +1173,8 @@ fn an_override_that_is_not_public_sends_nothing() {
     }
 }
 
-/// `MAPBOX_CLI_TOKEN` is the developer's choice: a refusal of it is sent
-/// once, never checked, and leaves the fetched token's state alone, even
-/// when it is the token on disk.
+/// Even when the override matches the saved token, its refusal leaves the
+/// saved state alone.
 #[test]
 fn a_refused_override_is_not_checked_or_replaced() {
     let home = scratch("send-override-refused");
@@ -1247,16 +1236,14 @@ fn run_against(home: &Path, events: &str, token: &str, tokens: &str) {
     assert!(out.status.success());
 }
 
-/// The CLI token's state as it is now.
 fn read_cli_token_state(home: &Path) -> Value {
     let text = std::fs::read_to_string(config_dir(home).join("cli-token.json")).expect("the state");
     serde_json::from_str(&text).expect("the state is JSON")
 }
 
-/// A refusal of a token the Tokens API calls valid asks the endpoint once,
-/// at once. A different token served there is kept for the next run, which
-/// sends with it, and starts telemetry's count over; the refused event is
-/// not sent again.
+/// After a valid token is refused, the endpoint is asked once. The new token
+/// it serves is used next run and resets telemetry's count. The refused
+/// event is not resent.
 #[test]
 fn a_different_token_served_after_a_refusal_is_used_next_run() {
     let home = scratch("send-refused-rotated");
@@ -1297,10 +1284,9 @@ fn a_different_token_served_after_a_refusal_is_used_next_run() {
     );
 }
 
-/// The same token served after each of three refusals in a row quiets
-/// telemetry for an hour: nothing is sent, checked or fetched, and the
-/// parent drops the event before spawning anything. After the hour it sends
-/// again, and a send that goes through ends the count.
+/// While quiet, nothing is sent, checked or fetched, and the parent drops
+/// the event without spawning a child. After the hour, a successful send
+/// resets the count.
 #[test]
 fn the_same_token_after_three_refusals_quiets_telemetry_for_an_hour() {
     let home = scratch("send-refused-quiet");
@@ -1342,7 +1328,6 @@ fn the_same_token_after_three_refusals_quiets_telemetry_for_an_hour() {
         "fetched while quiet"
     );
 
-    // The hour is over.
     state["callers"]["telemetry"]["quiet_until"] = (now() - 1).into();
     save_cli_token_state(&home, state);
     let (received, url) = events_server(true);
@@ -1353,8 +1338,7 @@ fn the_same_token_after_three_refusals_quiets_telemetry_for_an_hour() {
     assert!(state.get("callers").is_none(), "{state}");
 }
 
-/// Three fetches in a row that find no usable token quiet telemetry for an
-/// hour; a different token served once it is over starts the count again.
+/// After the quiet hour, a new token from the endpoint resets the count.
 #[test]
 fn fetches_with_no_usable_token_quiet_telemetry() {
     let home = scratch("send-fetch-quiet");
@@ -1388,8 +1372,8 @@ fn fetches_with_no_usable_token_quiet_telemetry() {
     assert!(state.get("callers").is_none(), "{state}");
 }
 
-/// Only an answer that went through ends telemetry's count: a `500` says
-/// nothing about whether the API takes the token.
+/// A `500` says nothing about whether the API accepts the token, so it
+/// doesn't reset the count.
 #[test]
 fn only_an_accepted_event_ends_the_count() {
     let home = scratch("send-count-ends");
@@ -1413,9 +1397,9 @@ fn only_an_accepted_event_ends_the_count() {
     assert!(state.get("callers").is_none(), "{state}");
 }
 
-/// A refusal the Tokens API cannot explain counts too, as does a fetch
-/// after it that gets no answer: sending the same token on every run would
-/// most likely be refused again, and cost a check each time.
+/// A refusal the Tokens API can't explain counts as a failure, and so does
+/// a fetch after it with no response. Otherwise every run would send the
+/// same token, likely be refused, and pay for another check.
 #[test]
 fn an_unexplained_refusal_counts_too() {
     let home = scratch("send-unknown");
@@ -1431,10 +1415,9 @@ fn an_unexplained_refusal_counts_too() {
     assert_eq!(state["rejected"], false);
 }
 
-/// A CLI token that cannot be used drops the event, even for a user who has
-/// a token: none on disk and the endpoint dead, which only the child finds
-/// out; or telemetry quiet, known before anything is spawned, even with a
-/// good token on disk.
+/// Two cases: no saved token and a dead endpoint, which only the child finds
+/// out; and telemetry quiet with a good saved token, which the parent knows
+/// before spawning anything.
 #[test]
 fn an_unusable_clis_token_sends_nothing_even_with_a_users_token() {
     let later = now() + 3000;
@@ -1465,9 +1448,9 @@ fn an_unusable_clis_token_sends_nothing_even_with_a_users_token() {
     }
 }
 
-/// Telemetry's count is its own: another caller's quiet period does not
-/// hold it, nor does the pause or rest an earlier build wrote, which an
-/// upgrade must not leave anyone waiting out.
+/// Another caller's quiet period doesn't hold telemetry back, and neither do
+/// the waits an earlier build wrote: an upgrade must not leave anyone
+/// waiting.
 #[test]
 fn no_wait_but_telemetrys_own_holds_it() {
     let later = now() + 3000;
@@ -1505,8 +1488,7 @@ fn no_wait_but_telemetrys_own_holds_it() {
     }
 }
 
-/// Telemetry's quiet period is about the fetched token, so an override is
-/// sent through it.
+/// The quiet period applies only to the fetched token.
 #[test]
 fn an_override_is_sent_while_telemetry_is_quiet() {
     let home = scratch("send-override-quiet");

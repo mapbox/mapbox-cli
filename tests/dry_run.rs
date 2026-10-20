@@ -765,7 +765,6 @@ mod report_token {
         );
     }
 
-    /// Telemetry's quiet period, after its own failures in a row.
     fn telemetry_quiet() -> String {
         format!(
             r#""callers":{{"telemetry":{{"count":3,"quiet_until":{}}}}}"#,
@@ -773,8 +772,6 @@ mod report_token {
         )
     }
 
-    /// Someone ran it, so telemetry's quiet period does not hold it back:
-    /// it sends with the CLI's token.
     #[test]
     fn telemetrys_quiet_period_does_not_hold_report_back() {
         let config = config_dir("report-not-resting");
@@ -796,8 +793,6 @@ mod report_token {
         assert!(!err.contains("recently"), "{err}");
     }
 
-    /// Nor does it hold a fetch: with the kept token dead, it asks for a new
-    /// one there and then, and sends with it.
     #[test]
     fn report_fetches_while_telemetry_is_quiet() {
         let config = config_dir("report-through-backoff");
@@ -820,8 +815,7 @@ mod report_token {
         assert!(state.contains(&quiet), "telemetry's count changed: {state}");
     }
 
-    /// A command fetches whatever telemetry's count, so the reason it gives
-    /// is what that fetch found, not a wait it never waited for.
+    /// The error names what the fetch found, not telemetry's quiet period.
     #[test]
     fn an_unreachable_endpoint_is_reported_while_telemetry_is_quiet() {
         let config = config_dir("report-unreachable-backoff");
@@ -836,8 +830,6 @@ mod report_token {
         assert!(!err.contains("trying again"), "{err}");
     }
 
-    /// A miss on a command's fetch does not count toward telemetry's quiet
-    /// period, which paces requests in the background.
     #[test]
     fn a_commands_miss_leaves_telemetrys_count_alone() {
         let config = config_dir("report-miss-uncounted");

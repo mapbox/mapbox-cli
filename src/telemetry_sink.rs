@@ -6,9 +6,10 @@
 //! delivery change — a new endpoint, batching — happen without touching them.
 //!
 //! [`deliver`] hands the event to [`HttpSink`], which sends it to Mapbox
-//! Events, when [`crate::cli_token`] has a token it could send it with.
-//! Otherwise the event is dropped: nothing would ever send a copy kept on
-//! disk, so keeping one would only store usage data for nobody. The state
+//! Events, when [`crate::cli_token`] has a CLI token it could send it with.
+//! Never the user's: see that module for why. Otherwise the event is
+//! dropped: nothing would ever send a copy kept on disk, so keeping one
+//! would only store usage data for nobody. The state
 //! files below are still written, since building the event reads them.
 //!
 //! It also owns the directory, `~/.mapbox/.telemetry` (or under
@@ -20,7 +21,6 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
-use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime};
 
 use reqwest::header::{CONTENT_TYPE, USER_AGENT};
@@ -54,11 +54,6 @@ const SEND_ENV: &str = "MAPBOX_INTERNAL_TELEMETRY_SEND";
 /// (`https://api-events-staging.tilestream.net/events/v2`).
 const URL_ENV: &str = "MAPBOX_INTERNAL_TELEMETRY_URL";
 
-/// The token the user gave this run, from [`remember_user_token`]. Kept
-/// apart from the run record, which goes to history and must never hold a
-/// token.
-static USER_TOKEN: OnceLock<Option<String>> = OnceLock::new();
-
 /// Turns on the delivery log: one line when an event is handed to the child
 /// and one with how the send ended, in `deliveries/<UTC date>.jsonl` under
 /// this module's directory. For measuring the send's success rate while
@@ -68,8 +63,8 @@ static USER_TOKEN: OnceLock<Option<String>> = OnceLock::new();
 const DELIVERY_LOG_ENV: &str = "MAPBOX_INTERNAL_TELEMETRY_LOG";
 const DELIVERY_DIR: &str = "deliveries";
 
-/// Each attempt's budget. Nobody is waiting for the child; with every token
-/// in [`cli_token::TELEMETRY`] tried it can run several of these.
+/// The send's budget. Nobody is waiting for the child, which may also check
+/// a refused token and fetch its replacement.
 const SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Ample for one event and its envelope; anything larger on stdin is not one
@@ -80,24 +75,19 @@ const MAX_EVENT_BYTES: u64 = 64 * 1024;
 /// never waits on the network.
 ///
 /// The event goes to the child on stdin rather than argv, which is visible
-/// in `ps`, and so does the user's token, which would otherwise sit in the
-/// child's environment. The child sends through [`cli_token::send`], which
-/// may refresh the login: the reason it runs there and not in the parent,
-/// which is about to exit. One attempt per token; the event is dropped on
+/// in `ps`. The child sends through [`cli_token::send`], which may check a
+/// refused token and fetch a new one: the reason it runs there and not in
+/// the parent, which is about to exit. One attempt; the event is dropped on
 /// any failure. Best-effort by contract: it reports nothing and must not fail
 /// the command, block its exit, or write to stdout.
 struct HttpSink {
     url: String,
-    user_token: Option<String>,
-    profile: Option<String>,
 }
 
 /// What the parent writes to the child's stdin.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Envelope {
     event: serde_json::Value,
-    user_token: Option<String>,
-    profile: Option<String>,
 }
 
 impl HttpSink {
@@ -110,8 +100,8 @@ impl HttpSink {
             return;
         };
         let mut command = Command::new(exe);
-        // The user's token travels in the envelope; the child has no use for
-        // it in its environment.
+        // The child never sends with the user's token, so it is not handed
+        // one.
         command
             .env(SEND_ENV, "1")
             .env(URL_ENV, &self.url)
@@ -126,11 +116,7 @@ impl HttpSink {
             log_delivery(line, json!({ "stage": "bad_event" }));
             return;
         };
-        let envelope = Envelope {
-            event,
-            user_token: self.user_token.clone(),
-            profile: self.profile.clone(),
-        };
+        let envelope = Envelope { event };
         let Ok(envelope) = serde_json::to_string(&envelope) else {
             log_delivery(line, json!({ "stage": "bad_event" }));
             return;
@@ -151,37 +137,11 @@ impl HttpSink {
     }
 }
 
-/// Keeps the token the user gave this run for [`deliver`], resolved by
-/// [`cli_token::user_token`] while the arguments are still at hand.
-pub(crate) fn remember_user_token(token: Option<String>) {
-    let _ = USER_TOKEN.set(token);
-}
-
-/// Hands `line` to [`HttpSink`] when [`cli_token`] has a token it could send
-/// it with, and drops it otherwise. `profile` is the run's `--profile`, whose
-/// login it may send with.
-pub(crate) fn deliver(line: &str, profile: Option<&str>) {
-    let url = send_url();
-    // Help, `--version` and usage errors return before the arguments are
-    // parsed, so nothing was remembered; the environment is still the user's,
-    // unless `--use-login` was typed to set it aside.
-    let user_token = match USER_TOKEN.get() {
-        Some(remembered) => remembered.clone(),
-        None if std::env::args_os().any(|arg| arg == "--use-login") => None,
-        None => auth::environment_token().map(|(_, token)| token),
-    };
-    if cli_token::has_token_for(
-        cli_token::TELEMETRY_CALLER,
-        cli_token::TELEMETRY,
-        user_token.as_deref(),
-        profile,
-    ) {
-        HttpSink {
-            url,
-            user_token,
-            profile: profile.map(str::to_owned),
-        }
-        .deliver(line)
+/// Hands `line` to [`HttpSink`] when [`cli_token`] has a CLI token it could
+/// send it with, and drops it otherwise.
+pub(crate) fn deliver(line: &str) {
+    if cli_token::has_token_for(cli_token::TELEMETRY_CALLER) {
+        HttpSink { url: send_url() }.deliver(line)
     } else {
         log_delivery(line, json!({ "stage": "no_token" }));
     }
@@ -235,24 +195,18 @@ fn send(url: &str, envelope: &Envelope) {
 fn post(url: &str, envelope: &Envelope) -> Result<(u16, Duration), String> {
     let body = serde_json::to_string(&[&envelope.event]).map_err(|err| err.to_string())?;
     let client = http::client().map_err(|err| err.to_string())?;
-    // Reset by every attempt, so the time is the POST that answered alone,
-    // not the token fetch or check that may come before it.
+    // Set as the request is built, so the time is the POST alone, not the
+    // token fetch that may come before it.
     let started = std::cell::Cell::new(Instant::now());
-    let response = cli_token::send(
-        cli_token::TELEMETRY_CALLER,
-        cli_token::TELEMETRY,
-        envelope.user_token.as_deref(),
-        envelope.profile.as_deref(),
-        || {
-            started.set(Instant::now());
-            client
-                .post(url)
-                .header(USER_AGENT, telemetry::PRODUCT_TOKEN)
-                .header(CONTENT_TYPE, "application/json")
-                .body(body.clone())
-                .timeout(SEND_TIMEOUT)
-        },
-    )
+    let response = cli_token::send(cli_token::TELEMETRY_CALLER, || {
+        started.set(Instant::now());
+        client
+            .post(url)
+            .header(USER_AGENT, telemetry::PRODUCT_TOKEN)
+            .header(CONTENT_TYPE, "application/json")
+            .body(body.clone())
+            .timeout(SEND_TIMEOUT)
+    })
     .ok_or_else(|| "no token to send with".to_string())?
     .map_err(|err| http::failure(&err))?;
     Ok((response.status().as_u16(), started.get().elapsed()))

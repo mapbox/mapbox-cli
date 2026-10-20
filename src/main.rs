@@ -842,7 +842,6 @@ fn no_stored_credentials(profile: Option<&str>) -> anyhow::Error {
 /// Answers `--schema`, from either of the two places it can be noticed.
 fn emit_schema(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches) -> u8 {
     run_record::set_parsed(app, specs, matches, run_record::Invocation::Schema);
-    telemetry_sink::remember_user_token(cli_token::user_token(matches));
     let mode = Mode::from_matches(matches);
     match schema::emit(mode, app, specs, matches) {
         Ok(()) => 0,
@@ -951,7 +950,6 @@ fn cli() -> u8 {
     }
 
     run_record::set_parsed(&app, &specs, &matches, run_record::Invocation::Execute);
-    telemetry_sink::remember_user_token(cli_token::user_token(&matches));
     output::banner::show(&matches);
     let mode = Mode::from_matches(&matches);
     match run(&app, &specs, &matches, mode) {

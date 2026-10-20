@@ -19,6 +19,16 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- Telemetry is only ever sent with the CLI's own public token, never yours:
+  a typed `--token`, `MAPBOX_ACCESS_TOKEN` or your login no longer reach
+  Mapbox Events, which keeps the token an event was sent with. When the
+  CLI's token can't be used, the event is dropped, even if you have a token.
+  An event is also never sent twice: one the API refuses is dropped, and a
+  revoked CLI token is replaced for the next run. While telemetry rests from
+  a refused token, a new token served at
+  `https://cli.mapbox.com/config/token.json` ends the rest on the next run,
+  as often as the existing fetch pause allows. `mapbox report` is unchanged.
+
 - New `mapbox report "<message>"` sends feedback about the CLI itself to
   the Mapbox CLI team, with the CLI's version and OS appended. It is filed
   under Mapbox's account, not yours. It is sent with the CLI's own token,
@@ -31,9 +41,9 @@ that may never merge. They are not releases and are not listed here.
   `cli_token_unavailable` and `cli_token_forbidden` (see
   [Errors](docs/commands.md#errors)).
 
-- The CLI's own token, used for telemetry when you have no token of your
-  own, is now fetched from `https://cli.mapbox.com/config/token.json` and
-  kept in `~/.mapbox/cli-token.json` instead of being built into the binary,
+- The CLI's own token, used for telemetry, is now fetched from
+  `https://cli.mapbox.com/config/token.json` and kept in
+  `~/.mapbox/cli-token.json` instead of being built into the binary,
   so it can be rotated without a release. What changes for an existing
   setup:
   - `MAPBOX_CLI_BUNDLED_TOKEN` is no longer read at build time. A build

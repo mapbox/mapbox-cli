@@ -301,11 +301,10 @@ Each run also sends one event to Mapbox:
 It never includes a file path or free text you typed. It carries a random ID
 that is replaced on the first run a day after it was created. It is sent in
 the background, so a command never waits for it, and dropped if it can't be
-delivered. It is sent with your own token (`--token`, `MAPBOX_ACCESS_TOKEN`
-or your login) when you have one, and with the CLI's own public token
-otherwise; Mapbox Events keeps the token an event was sent with, and the
-account it belongs to, alongside the event. With no token of your own and
-no way to fetch the CLI's, the event is dropped.
+delivered. It is only ever sent with the CLI's own public token, never
+yours (`--token`, `MAPBOX_ACCESS_TOKEN` or your login); Mapbox Events keeps
+the token an event was sent with alongside the event. When the CLI's token
+can't be used, the event is dropped, and it is never sent twice.
 `MAPBOX_CLI_NO_TELEMETRY=1` or `mapbox config set telemetry off` turns it off.
 
 ### Diagnostics and settings
@@ -491,22 +490,23 @@ and `--dry-run` show it alongside everything else on the request.
 
 ### The CLI's own requests
 
-The CLI has a token of its own, for requests it makes for itself. Telemetry
-uses your own token whenever you have one: `--token` or
-`MAPBOX_ACCESS_TOKEN`, then your login. Only when you have none does it use
-the CLI's token:
-`MAPBOX_CLI_TOKEN`, or a public token fetched from
-`https://cli.mapbox.com/config/token.json` and kept in
-`~/.mapbox/cli-token.json`. It is replaced only when the Tokens API says it
-is revoked, invalid, expired or malformed, not when one API refuses it. A
-refusal of a valid token, or one the Tokens API cannot explain, counts; the
-third in a row pauses telemetry's sending with it for an hour, as three
-fetches in a row that find no usable token pause fetching. The token is
+The CLI has a token of its own, for requests it makes for itself.
+Telemetry uses only that token, never yours: `MAPBOX_CLI_TOKEN`, or a
+public token fetched from `https://cli.mapbox.com/config/token.json` and
+kept in `~/.mapbox/cli-token.json`. With neither usable, the event is
+dropped. It is replaced only when the Tokens API says it is revoked,
+invalid, expired or malformed, not when one API refuses it; the event that
+was refused is not sent again, and the next run's goes with the new token.
+A refusal of a valid token, or one the Tokens API cannot explain, counts;
+the third in a row pauses telemetry's sending with it for an hour, as three
+fetches in a row that find no usable token pause fetching. During that
+hour the endpoint is still asked for a new token as often as fetching
+allows, so a rotated token is used on the next run. The token is
 restricted to `https://cli.mapbox.com/`, so every request with it carries
 that as its `Referer`. The CLI's token is only used for what
-`src/cli_token.rs` lists for it: telemetry, and `mapbox report`, which is
-the other way around: it prefers the CLI's token to yours and falls back to
-yours while the CLI's can't be used.
+`src/cli_token.rs` lists for it: telemetry, and `mapbox report`, which
+prefers the CLI's token and falls back to yours while the CLI's can't be
+used.
 
 ### Proxies
 
@@ -663,7 +663,7 @@ tools are used and how to improve our products.
   `--dry-run` or whether a named profile was used), how it ended and how
   long it took, how many requests it made with their HTTP status and sizes,
   the kind of token it used and the Mapbox account that token belongs to,
-  the Mapbox access token the event itself was sent with, a random
+  the CLI's own public token the event itself was sent with, a random
   identifier that is replaced every day, which run started this one when it
   ran inside another, CLI version, how the CLI was installed, the version
   it was updated from and any newer one it offered, OS/architecture,
@@ -679,8 +679,8 @@ tools are used and how to improve our products.
   adoption, prioritize investments, and improve the reliability,
   performance, and developer experience of our CLIs.
 - **What We Do Not Collect:** Code completion outputs, source code, project
-  file names, directory contents, non-Mapbox API keys, or credentials other
-  than the Mapbox access token an event is sent with.
+  file names, directory contents, non-Mapbox API keys, or credentials,
+  your Mapbox access token included.
 - **Who has Access:** Telemetry data will not be disclosed to, or accessed
   by, third parties other than Mapbox affiliates and passive cloud storage
   and hosting providers necessary to maintain our infrastructure.

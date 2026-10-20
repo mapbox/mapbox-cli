@@ -22,6 +22,16 @@
 //! does not count: that is this machine being offline, not the endpoint
 //! being stale, and it is asked again on the next run.
 //!
+//! # A rotation during a rest
+//!
+//! A caller resting from a token an API refused while it was valid
+//! ([`Cooldown`]) has no token it can use, so [`token_for`] asks the endpoint
+//! for another, paced as any fetch that finds nothing usable: the token it
+//! rests from served again counts as a miss, and the third in a row waits an
+//! hour. A different token served ends the rest, so a rotation that fixes a
+//! scope or URL restriction is picked up without waiting out the hour, and
+//! no faster than fetching already allows.
+//!
 //! # Where it is fetched from
 //!
 //! Every build fetches from production, a local `cargo build` included,
@@ -115,7 +125,7 @@ struct State {
     /// Cleared if the endpoint serves it again and it now checks valid.
     #[serde(default)]
     rejected: bool,
-    /// Who is resting from using `token`, by the name [`cooling`] takes:
+    /// Who is resting from using `token`, by the name [`token_for`] takes:
     /// an API refused it while the Tokens API called it valid. Cleared with
     /// a new token, which that API may accept.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -171,16 +181,51 @@ fn backoff(failures: u32) -> u64 {
     }
 }
 
-/// Whether `caller` — today only `telemetry` — is resting from the
-/// CLI's token. While it is, it sends nothing with it, so nothing is
-/// refused, and nothing is checked.
-pub(crate) fn cooling(caller: &str) -> bool {
-    read_state().is_some_and(|state| {
-        state
-            .cooldowns
-            .get(caller)
-            .is_some_and(|cooldown| holds(cooldown.until, now()))
-    })
+/// The CLI's token for `caller` — today only `telemetry` — paced as
+/// [`token`] is. While `caller` rests from the token on disk, nothing is sent
+/// with it, so nothing is refused or checked; a different token served at
+/// the endpoint ends the rest (see "A rotation during a rest" above).
+pub(crate) fn token_for(caller: &str) -> Option<String> {
+    let mut state = read_state().unwrap_or_default();
+    let before = state.clone();
+    let token = acquire_for(&mut state, caller, now(), || get(&endpoint()), check);
+    if state != before {
+        save_fetch(&before, state);
+    }
+    token
+}
+
+/// [`token_for`]'s decision, with the clock, the endpoint and the Tokens API
+/// passed in.
+fn acquire_for(
+    state: &mut State,
+    caller: &str,
+    now: u64,
+    get: impl FnOnce() -> Fetched,
+    check: impl FnOnce(&str) -> Refusal,
+) -> Option<String> {
+    if !resting(state, caller, now) {
+        return acquire(state, now, get, check);
+    }
+    if holds(state.retry_at, now) {
+        return None;
+    }
+    let resting_on = state.token.clone();
+    match judge(state, now, get(), check) {
+        Some(token) if Some(&token) != resting_on.as_ref() => Some(token),
+        Some(_) => {
+            state.fail(now);
+            None
+        }
+        None => None,
+    }
+}
+
+fn resting(state: &State, caller: &str, now: u64) -> bool {
+    state
+        .cooldowns
+        .get(caller)
+        .is_some_and(|cooldown| holds(cooldown.until, now))
 }
 
 /// Records that `caller`'s request with the saved `token` went through, which
@@ -261,10 +306,13 @@ fn merged(before: &State, mut state: State, disk: State) -> Option<State> {
     Some(state)
 }
 
-/// Whether [`token`] could have one, judged without the network.
-pub(crate) fn may_have_token() -> bool {
+/// Whether [`token_for`] could have one for `caller`, judged without the
+/// network.
+pub(crate) fn may_have_token(caller: &str) -> bool {
     let state = read_state().unwrap_or_default();
-    state.usable_token().is_some() || !holds(state.retry_at, now())
+    let now = now();
+    let usable = state.usable_token().is_some() && !resting(&state, caller, now);
+    usable || !holds(state.retry_at, now)
 }
 
 /// What a `401` or `403` to the CLI's token meant.
@@ -801,5 +849,91 @@ mod tests {
             serde_json::from_str::<State>(r#"{"token":"pk.a"}"#).unwrap(),
             saved("pk.a", false)
         );
+    }
+
+    fn resting_on(token: &str) -> State {
+        State {
+            cooldowns: BTreeMap::from([(
+                "telemetry".to_owned(),
+                Cooldown {
+                    failures: 3,
+                    until: NOW + HOUR,
+                },
+            )]),
+            ..saved(token, false)
+        }
+    }
+
+    /// Runs [`acquire_for`] for telemetry against an endpoint that answers
+    /// `answer`, and says whether it was asked.
+    fn run_for(state: &mut State, now: u64, answer: Fetched) -> (Option<String>, bool) {
+        let mut asked = false;
+        let result = acquire_for(
+            state,
+            "telemetry",
+            now,
+            || {
+                asked = true;
+                answer
+            },
+            |_| Refusal::Dead,
+        );
+        (result, asked)
+    }
+
+    #[test]
+    fn a_different_token_served_during_a_rest_ends_it() {
+        let mut state = resting_on("pk.old");
+        let (result, asked) = run_for(&mut state, NOW, token("pk.new"));
+        assert!(asked);
+        assert_eq!(result, Some("pk.new".to_owned()));
+        assert_eq!(
+            state,
+            saved("pk.new", false),
+            "the rest ends with the token"
+        );
+    }
+
+    #[test]
+    fn the_rested_token_served_again_is_a_miss_paced_as_any() {
+        let mut state = resting_on("pk.old");
+        let mut now = NOW;
+        let mut waits = Vec::new();
+        for _ in 0..3 {
+            let (result, asked) = run_for(&mut state, now, token("pk.old"));
+            assert!(asked);
+            assert_eq!(result, None, "the token it rests from is not used");
+            waits.push(state.retry_at - now);
+            now = state.retry_at;
+        }
+        assert_eq!(waits, [0, 0, HOUR], "the fetch's own schedule");
+        assert!(resting(&state, "telemetry", NOW), "still resting");
+
+        let (result, asked) = run_for(&mut state, now - 1, token("pk.new"));
+        assert!(!asked, "asked during the fetch pause");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn a_failed_fetch_during_a_rest_counts_nothing() {
+        let mut state = resting_on("pk.old");
+        let before = state.clone();
+        let (result, asked) = run_for(&mut state, NOW, Fetched::Failed);
+        assert!(asked);
+        assert_eq!(result, None);
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn another_callers_rest_does_not_hold_this_one() {
+        let mut state = resting_on("pk.old");
+        let result = acquire_for(
+            &mut state,
+            "report",
+            NOW,
+            || panic!("the saved token is enough"),
+            |_| Refusal::Dead,
+        );
+        assert_eq!(result, Some("pk.old".to_owned()));
     }
 }

@@ -10,7 +10,9 @@
 //! pointed at a dead port, and a run with no token drops its event, so most
 //! runs here are given `MAPBOX_CLI_TOKEN` to send with. The tests of the
 //! fetched token point `MAPBOX_INTERNAL_CLI_TOKEN_URL`, and the Tokens API
-//! check behind `MAPBOX_INTERNAL_TOKENS_URL`, at loopback servers.
+//! check behind `MAPBOX_INTERNAL_TOKENS_URL`, at loopback servers. An event
+//! is only ever sent with the CLI's token, never the user's, so a user's
+//! token in a test here is there to show that it is not sent.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -365,7 +367,7 @@ fn with_a_send_url_the_event_is_posted() {
     let (received, url) = events_server(true);
     let out = command(&home)
         .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-        .env("MAPBOX_ACCESS_TOKEN", "pk.test")
+        .env("MAPBOX_CLI_TOKEN", "pk.test")
         // A marker `http::client` would add, which must not reach Mapbox Events.
         .env("CLAUDECODE", "1")
         .args(["config", "list"])
@@ -406,7 +408,7 @@ fn the_command_does_not_wait_for_the_send() {
     let started = Instant::now();
     let out = command(&home)
         .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-        .env("MAPBOX_ACCESS_TOKEN", "pk.test")
+        .env("MAPBOX_CLI_TOKEN", "pk.test")
         .args(["config", "list"])
         .output()
         .expect("run mapbox");
@@ -426,7 +428,7 @@ fn the_opt_out_sends_nothing() {
     let (received, url) = events_server(true);
     let out = command(&home)
         .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-        .env("MAPBOX_ACCESS_TOKEN", "pk.test")
+        .env("MAPBOX_CLI_TOKEN", "pk.test")
         .env("MAPBOX_CLI_NO_TELEMETRY", "1")
         .args(["config", "list"])
         .output()
@@ -446,7 +448,7 @@ fn a_run_under_sudo_sends_nothing() {
     let (received, url) = events_server(true);
     let out = command(&home)
         .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-        .env("MAPBOX_ACCESS_TOKEN", "pk.test")
+        .env("MAPBOX_CLI_TOKEN", "pk.test")
         .env("SUDO_USER", "someone")
         .args(["config", "list"])
         .output()
@@ -490,7 +492,7 @@ fn the_delivery_log_pairs_each_hand_off_with_its_response() {
     let (_received, url) = events_server(true);
     let out = command(&home)
         .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-        .env("MAPBOX_ACCESS_TOKEN", "pk.test")
+        .env("MAPBOX_CLI_TOKEN", "pk.test")
         .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
         .args(["config", "list"])
         .output()
@@ -524,7 +526,7 @@ fn the_delivery_log_says_why_a_send_failed() {
             "MAPBOX_INTERNAL_TELEMETRY_URL",
             format!("http://127.0.0.1:{port}/events/v2"),
         )
-        .env("MAPBOX_ACCESS_TOKEN", "pk.test")
+        .env("MAPBOX_CLI_TOKEN", "pk.test")
         .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
         .args(["config", "list"])
         .output()
@@ -548,7 +550,7 @@ fn without_the_switch_there_is_no_delivery_log() {
     let (received, url) = events_server(true);
     let out = command(&home)
         .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-        .env("MAPBOX_ACCESS_TOKEN", "pk.test")
+        .env("MAPBOX_CLI_TOKEN", "pk.test")
         .args(["config", "list"])
         .output()
         .expect("run mapbox");
@@ -562,23 +564,41 @@ fn without_the_switch_there_is_no_delivery_log() {
         .exists());
 }
 
+/// Every token of the user's at once, and the event still goes with the
+/// CLI's: none of them is stored beside it in Mapbox Events.
 #[test]
-fn a_typed_token_reaches_the_send() {
-    let home = scratch("send-typed-token");
-    let (received, url) = events_server(true);
-    let out = command(&home)
-        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-        .args(["--token", "pk.typed", "config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-    let request = received
-        .recv_timeout(Duration::from_secs(10))
-        .expect("the event was posted");
-    assert_eq!(
-        request.head.lines().next().unwrap_or_default(),
-        "POST /events/v2?access_token=pk.typed HTTP/1.1"
-    );
+fn a_users_token_never_reaches_the_send() {
+    for args in [
+        &["--token", "sk.typed", "config", "list"][..],
+        &["--use-login", "config", "list"],
+        &["--version"],
+        &["nosuchcommand"],
+    ] {
+        let home = scratch("send-never-user");
+        log_in(&home, "tk.login");
+        let (received, url) = events_server(true);
+        let _ = command(&home)
+            .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+            .env("MAPBOX_ACCESS_TOKEN", "sk.env")
+            .env("MapboxAccessToken", "sk.legacy")
+            .env("MAPBOX_CLI_TOKEN", "pk.cli")
+            .args(args)
+            .output()
+            .expect("run mapbox");
+        let request = received
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the event was posted");
+        assert!(
+            request.head.contains("access_token=pk.cli "),
+            "{args:?}: {}",
+            request.head
+        );
+        assert_eq!(referer(&request.head).as_deref(), CLI_REFERER, "{args:?}");
+        let whole = format!("{}{}", request.head, request.body);
+        for user in ["sk.typed", "tk.login", "sk.env", "sk.legacy"] {
+            assert!(!whole.contains(user), "{args:?}: `{user}` was sent");
+        }
+    }
 }
 
 /// Telemetry may fall back to the CLI's token whatever URL it is sent to, so
@@ -617,23 +637,14 @@ fn referer(head: &str) -> Option<String> {
     })
 }
 
-#[test]
-fn use_login_keeps_the_environment_token_out_of_the_send() {
-    let home = scratch("send-use-login");
-    let (received, url) = events_server(true);
-    let out = command(&home)
-        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-        .env("MAPBOX_ACCESS_TOKEN", "pk.env")
-        .env("MAPBOX_CLI_TOKEN", "pk.cli")
-        .args(["--use-login", "config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-    assert_eq!(
-        sent_with(&received),
-        "pk.cli",
-        "--use-login still sent MAPBOX_ACCESS_TOKEN"
-    );
+/// A stored login holding `token`, with no `exp`, so it never needs a
+/// refresh.
+fn log_in(home: &Path, token: &str) {
+    std::fs::write(
+        config_dir(home).join("credentials.json"),
+        format!(r#"{{"access_token":"{token}"}}"#),
+    )
+    .expect("write a login");
 }
 
 /// The `access_token` the loopback server's one request carried.
@@ -649,95 +660,8 @@ fn sent_with(received: &mpsc::Receiver<Received>) -> String {
         .to_string()
 }
 
-#[test]
-fn the_users_token_comes_before_the_clis() {
-    let home = scratch("send-user-first");
-    let (received, url) = events_server(true);
-    let out = command(&home)
-        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-        .env("MAPBOX_CLI_TOKEN", "pk.cli")
-        .args(["--token", "pk.typed", "config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-    let request = received
-        .recv_timeout(Duration::from_secs(10))
-        .expect("the event was posted");
-    assert!(
-        request.head.contains("access_token=pk.typed "),
-        "{}",
-        request.head
-    );
-    assert_eq!(
-        referer(&request.head),
-        None,
-        "the user's token carries no Referer"
-    );
-}
-
-/// `--version`, help and usage errors return before the arguments are parsed,
-/// and still send with the environment's token rather than the CLI's.
-#[test]
-fn a_run_that_never_parses_still_sends_with_the_environment_token() {
-    for args in [
-        &["--version"][..],
-        &["styles", "--help"],
-        &["nosuchcommand"],
-    ] {
-        let home = scratch("send-unparsed");
-        let (received, url) = events_server(true);
-        let _ = command(&home)
-            .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-            .env("MAPBOX_ACCESS_TOKEN", "pk.env")
-            .env("MAPBOX_CLI_TOKEN", "pk.cli")
-            .args(args)
-            .output()
-            .expect("run mapbox");
-        assert_eq!(sent_with(&received), "pk.env", "{args:?}");
-    }
-}
-
-#[test]
-fn a_run_that_never_parses_still_honors_use_login() {
-    for args in [
-        &["--use-login", "--version"][..],
-        &["--use-login", "styles", "--help"],
-        &["--use-login", "nosuchcommand"],
-    ] {
-        let home = scratch("send-unparsed-use-login");
-        let (received, url) = events_server(true);
-        let _ = command(&home)
-            .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-            .env("MAPBOX_ACCESS_TOKEN", "pk.env")
-            .env("MAPBOX_CLI_TOKEN", "pk.cli")
-            .args(args)
-            .output()
-            .expect("run mapbox");
-        assert_eq!(sent_with(&received), "pk.cli", "{args:?}");
-    }
-}
-
-/// `MapboxAccessToken` is the user's token for `tilesets-cli`, so it comes
-/// before the CLI's even though clap doesn't read it.
-#[test]
-fn the_legacy_token_variable_is_the_users_too() {
-    for args in [&["config", "list"][..], &["--version"]] {
-        let home = scratch("send-legacy-env");
-        let (received, url) = events_server(true);
-        let _ = command(&home)
-            .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-            .env("MapboxAccessToken", "pk.legacy")
-            .env("MAPBOX_CLI_TOKEN", "pk.cli")
-            .args(args)
-            .output()
-            .expect("run mapbox");
-        assert_eq!(sent_with(&received), "pk.legacy", "{args:?}");
-    }
-}
-
-/// The child's login step reads without the lock while the login is good, so
-/// a read-only command's telemetry neither creates a lock file nor tightens
-/// the directory's mode.
+/// A login on disk is never read for telemetry, so a read-only command's
+/// event neither creates a lock file nor tightens the directory's mode.
 #[cfg(unix)]
 #[test]
 fn sending_with_a_login_leaves_the_config_directory_alone() {
@@ -745,21 +669,17 @@ fn sending_with_a_login_leaves_the_config_directory_alone() {
 
     let home = scratch("send-login-readonly");
     let dir = config_dir(&home);
-    // No `exp`, so it never needs a refresh.
-    std::fs::write(
-        dir.join("credentials.json"),
-        r#"{"access_token":"pk.login"}"#,
-    )
-    .expect("write a login");
+    log_in(&home, "tk.login");
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     let (received, url) = events_server(true);
     let out = command(&home)
         .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_CLI_TOKEN", "pk.cli")
         .args(["config", "list"])
         .output()
         .expect("run mapbox");
     assert!(out.status.success());
-    assert_eq!(sent_with(&received), "pk.login");
+    assert_eq!(sent_with(&received), "pk.cli");
 
     let mode = std::fs::metadata(&dir)
         .expect("the config dir")
@@ -946,53 +866,6 @@ fn the_fetched_token_sends_the_event_and_is_kept() {
     assert_eq!(sent_with(&received), "pk.fetched");
 }
 
-/// A `401` to the kept token, which the Tokens API says is revoked, marks
-/// it; a new one is fetched at once and the event sent again with it.
-#[test]
-fn a_revoked_token_is_replaced_and_the_event_resent() {
-    let home = scratch("send-rejected");
-    std::fs::write(
-        config_dir(&home).join("cli-token.json"),
-        r#"{"token":"pk.old","overridden":true}"#,
-    )
-    .expect("write the state");
-    let (heads, events_url) = answer_each(&[
-        ("401 Unauthorized", r#"{"message":"Not Authorized"}"#),
-        ("204 No Content", ""),
-    ]);
-    // A `401` around the verdict, which the real endpoint has not been seen
-    // to send: the `code` still decides.
-    let (_, tokens_url) = answer_once("401 Unauthorized", r#"{"code":"TokenRevoked"}"#);
-    let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.new"}"#);
-    let out = command(&home)
-        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &events_url)
-        .env("MAPBOX_INTERNAL_TOKENS_URL", &tokens_url)
-        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
-        .args(["config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-    let tokens: Vec<String> = (0..2)
-        .map(|_| {
-            let head = heads
-                .recv_timeout(Duration::from_secs(10))
-                .expect("an event was posted");
-            assert_eq!(
-                referer(&head).as_deref(),
-                Some("https://cli.mapbox.com/"),
-                "{head}"
-            );
-            head.split("access_token=")
-                .nth(1)
-                .and_then(|rest| rest.split([' ', '&']).next())
-                .unwrap_or_default()
-                .to_string()
-        })
-        .collect();
-    assert_eq!(tokens, ["pk.old", "pk.new"]);
-    assert_eq!(cli_token_state(&home, "pk.new")["rejected"], false);
-}
-
 /// A `401` to a token the Tokens API calls valid is this API refusing it,
 /// not the token being dead, so it is kept; the third such refusal in a row
 /// rests telemetry for an hour.
@@ -1028,7 +901,8 @@ fn a_token_an_api_refuses_is_kept() {
     assert_eq!(state["rejected"], false);
     assert!(state["cooldowns"]["telemetry"]["until"].is_u64(), "{state}");
 
-    // Resting: the next run sends nothing with it, and checks nothing.
+    // Resting: the next run sends nothing with it, and checks nothing. It
+    // asks the endpoint for another, which is not there.
     let (sent, events_url) = answer_once("401 Unauthorized", r#"{"message":"Not Authorized"}"#);
     let (checked, tokens_url) = answer_once("200 OK", r#"{"code":"TokenValid"}"#);
     let out = command(&home)
@@ -1042,8 +916,8 @@ fn a_token_an_api_refuses_is_kept() {
         .output()
         .expect("run mapbox");
     assert!(out.status.success());
-    let lines = deliveries(&home, 3);
-    assert_eq!(lines[2]["stage"], "no_token", "{lines:?}");
+    let lines = deliveries(&home, 4);
+    assert_eq!(lines[3]["error"], "no token to send with", "{lines:?}");
     assert!(
         sent.recv_timeout(Duration::from_millis(500)).is_err(),
         "sent while resting"
@@ -1275,4 +1149,273 @@ fn an_unexplained_refusal_starts_a_cooldown_too() {
     assert_eq!(state["token"], "pk.kept");
     assert_eq!(state["rejected"], false);
     assert!(state["cooldowns"]["telemetry"]["until"].is_u64(), "{state}");
+}
+
+/// Unix seconds now, for a state file whose waits are still running.
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is after 1970")
+        .as_secs()
+}
+
+/// Writes the CLI token's state as a dev build pointed at loopback keeps it.
+fn save_cli_token_state(home: &Path, state: Value) {
+    let mut state = state;
+    state["overridden"] = Value::Bool(true);
+    std::fs::write(config_dir(home).join("cli-token.json"), state.to_string())
+        .expect("write the state");
+}
+
+/// The `access_token` and `Referer` of the next `count` requests `heads`
+/// passes on.
+fn tokens_sent(heads: &mpsc::Receiver<String>, count: usize) -> Vec<(String, Option<String>)> {
+    (0..count)
+        .map(|_| {
+            let head = heads
+                .recv_timeout(Duration::from_secs(10))
+                .expect("an event was posted");
+            let token = head
+                .split("access_token=")
+                .nth(1)
+                .and_then(|rest| rest.split([' ', '&']).next())
+                .unwrap_or_default()
+                .to_string();
+            (token, referer(&head))
+        })
+        .collect()
+}
+
+const CLI_REFERER: Option<&str> = Some("https://cli.mapbox.com/");
+
+/// Logged in, with a token in the environment too, the event goes with the
+/// fetched CLI token.
+#[test]
+fn a_logged_in_run_sends_with_the_clis_token() {
+    let home = scratch("send-logged-in-cli");
+    log_in(&home, "tk.login");
+    let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.fetched"}"#);
+    let (received, url) = events_server(true);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .env("MAPBOX_ACCESS_TOKEN", "sk.env")
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert_eq!(sent_with(&received), "pk.fetched");
+}
+
+/// Runs `config list` for a user with a login and a token in the
+/// environment, and says whether an event arrived, with the delivery log.
+fn send_for_a_user(home: &Path, token_url: &str) -> (bool, Vec<Value>) {
+    let (received, url) = events_server(true);
+    let out = command(home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", token_url)
+        .env("MAPBOX_ACCESS_TOKEN", "sk.env")
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    // One line when the event is dropped at once, two when the child ran.
+    let mut lines = deliveries(home, 1);
+    if lines.last().is_some_and(|line| line["stage"] == "queued") {
+        lines = deliveries(home, 2);
+    }
+    let arrived = received.recv_timeout(Duration::from_millis(500)).is_ok();
+    (arrived, lines)
+}
+
+/// A CLI token that cannot be used drops the event, even for a user who has
+/// a token: none on disk and the endpoint dead, which only the child finds
+/// out; or, known before anything is spawned, fetching paused after misses,
+/// or resting from it with fetching paused too.
+#[test]
+fn an_unusable_clis_token_sends_nothing_even_with_a_users_token() {
+    let later = now() + 3000;
+    for (name, stage, state) in [
+        ("endpoint-dead", "failed", None),
+        (
+            "paused",
+            "no_token",
+            Some(serde_json::json!({"token": "pk.old", "rejected": true,
+                "failures": 3, "retry_at": later})),
+        ),
+        (
+            "resting",
+            "no_token",
+            Some(
+                serde_json::json!({"token": "pk.kept", "failures": 3, "retry_at": later,
+                "cooldowns": {"telemetry": {"failures": 3, "until": later}}}),
+            ),
+        ),
+    ] {
+        let home = scratch(&format!("send-nothing-{name}"));
+        log_in(&home, "tk.login");
+        if let Some(state) = state {
+            save_cli_token_state(&home, state);
+        }
+        let (arrived, lines) = send_for_a_user(&home, "http://127.0.0.1:9/");
+        assert!(!arrived, "{name}: sent");
+        let last = lines.last().expect("a delivery line");
+        assert_eq!(last["stage"], stage, "{name}: {lines:?}");
+        if stage == "failed" {
+            assert_eq!(last["error"], "no token to send with", "{name}");
+        }
+    }
+}
+
+/// A `403` to the CLI's token, which the Tokens API calls valid: the event
+/// is dropped, not sent again with any other token.
+#[test]
+fn a_refused_clis_token_is_not_sent_again() {
+    let home = scratch("send-refused-once");
+    log_in(&home, "tk.login");
+    save_cli_token_state(&home, serde_json::json!({"token": "pk.kept"}));
+    let (heads, events_url) = answer_each(&[
+        ("403 Forbidden", r#"{"message":"Forbidden"}"#),
+        ("204 No Content", ""),
+    ]);
+    let (_, tokens_url) = answer_once("200 OK", r#"{"code":"TokenValid"}"#);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &events_url)
+        .env("MAPBOX_INTERNAL_TOKENS_URL", &tokens_url)
+        .env("MAPBOX_ACCESS_TOKEN", "sk.env")
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert_eq!(
+        tokens_sent(&heads, 1),
+        [("pk.kept".to_string(), CLI_REFERER.map(str::to_owned))]
+    );
+    cli_token_state(&home, "cooldowns");
+    assert!(
+        heads.recv_timeout(Duration::from_secs(1)).is_err(),
+        "the event was sent again"
+    );
+}
+
+/// Rotation, healthy token: the old one is revoked and a new one served.
+/// The `401` replaces it at once, but this run's event is not sent again;
+/// the next run's goes with the new token.
+#[test]
+fn a_revoked_token_is_replaced_for_the_next_run_without_a_resend() {
+    let home = scratch("send-rotated-revoked");
+    save_cli_token_state(&home, serde_json::json!({"token": "pk.old"}));
+    let (heads, events_url) = answer_each(&[
+        ("401 Unauthorized", r#"{"message":"Not Authorized"}"#),
+        ("204 No Content", ""),
+    ]);
+    // A `401` around the verdict, which the real endpoint has not been seen
+    // to send: the `code` still decides.
+    let (_, tokens_url) = answer_once("401 Unauthorized", r#"{"code":"TokenRevoked"}"#);
+    let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.new"}"#);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &events_url)
+        .env("MAPBOX_INTERNAL_TOKENS_URL", &tokens_url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert_eq!(tokens_sent(&heads, 1)[0].0, "pk.old");
+    assert_eq!(cli_token_state(&home, "pk.new")["rejected"], false);
+    assert!(
+        heads.recv_timeout(Duration::from_secs(1)).is_err(),
+        "the event was sent again"
+    );
+
+    // The endpoint is gone now; the replacement is on disk.
+    let (received, url) = events_server(true);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert_eq!(sent_with(&received), "pk.new");
+}
+
+/// Rotation during a rest: a token an API refused while valid is rested
+/// from, but a different token served ends the rest on the next run,
+/// without waiting out the hour.
+#[test]
+fn a_new_token_served_during_a_rest_ends_it() {
+    let home = scratch("send-rest-rotated");
+    log_in(&home, "tk.login");
+    save_cli_token_state(
+        &home,
+        serde_json::json!({"token": "pk.old", "cooldowns": {"telemetry":
+            {"failures": 3, "until": now() + 3000}}}),
+    );
+    let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.new"}"#);
+    let (received, url) = events_server(true);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert_eq!(sent_with(&received), "pk.new");
+    let state = cli_token_state(&home, "pk.new");
+    assert!(state.get("cooldowns").is_none(), "{state}");
+}
+
+/// The token a rest is from, served again, is a miss like any other: the
+/// rest holds, nothing is sent, and the third in a row pauses fetching.
+#[test]
+fn the_rested_token_served_again_keeps_the_rest() {
+    let home = scratch("send-rest-same");
+    let until = now() + 3000;
+    save_cli_token_state(
+        &home,
+        serde_json::json!({"token": "pk.old", "failures": 2, "cooldowns": {"telemetry":
+            {"failures": 3, "until": until}}}),
+    );
+    let (asked, token_url) = answer_once("200 OK", r#"{"token":"pk.old"}"#);
+    let (arrived, _) = send_for_a_user(&home, &token_url);
+    assert!(!arrived, "sent while resting");
+    asked
+        .recv_timeout(Duration::from_secs(1))
+        .expect("the endpoint was asked");
+    let state = cli_token_state(&home, "retry_at");
+    assert_eq!(state["failures"], 3, "{state}");
+    assert_eq!(state["cooldowns"]["telemetry"]["until"], until, "{state}");
+}
+
+/// Rotation while fetching is paused: nothing is sent and the endpoint is
+/// left alone until the pause ends; then the token it serves is used.
+#[test]
+fn a_token_served_after_the_fetch_pause_is_used() {
+    let home = scratch("send-pause-ends");
+    let paused = |retry_at: u64| {
+        serde_json::json!({"token": "pk.old", "rejected": true,
+            "failures": 3, "retry_at": retry_at})
+    };
+    save_cli_token_state(&home, paused(now() + 3000));
+    let (asked, token_url) = answer_once("200 OK", r#"{"token":"pk.new"}"#);
+    let (arrived, _) = send_for_a_user(&home, &token_url);
+    assert!(!arrived, "sent during the pause");
+    assert!(
+        asked.recv_timeout(Duration::from_millis(100)).is_err(),
+        "asked during the pause"
+    );
+
+    save_cli_token_state(&home, paused(1));
+    let (received, url) = events_server(true);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert_eq!(sent_with(&received), "pk.new");
+    assert_eq!(cli_token_state(&home, "pk.new")["failures"], 0);
 }

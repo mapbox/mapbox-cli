@@ -47,6 +47,14 @@ const REF_ARG: &str = "ref";
 const FORCE_ARG: &str = "force";
 const RUN: &str = "run";
 
+/// Every `workflow` subcommand's help says it is beta, not only the group's:
+/// `mapbox workflow run x --help` is often the first page someone reads.
+fn beta(about: &str) -> String {
+    format!("{about} (beta)")
+}
+
+const BETA_NOTE: &str = "Beta and in development, and not recommended for use.";
+
 pub fn command() -> Command {
     let name = || {
         Arg::new(NAME_ARG)
@@ -69,15 +77,17 @@ pub fn command() -> Command {
              without notice.",
         )
         .subcommand_required(true)
-        .subcommand(Command::new("list").about("List installed workflows"))
+        .subcommand(Command::new("list").about(beta("List installed workflows")))
         .subcommand(
             Command::new("show")
-                .about("Describe an installed workflow: its inputs and steps")
+                .about(beta("Describe an installed workflow: its inputs and steps"))
                 .arg(name()),
         )
         .subcommand(
             Command::new("install")
-                .about("Install a workflow from a local directory or from GitHub")
+                .about(beta(
+                    "Install a workflow from a local directory or from GitHub",
+                ))
                 .arg(
                     Arg::new(SOURCE_ARG)
                         .value_name("SOURCE")
@@ -118,7 +128,7 @@ pub fn command() -> Command {
         )
         .subcommand(
             Command::new("uninstall")
-                .about("Remove an installed workflow")
+                .about(beta("Remove an installed workflow"))
                 .arg(Arg::new(NAME_ARG).value_name("NAME").required(true).help(
                     "Name of an installed workflow, or the directory it was installed \
                              from",
@@ -129,14 +139,14 @@ pub fn command() -> Command {
         )
         .subcommand(
             Command::new(RUN)
-                .about("Run an installed workflow")
-                .long_about(
+                .about(beta("Run an installed workflow"))
+                .long_about(format!(
                     "Run an installed workflow, giving each of its inputs as a flag: \
                      `mapbox workflow run copy-style --style-id <id> --from-profile source \
                      --to-profile target`.\n\n\
                      `mapbox workflow run <name> --help` lists that workflow's flags, and \
-                     `--dry-run` prints its plan without running a step.",
-                )
+                     `--dry-run` prints its plan without running a step.\n\n{BETA_NOTE}",
+                ))
                 .subcommand_value_name("NAME")
                 .subcommand_help_heading("Workflows")
                 .subcommand_required(true)
@@ -152,14 +162,14 @@ pub fn command() -> Command {
 /// input and a misspelled flag read as they do for every other command.
 fn run_command(workflow: &definition::Workflow) -> Command {
     let mut command = Command::new(workflow.name.clone())
-        .about(workflow.summary.clone())
+        .about(beta(&workflow.summary))
         .arg(executor::dry_run_arg(
             "Check the workflow and its inputs and print the plan, then exit without \
              running a step",
         ));
     if let Some(description) = &workflow.description {
         command = command.long_about(format!(
-            "{}\n\n{}",
+            "{}\n\n{}\n\n{BETA_NOTE}",
             workflow.summary,
             prose::render(description, false)
         ));
@@ -833,6 +843,22 @@ mod tests {
         assert_eq!(uninstall_name("./workflow/copy-style/"), "copy-style");
         // No directory name at all: left as typed, for the name check to refuse.
         assert_eq!(uninstall_name(".."), "..");
+    }
+
+    #[test]
+    fn every_subcommand_says_it_is_beta_in_its_help() {
+        let mut workflow = command();
+        for sub in workflow.get_subcommands_mut() {
+            let name = sub.get_name().to_string();
+            assert!(sub.render_help().to_string().contains("beta"), "{name} -h");
+            assert!(
+                sub.render_long_help()
+                    .to_string()
+                    .to_lowercase()
+                    .contains("beta"),
+                "{name} --help"
+            );
+        }
     }
 
     #[test]

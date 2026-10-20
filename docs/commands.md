@@ -5012,7 +5012,7 @@ error instead of a summary.
 
 ```
 NAME        SUMMARY
-copy-style  Copy a style from one account to another
+copy-style  Copy a style, with its fonts and icons, from one account to another
 ```
 
 </td><td>
@@ -5020,10 +5020,11 @@ copy-style  Copy a style from one account to another
 ```json
 [
   {
+    "commit": "4c8dd090573afc073465ab66f105088156cf92cb",
     "name": "copy-style",
     "path": "/Users/me/.mapbox/workflows/copy-style",
     "source": "github:mapbox/mapbox-cli@main",
-    "summary": "Copy a style from one account to another"
+    "summary": "Copy a style, with its fonts and icons, from one account to another"
   }
 ]
 ```
@@ -5067,7 +5068,10 @@ of these is `invalid_workflow`, with every problem listed at once.
 | `--force` | Replace a workflow that is already installed. |
 | `--dry-run` | Check the workflow and list the files it would write, then exit. |
 
-The repository is read as one tarball through the GitHub API.
+The ref is resolved to a commit first, and that commit is read as one tarball
+through the GitHub API, so a branch that moves in between cannot mix the two.
+The commit is recorded beside the workflow in `.install.json` and reported as
+`commit` by `install` and `list` (`null` for a local install).
 `mapbox/mapbox-cli` is public and needs no token. For a private repository
 named with `--repo`, set `GH_TOKEN` or `GITHUB_TOKEN`. It is sent only to
 `api.github.com`. Without one, a private repository answers 404,
@@ -5110,6 +5114,7 @@ Files   README.md, scripts/copy_style.py, workflow.yaml
 
 ```json
 {
+  "commit": null,
   "dry_run": false,
   "files": [
     "README.md",

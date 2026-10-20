@@ -297,14 +297,19 @@ fn source_label(meta: &store::Meta) -> String {
 }
 
 fn source_text(meta: &store::Meta) -> String {
-    match &meta.git_ref {
-        Some(_) => source_label(meta),
-        None => tilde(Path::new(&meta.source)),
+    match (&meta.git_ref, &meta.commit) {
+        (Some(_), Some(commit)) => format!(
+            "{} (commit {})",
+            source_label(meta),
+            // `.install.json` is a file anyone can edit, so not a byte slice.
+            commit.chars().take(12).collect::<String>()
+        ),
+        (Some(_), None) => source_label(meta),
+        (None, _) => tilde(Path::new(&meta.source)),
     }
 }
 
-/// Rows of cells, each column padded to its widest cell. Padding is
-/// measured before painting, so escapes never skew the alignment.
+/// How a cell in [`columns`] is painted.
 #[derive(Clone, Copy)]
 enum Tone {
     Plain,
@@ -322,6 +327,8 @@ impl Tone {
     }
 }
 
+/// Rows of cells, each column padded to its widest cell. Padding is
+/// measured before painting, so escapes never skew the alignment.
 fn columns(rows: &[Vec<(String, Tone)>], color: bool) -> String {
     let widths: Vec<usize> = (0..rows.iter().map(Vec::len).max().unwrap_or(0))
         .map(|column| {
@@ -389,6 +396,7 @@ fn list(mode: Mode) -> Result<()> {
                     "name": name,
                     "summary": found.workflow.summary,
                     "source": source_label(&found.meta),
+                    "commit": found.meta.commit,
                     "path": found.root,
                 }));
                 table.push(vec![
@@ -538,6 +546,7 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
             "summary": workflow.summary,
             "description": workflow.description,
             "source": source_label(&found.meta),
+                    "commit": found.meta.commit,
             "path": found.root,
             "inputs": inputs,
             "steps": steps,
@@ -596,6 +605,7 @@ fn install(app: &Command, matches: &ArgMatches, debug: bool, mode: Mode) -> Resu
     let summary = json!({
         "name": workflow.name,
         "source": source_label(&package.meta),
+                    "commit": package.meta.commit,
         "path": target,
         "files": files,
         "dry_run": dry_run,

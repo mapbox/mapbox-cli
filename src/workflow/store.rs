@@ -62,6 +62,11 @@ pub struct Meta {
     pub source: String,
     #[serde(default, rename = "ref")]
     pub git_ref: Option<String>,
+    /// The commit `git_ref` named when it was installed, since a branch
+    /// moves. Absent for a local install, and for one made before it was
+    /// recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
     pub installed_at: u64,
 }
 
@@ -202,6 +207,7 @@ pub fn read_local(dir: &Path) -> Result<Package> {
         Meta {
             source: dir.display().to_string(),
             git_ref: None,
+            commit: None,
             installed_at: now(),
         },
     )
@@ -269,43 +275,32 @@ fn fetch_github_from(
     check_repo(repo)?;
     check_ref(git_ref)?;
 
-    let url = format!("{base}/repos/{repo}/tarball/{git_ref}");
-    if debug {
-        eprintln!("[debug] GET {url}");
-    }
+    // The commit first, then the tarball of that commit rather than of the
+    // ref, so what is recorded is what was downloaded even if the branch
+    // moves in between.
     let token = github_token();
-    let mut request = http::client()?
-        .get(&url)
-        .header("Accept", "application/vnd.github+json");
-    if let Some(token) = &token {
-        request = request.bearer_auth(token);
+    let commit = get(
+        &format!("{base}/repos/{repo}/commits/{git_ref}"),
+        "application/vnd.github.sha",
+        token.as_deref(),
+        (repo, git_ref),
+        debug,
+    )?
+    .text()
+    .map_err(|e| anyhow!("Could not read the commit from GitHub: {e}"))?;
+    let commit = commit.trim().to_string();
+    if !is_commit_id(&commit) {
+        return Err(anyhow!(
+            "GitHub answered `{git_ref}` in {repo} with something that is not a commit id"
+        ));
     }
-    let response = http::send(request)
-        .map_err(|e| executor::transport_failure("Could not reach GitHub", e))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        // A private repository answers 404 to a request without a token, the
-        // same as a ref that does not exist, so both are named.
-        let message = match (status.as_u16(), &token) {
-            (404, None) => format!(
-                "GitHub found no `{git_ref}` in {repo}. If the repository is private, set \
-                 GITHUB_TOKEN to a token that can read it."
-            ),
-            (404, Some(_)) => format!(
-                "GitHub found no `{git_ref}` in {repo}, or the token in GH_TOKEN/GITHUB_TOKEN \
-                 cannot read it."
-            ),
-            _ => format!("GitHub answered {status} for {url}."),
-        };
-        let mut remedy = Remedy::default();
-        if token.is_none() {
-            remedy = remedy.with_fix("export GITHUB_TOKEN=\"$(gh auth token)\"");
-        }
-        return Err(CliError::http(status.as_u16(), &message)
-            .with_remedy(remedy)
-            .into());
-    }
+    let response = get(
+        &format!("{base}/repos/{repo}/tarball/{commit}"),
+        "application/vnd.github+json",
+        token.as_deref(),
+        (repo, git_ref),
+        debug,
+    )?;
 
     let mut bytes = vec![];
     response
@@ -319,9 +314,63 @@ fn fetch_github_from(
         Meta {
             source: format!("github:{repo}"),
             git_ref: Some(git_ref.to_string()),
+            commit: Some(commit),
             installed_at: now(),
         },
     )
+}
+
+/// A full SHA-1 or SHA-256 commit id, as `application/vnd.github.sha`
+/// answers. Checked because it goes into the next URL and into
+/// `.install.json`.
+fn is_commit_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// A GET to GitHub's API, with an error that says what `asked` — the
+/// repository and the ref — when it fails.
+fn get(
+    url: &str,
+    accept: &str,
+    token: Option<&str>,
+    asked: (&str, &str),
+    debug: bool,
+) -> Result<reqwest::blocking::Response> {
+    let (repo, git_ref) = asked;
+    if debug {
+        eprintln!("[debug] GET {url}");
+    }
+    let mut request = http::client()?.get(url).header("Accept", accept);
+    if let Some(token) = token {
+        request = request.bearer_auth(token);
+    }
+    let response = http::send(request)
+        .map_err(|e| executor::transport_failure("Could not reach GitHub", e))?;
+
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
+    }
+    // A private repository answers 404 to a request without a token, the
+    // same as a ref that does not exist, so both are named.
+    let message = match (status.as_u16(), token) {
+        (404, None) => format!(
+            "GitHub found no `{git_ref}` in {repo}. If the repository is private, set \
+             GITHUB_TOKEN to a token that can read it."
+        ),
+        (404, Some(_)) => format!(
+            "GitHub found no `{git_ref}` in {repo}, or the token in GH_TOKEN/GITHUB_TOKEN \
+             cannot read it."
+        ),
+        _ => format!("GitHub answered {status} for {url}."),
+    };
+    let mut remedy = Remedy::default();
+    if token.is_none() {
+        remedy = remedy.with_fix("export GITHUB_TOKEN=\"$(gh auth token)\"");
+    }
+    Err(CliError::http(status.as_u16(), &message)
+        .with_remedy(remedy)
+        .into())
 }
 
 fn unsafe_entry(path: &Path) -> anyhow::Error {
@@ -553,6 +602,92 @@ mod tests {
             builder.append_data(&mut header, path, *bytes).unwrap();
         }
         builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    /// A loopback stand-in for GitHub's API that answers each request in
+    /// turn, closing the connection after each so every one is its own, and
+    /// returns the request lines it was sent.
+    fn serve(
+        responses: Vec<(&'static str, Vec<u8>)>,
+    ) -> (std::thread::JoinHandle<Vec<String>>, String) {
+        use std::io::Write as _;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut seen = vec![];
+            for (content_type, body) in responses {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let mut head = vec![];
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    match std::io::Read::read(&mut stream, &mut byte) {
+                        Ok(1) => head.push(byte[0]),
+                        _ => break,
+                    }
+                }
+                let head = String::from_utf8_lossy(&head).into_owned();
+                seen.push(head.lines().next().unwrap_or_default().to_string());
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(&body);
+            }
+            seen
+        });
+        (server, base)
+    }
+
+    /// A branch moves, so the install records the commit it resolved to,
+    /// and downloads that commit rather than whatever the branch is by then.
+    #[test]
+    fn a_github_install_records_the_commit_it_downloaded() {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let tarball = archive(&[(
+            "mapbox-mapbox-cli-0123456/workflow/demo/workflow.yaml",
+            b"version: 1\nname: demo\nsummary: d\nsteps:\n  - id: a\n    command: config list\n",
+        )]);
+        let (server, base) = serve(vec![
+            (
+                "application/vnd.github.sha",
+                format!("{commit}\n").into_bytes(),
+            ),
+            ("application/x-gzip", tarball),
+        ]);
+
+        let package =
+            fetch_github_from(&base, "demo", "mapbox/mapbox-cli", "main", false).expect("fetched");
+        assert_eq!(package.meta.git_ref.as_deref(), Some("main"));
+        assert_eq!(package.meta.commit.as_deref(), Some(commit));
+        assert_eq!(
+            server.join().unwrap(),
+            [
+                "GET /repos/mapbox/mapbox-cli/commits/main HTTP/1.1".to_string(),
+                format!("GET /repos/mapbox/mapbox-cli/tarball/{commit} HTTP/1.1"),
+            ]
+        );
+    }
+
+    #[test]
+    fn only_a_full_commit_id_is_taken() {
+        assert!(is_commit_id(&"a".repeat(40)));
+        assert!(is_commit_id(&"0".repeat(64)));
+        for bad in ["0123456", "main", "../../x", &"g".repeat(40)] {
+            assert!(!is_commit_id(bad), "{bad}");
+        }
+    }
+
+    /// An install from before the commit was recorded still loads.
+    #[test]
+    fn an_older_install_record_still_reads() {
+        let meta: Meta = serde_json::from_str(
+            r#"{"source":"github:mapbox/mapbox-cli","ref":"main","installed_at":1}"#,
+        )
+        .expect("parses");
+        assert_eq!(meta.commit, None);
     }
 
     #[test]

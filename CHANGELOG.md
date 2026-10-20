@@ -4,12 +4,13 @@ What changed, and what it means for scripts that already use this tool.
 Newest first, written by hand — the commit subject rarely explains why a
 change matters.
 
-Versions follow [semantic versioning](https://semver.org/). Pre-1.0 rule:
-while the version starts with `0.`, a breaking change raises the minor
-number (`0.1.0` → `0.2.0`); everything else raises the patch. What counts as
-breaking is [written down in CONTRIBUTING.md](CONTRIBUTING.md#compatibility) — briefly,
-command names, flags, the two output modes and the exit codes are promises;
-the Mapbox APIs' own response bodies are not.
+Versions follow [semantic versioning](https://semver.org/): a breaking
+change raises the major number (`1.0.0` → `2.0.0`), a new feature the minor,
+and a fix the patch. Before 1.0, a breaking change raised the minor number
+instead. What counts as breaking is [written down in
+CONTRIBUTING.md](CONTRIBUTING.md#compatibility) — briefly, command names,
+flags, the two output modes and the exit codes are promises; the Mapbox APIs'
+own response bodies, and commands marked beta, are not.
 
 Cutting a release adds a `## <version> - <date>` heading below
 `## Unreleased`, which stays in place so the next change has somewhere to go.

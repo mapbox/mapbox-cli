@@ -93,12 +93,16 @@ and data-flow diagram (OAuth login, credential storage, API requests).
 
 ## Compatibility
 
-While this is `0.x`, a breaking change bumps the minor version
-(`0.1.5` → `0.2.0`); everything else bumps the patch. From 1.0 on, plain
-[semver](https://semver.org/). Breaking: a command/flag removed, renamed,
+Versions follow [semver](https://semver.org/): a breaking change bumps the
+major version (`1.4.2` → `2.0.0`), a new feature the minor, and a fix the
+patch. Breaking: a command/flag removed, renamed,
 or given a new default; an exit code or stdout/stderr change; a `--schema`
 field removed or repurposed. Not breaking: new commands, new API response
 fields, new `--schema` fields, and any wording.
+
+A command marked beta, such as `mapbox workflow`, is outside this promise
+until the label is removed: it says so in its help and on every run, and it
+may change or be removed in any release.
 
 Deprecated commands and endpoints print a warning before the request goes
 out, and are marked `[deprecated]` in `--help` and `--schema`.

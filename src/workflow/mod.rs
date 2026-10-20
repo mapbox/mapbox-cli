@@ -305,7 +305,24 @@ fn source_text(meta: &store::Meta) -> String {
 
 /// Rows of cells, each column padded to its widest cell. Padding is
 /// measured before painting, so escapes never skew the alignment.
-fn columns(rows: &[Vec<(String, &'static str)>], color: bool) -> String {
+#[derive(Clone, Copy)]
+enum Tone {
+    Plain,
+    Bold,
+    Muted,
+}
+
+impl Tone {
+    fn escape(self) -> String {
+        match self {
+            Tone::Plain => String::new(),
+            Tone::Bold => style::BOLD.to_string(),
+            Tone::Muted => style::muted(),
+        }
+    }
+}
+
+fn columns(rows: &[Vec<(String, Tone)>], color: bool) -> String {
     let widths: Vec<usize> = (0..rows.iter().map(Vec::len).max().unwrap_or(0))
         .map(|column| {
             rows.iter()
@@ -320,16 +337,13 @@ fn columns(rows: &[Vec<(String, &'static str)>], color: bool) -> String {
             let last = row.len().saturating_sub(1);
             row.iter()
                 .enumerate()
-                .map(|(column, (cell, paint))| {
+                .map(|(column, (cell, tone))| {
                     let pad = if column == last {
                         String::new()
                     } else {
                         " ".repeat(widths[column] - cell.chars().count() + 2)
                     };
-                    format!(
-                        "{}{pad}",
-                        style::paint(cell, paint, color && !paint.is_empty())
-                    )
+                    format!("{}{pad}", style::paint(cell, &tone.escape(), color))
                 })
                 .collect::<String>()
         })
@@ -365,8 +379,8 @@ fn list(mode: Mode) -> Result<()> {
     let color = output::result_in_color();
     let mut rows = vec![];
     let mut table = vec![vec![
-        ("NAME".to_string(), style::BOLD),
-        ("SUMMARY".to_string(), style::BOLD),
+        ("NAME".to_string(), Tone::Bold),
+        ("SUMMARY".to_string(), Tone::Bold),
     ]];
     for (name, loaded) in &installed {
         match loaded {
@@ -378,15 +392,15 @@ fn list(mode: Mode) -> Result<()> {
                     "path": found.root,
                 }));
                 table.push(vec![
-                    (name.clone(), ""),
-                    (found.workflow.summary.clone(), ""),
+                    (name.clone(), Tone::Plain),
+                    (found.workflow.summary.clone(), Tone::Plain),
                 ]);
             }
             Err(e) => {
                 rows.push(json!({ "name": name, "error": format!("{e:#}") }));
                 table.push(vec![
-                    (name.clone(), ""),
-                    (format!("cannot load: {e:#}"), style::DIM),
+                    (name.clone(), Tone::Plain),
+                    (format!("cannot load: {e:#}"), Tone::Muted),
                 ]);
             }
         }
@@ -439,7 +453,7 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
     let mut text = format!(
         "{}\n{}",
         heading(&workflow.name, color),
-        style::paint(&workflow.summary, style::DIM, color)
+        style::paint(&workflow.summary, &style::muted(), color)
     );
     if let Some(description) = &workflow.description {
         text.push_str(&format!("\n\n{}", prose::render(description, color)));
@@ -452,7 +466,7 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
         // Required inputs first: they are the ones a run cannot do without.
         let mut ordered: Vec<_> = workflow.inputs.iter().collect();
         ordered.sort_by_key(|(name, input)| (!input.required, name.as_str()));
-        let rows: Vec<Vec<(String, &'static str)>> = ordered
+        let rows: Vec<Vec<(String, Tone)>> = ordered
             .into_iter()
             .map(|(name, input)| {
                 let mut kind = input.kind.as_str().to_string();
@@ -463,9 +477,9 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
                     kind.push_str(&format!(", default {default}"));
                 }
                 vec![
-                    (format!("  {name}"), ""),
-                    (kind, style::DIM),
-                    (input.description.clone().unwrap_or_default(), ""),
+                    (format!("  {name}"), Tone::Plain),
+                    (kind, Tone::Muted),
+                    (input.description.clone().unwrap_or_default(), Tone::Plain),
                 ]
             })
             .collect();
@@ -474,7 +488,7 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
     }
 
     text.push_str(&format!("\n\n{}\n", heading("Steps", color)));
-    let rows: Vec<Vec<(String, &'static str)>> = workflow
+    let rows: Vec<Vec<(String, Tone)>> = workflow
         .steps
         .iter()
         .enumerate()
@@ -486,9 +500,9 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
                         index + 1,
                         step.name.as_deref().unwrap_or(&step.id)
                     ),
-                    "",
+                    Tone::Plain,
                 ),
-                (step.label(), style::DIM),
+                (step.label(), Tone::Muted),
             ]
         })
         .collect();
@@ -505,10 +519,13 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
     text.push_str(&columns(
         &[
             vec![
-                ("  Source".to_string(), ""),
-                (source_text(&found.meta), style::DIM),
+                ("  Source".to_string(), Tone::Plain),
+                (source_text(&found.meta), Tone::Muted),
             ],
-            vec![("  Path".to_string(), ""), (tilde(&found.root), style::DIM)],
+            vec![
+                ("  Path".to_string(), Tone::Plain),
+                (tilde(&found.root), Tone::Muted),
+            ],
         ],
         color,
     ));
@@ -727,14 +744,14 @@ fn run_workflow(
             plan["results"] = json!(results);
         }
         let color = output::result_in_color();
-        let input_rows: Vec<Vec<(String, &'static str)>> = inputs
+        let input_rows: Vec<Vec<(String, Tone)>> = inputs
             .iter()
             .map(|(name, value)| {
                 let shown = template::as_text(value).unwrap_or_else(|| "(none)".to_string());
-                vec![(format!("  {name}"), ""), (shown, "")]
+                vec![(format!("  {name}"), Tone::Plain), (shown, Tone::Plain)]
             })
             .collect();
-        let step_rows: Vec<Vec<(String, &'static str)>> = workflow
+        let step_rows: Vec<Vec<(String, Tone)>> = workflow
             .steps
             .iter()
             .enumerate()
@@ -746,7 +763,7 @@ fn run_workflow(
                             index + 1,
                             step.name.as_deref().unwrap_or(&step.id)
                         ),
-                        "",
+                        Tone::Plain,
                     ),
                     (
                         if step.dry_run {
@@ -754,7 +771,7 @@ fn run_workflow(
                         } else {
                             step.label()
                         },
-                        style::DIM,
+                        Tone::Muted,
                     ),
                 ]
             })
@@ -812,12 +829,12 @@ mod tests {
     fn columns_line_up_with_color_on_or_off() {
         let rows = vec![
             vec![
-                ("NAME".to_string(), style::BOLD),
-                ("SUMMARY".to_string(), style::BOLD),
+                ("NAME".to_string(), Tone::Bold),
+                ("SUMMARY".to_string(), Tone::Bold),
             ],
             vec![
-                ("copy-style".to_string(), ""),
-                ("Copy a style".to_string(), ""),
+                ("copy-style".to_string(), Tone::Plain),
+                ("Copy a style".to_string(), Tone::Plain),
             ],
         ];
         let plain = columns(&rows, false);

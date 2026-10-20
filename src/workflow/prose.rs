@@ -112,11 +112,11 @@ fn paint_spans(line: &str, inside: &mut bool, color: bool) -> String {
     }
     let mut out = String::new();
     if *inside {
-        out.push_str(style::ACCENT);
+        out.push_str(&style::accent());
     }
     for c in line.chars() {
         if c == '`' && !*inside {
-            out.push_str(style::ACCENT);
+            out.push_str(&style::accent());
             out.push(c);
         } else if c == '`' {
             out.push(c);
@@ -157,7 +157,7 @@ pub fn render(text: &str, color: bool) -> String {
                 .map(|command| {
                     format!(
                         "{COMMAND_INDENT}{}",
-                        style::paint(command, style::ACCENT, color)
+                        style::paint(command, &style::accent(), color)
                     )
                 })
                 .collect::<Vec<_>>()
@@ -219,7 +219,7 @@ Not copied:
     #[test]
     fn color_changes_nothing_but_the_escapes() {
         let colored = render("See `warnings` and `a b`.\n\n  mapbox x", true);
-        assert!(colored.contains(style::ACCENT), "{colored:?}");
+        assert!(colored.contains(&style::accent()), "{colored:?}");
         assert_eq!(
             style::strip(&colored),
             render("See `warnings` and `a b`.\n\n  mapbox x", false)

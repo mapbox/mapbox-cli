@@ -180,6 +180,11 @@ pub fn accent() -> Style {
     accent_in(current())
 }
 
+/// A step or a request that failed. Always bold.
+pub fn error() -> Style {
+    colored(current(), |p| p.error).bold()
+}
+
 /// Secondary text.
 pub fn muted() -> Style {
     muted_in(current())

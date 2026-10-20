@@ -69,10 +69,7 @@ impl Display {
         };
         eprintln!("{}", style::paint(heading, style::BOLD, self.color));
         for warning in warnings.iter() {
-            eprintln!(
-                "  {} {warning}",
-                style::paint("!", style::YELLOW, self.color)
-            );
+            eprintln!("  {} {warning}", style::paint("!", style::BOLD, self.color));
         }
         eprintln!();
     }
@@ -83,9 +80,9 @@ impl Display {
         let line = if self.live {
             format!(
                 "{} {}  {}",
-                style::paint("○", style::DIM, self.color),
-                style::paint(title, style::DIM, self.color),
-                style::paint("skipped in a dry run", style::DIM, self.color),
+                style::paint("○", &style::muted(), self.color),
+                style::paint(title, &style::muted(), self.color),
+                style::paint("skipped in a dry run", &style::muted(), self.color),
             )
         } else {
             format!(
@@ -94,7 +91,7 @@ impl Display {
                 style::paint(title, style::BOLD, self.color),
                 style::paint(
                     &format!("({label}, skipped in a dry run)"),
-                    style::DIM,
+                    &style::muted(),
                     self.color
                 ),
             )
@@ -148,7 +145,7 @@ impl Display {
                 "{} {} {}",
                 self.counter(index),
                 style::paint(title, style::BOLD, self.color),
-                style::paint(&format!("({label})"), style::DIM, self.color),
+                style::paint(&format!("({label})"), &style::muted(), self.color),
             );
         }
         view
@@ -159,13 +156,13 @@ impl Display {
     fn header(&self, title: &str, label: Option<&str>) -> String {
         let mut line = format!(
             "{} {}",
-            style::paint("▸", style::ACCENT, self.color),
+            style::paint("▸", &style::accent(), self.color),
             style::paint(title, style::BOLD, self.color),
         );
         if let Some(label) = label {
             line.push_str(&format!(
                 "  {}",
-                style::paint(label, style::DIM, self.color)
+                style::paint(label, &style::muted(), self.color)
             ));
         }
         line
@@ -174,7 +171,7 @@ impl Display {
     fn counter(&self, index: usize) -> String {
         style::paint(
             &format!("[{}/{}]", index + 1, self.total),
-            style::DIM,
+            &style::muted(),
             self.color,
         )
     }
@@ -227,15 +224,15 @@ impl StepView {
         }
         let took = elapsed(self.started.elapsed());
         let (mark, paint, text) = if succeeded {
-            ("✓", style::GREEN, took)
+            ("✓", &style::accent(), took)
         } else {
-            ("✗", style::RED, format!("failed after {took}"))
+            ("✗", &style::error(), format!("failed after {took}"))
         };
         // A blank line after, so each step reads as its own block.
         eprintln!(
             "  {} {}\n",
             style::paint(mark, paint, self.color),
-            style::paint(&text, style::DIM, self.color),
+            style::paint(&text, &style::muted(), self.color),
         );
         let _ = std::io::stderr().flush();
     }
@@ -270,7 +267,7 @@ impl Reporter {
                     .expect("warnings")
                     .push(warning.clone());
                 if self.live {
-                    format!("{} {warning}", style::paint("!", style::YELLOW, self.color))
+                    format!("{} {warning}", style::paint("!", style::BOLD, self.color))
                 } else {
                     format!("warning: {warning}")
                 }
@@ -300,8 +297,8 @@ fn draw_spinner(state: &State, color: bool) {
     };
     eprint!(
         "\r\x1b[2K  {} {}",
-        style::paint(FRAMES[state.frame], style::ACCENT, color),
-        style::paint(progress, style::DIM, color),
+        style::paint(FRAMES[state.frame], &style::accent(), color),
+        style::paint(progress, &style::muted(), color),
     );
     let _ = std::io::stderr().flush();
 }

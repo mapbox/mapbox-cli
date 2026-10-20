@@ -60,6 +60,12 @@ pub fn accent() -> String {
     theme::open(theme::accent())
 }
 
+/// The palette's error color, as an escape. Bold where 24-bit color is not
+/// known to render.
+pub fn error() -> String {
+    theme::open(theme::error())
+}
+
 /// The palette's muted color, as an escape. Empty where 24-bit color is not
 /// known to render: plain text, not a theme's `dim`.
 pub fn muted() -> String {

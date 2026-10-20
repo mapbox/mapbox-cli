@@ -50,6 +50,7 @@ const GROUPS: &[(&str, &[&str])] = &[
             "doctor",
             "completion",
             "tilesets-cli",
+            "workflow",
             "uninstall",
             "report",
             "help",
@@ -91,6 +92,7 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
         "Areas reachable from a point within a time or distance",
     ),
     ("map-match", "Snap a GPS trace to the road network"),
+    ("workflow", "Install and run multi-step workflows (beta)"),
     ("accounts", "List access tokens and their scopes"),
     (
         "generate-skills",

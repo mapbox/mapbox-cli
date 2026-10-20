@@ -15,6 +15,7 @@
 //! under the interpreter the definition settled on. It is given `MAPBOX_CLI`,
 //! the path to this binary, so it can call commands of its own.
 
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
@@ -515,6 +516,7 @@ fn find_arg<'a>(
 /// upgraded underneath an installed workflow.
 pub fn command_problems(app: &Command, workflow: &Workflow) -> Vec<String> {
     let mut problems = vec![];
+    let read_only = OnceCell::new();
 
     // An input is given as a flag beside the globals, so it cannot take one
     // of their names — clap would refuse to build the command at all.
@@ -544,16 +546,14 @@ pub fn command_problems(app: &Command, workflow: &Workflow) -> Vec<String> {
                 continue;
             }
         };
-        // A dry run sends every step it runs, so a command step may be in one
-        // only if its command changes nothing — which is exactly a command
-        // without a `--dry-run` of its own.
-        let writes = command
-            .get_arguments()
-            .any(|arg| arg.get_long() == Some(crate::executor::DRY_RUN_ARG));
-        if step.dry_run && writes {
+        if step.dry_run
+            && !read_only
+                .get_or_init(read_only_commands)
+                .contains(&canonical(app, path))
+        {
             problems.push(format!(
-                "step `{}`: `dry_run` needs a command that changes nothing, and `mapbox {}` \
-                 changes something",
+                "step `{}`: `dry_run` needs a command known to change nothing, and `mapbox {}` \
+                 is not one",
                 step.id,
                 path.join(" ")
             ));
@@ -571,6 +571,52 @@ pub fn command_problems(app: &Command, workflow: &Workflow) -> Vec<String> {
         }
     }
     problems
+}
+
+/// Hand-written commands a `dry_run` step may run: each reads local state or
+/// sends only a `GET`. Kept as a list rather than inferred, because what a
+/// command lacks says nothing about what it does — `tilesets-cli` has no
+/// `--dry-run` either, and hands its arguments to a program that may write.
+const READ_ONLY_COMMANDS: &[&str] = &[
+    "auth whoami",
+    "auth profiles",
+    "config get",
+    "config list",
+    "history list",
+    "history show",
+];
+
+/// Every command a dry run may send: [`READ_ONLY_COMMANDS`] and every API
+/// operation whose method is `GET`.
+fn read_only_commands() -> Vec<String> {
+    let mut commands: Vec<String> = READ_ONLY_COMMANDS.iter().map(|c| c.to_string()).collect();
+    // The tree being checked was built from these, so a failure here has
+    // already been reported by the parse; nothing is then allowed.
+    if let Ok(specs) = crate::spec::effective_services() {
+        commands.extend(
+            specs
+                .iter()
+                .flat_map(|spec| &spec.operations)
+                .filter(|op| op.method.eq_ignore_ascii_case("GET"))
+                .map(|op| op.command()),
+        );
+    }
+    commands
+}
+
+/// `path` with each alias replaced by the command's own name, so `auth
+/// status` is checked as the `auth whoami` it is.
+fn canonical(app: &Command, path: &[String]) -> String {
+    let mut current = app;
+    let mut names = vec![];
+    for segment in path {
+        let Some(next) = current.find_subcommand(segment) else {
+            break;
+        };
+        names.push(next.get_name().to_string());
+        current = next;
+    }
+    names.join(" ")
 }
 
 /// A step's arguments as the child's command line.
@@ -664,22 +710,43 @@ mod tests {
     }
 
     /// A dry run sends every step it runs, so a command step can be in one
-    /// only if its command has no `--dry-run` of its own to hold back.
+    /// only if its command is known to change nothing.
     #[test]
-    fn only_a_command_that_changes_nothing_runs_in_a_dry_run() {
+    fn only_a_command_known_to_change_nothing_runs_in_a_dry_run() {
         let found = command_problems(
             &app(),
             &workflow(
                 "  - id: read\n    command: styles get\n    args: { style-id: x }\n    dry_run: true\n\
-                 \x20 - id: write\n    command: styles create\n    dry_run: true\n",
+                 \x20 - id: local\n    command: config list\n    dry_run: true\n\
+                 \x20 - id: alias\n    command: auth status\n    dry_run: true\n\
+                 \x20 - id: write\n    command: styles create\n    dry_run: true\n\
+                 \x20 - id: passthrough\n    command: tilesets-cli\n    dry_run: true\n",
             ),
         )
         .join("\n");
-        assert!(
-            found.contains("step `write`: `dry_run` needs a command that changes nothing"),
-            "{found}"
-        );
-        assert!(!found.contains("step `read`"), "{found}");
+        for refused in ["write", "passthrough"] {
+            assert!(
+                found.contains(&format!(
+                    "step `{refused}`: `dry_run` needs a command known to change nothing"
+                )),
+                "{found}"
+            );
+        }
+        for allowed in ["read", "local", "alias"] {
+            assert!(!found.contains(&format!("step `{allowed}`")), "{found}");
+        }
+    }
+
+    /// The list names real commands; one renamed out from under it would
+    /// silently stop being allowed.
+    #[test]
+    fn every_read_only_command_exists() {
+        let app = app();
+        for command in READ_ONLY_COMMANDS {
+            let path: Vec<String> = command.split(' ').map(String::from).collect();
+            assert_eq!(canonical(&app, &path), *command, "{command}");
+            assert!(leaf(&app, &path).is_ok(), "{command}");
+        }
     }
 
     #[test]

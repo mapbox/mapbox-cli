@@ -37,8 +37,9 @@ that may never merge. They are not releases and are not listed here.
   optional `result` template is what text mode prints; `-o json` prints its
   outputs. A command step's `save: <file>` keeps its stdout, such as a
   style's ZIP, as a file for later steps, in a working directory removed
-  when the run ends; a command step may be marked `dry_run` when its command
-  changes nothing. The
+  when the run ends; a command step may be marked `dry_run` only when its command
+  is known to change nothing: an API `GET`, or a local read such as
+  `config list`. The
   generated agent skill leaves `workflow` out. The first one published is
   `copy-style`, which copies a style between accounts with its custom fonts
   and icons, and on a partial failure lists what it created and the

@@ -90,8 +90,8 @@ pub struct Step {
     pub stdin: Option<Value>,
     /// Runs under `--dry-run` too. A script is told so through
     /// [`DRY_RUN_ENV`] and promises to write nothing; a command step may be
-    /// marked only if its command changes nothing, which
-    /// [`super::runner::command_problems`] checks against the command tree.
+    /// marked only if its command is on the read-only list that
+    /// [`super::runner::command_problems`] checks.
     pub dry_run: bool,
     /// A command step's stdout, written as this file in the run's
     /// [`super::workdir`] rather than read as its output. How a binary

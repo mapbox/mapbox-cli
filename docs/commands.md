@@ -5198,7 +5198,9 @@ mapbox workflow run copy-style --style-id cmm28c5rm00bj01qz9hwp69qc \
 `--dry-run` prints the plan: the inputs as they were read, and each step with
 its arguments as written. A step marked `dry_run` in its `workflow.yaml` runs
 for real, so the plan can show what the rest would do with real data: a
-command step only if its command changes nothing, and a script step with
+command step only if its command is known to change nothing (an API command
+that sends a `GET`, or a local read such as `config list`; never
+`tilesets-cli`), and a script step with
 `MAPBOX_WORKFLOW_DRY_RUN=1` in its environment and the promise to write
 nothing. Their outputs are under `results` in `-o json`. Every other step is
 skipped. `copy-style` marks all of its steps, so its dry run downloads the

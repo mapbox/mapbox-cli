@@ -160,6 +160,6 @@ result: |
 
 `mapbox workflow run --dry-run` skips every step unless it is marked `dry_run: true`. A marked step runs for real, so its output is under `results` in the plan and a later marked step can plan with real data:
 
-- A marked command step runs as it would anyway, so it must be a command that changes nothing: one without a `--dry-run` of its own, such as `styles get`, `styles download` or `fonts list`. `install` refuses a writing command marked `dry_run`.
+- A marked command step runs as it would anyway, so it must be a command the CLI knows changes nothing: an API command that sends a `GET`, such as `styles get`, `styles download` or `fonts list`, or one of `auth whoami`, `auth profiles`, `config get`, `config list`, `history list` and `history show`. `install` refuses any other command marked `dry_run`, including `tilesets-cli`.
 - A marked script step runs with `MAPBOX_WORKFLOW_DRY_RUN=1` in its environment and must write nothing then: read what it needs, and say on stderr what it would do. That is the script's promise; the runner cannot check it.
 - A marked step can read only the outputs of earlier marked steps, since the others do not run. `install` refuses one that reads any other.

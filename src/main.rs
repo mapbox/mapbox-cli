@@ -1563,7 +1563,7 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                     CliAttempt::Unusable { error, why, .. } if !caller.user_fallback() => {
                         // It never sends the user's token, so it goes on as
                         // if they had none.
-                        without_cli_token(*error, &why, dry_run, false).map_err(|e| *e)?;
+                        without_cli_token(*error, &why, dry_run, false, false).map_err(|e| *e)?;
                         return executor::execute(
                             op,
                             op_matches,
@@ -1603,7 +1603,8 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
 
             if let Some((failure, why)) = cli_failure {
                 if let Some(note) =
-                    without_cli_token(*failure, &why, dry_run, token.is_some()).map_err(|e| *e)?
+                    without_cli_token(*failure, &why, dry_run, token.is_some(), true)
+                        .map_err(|e| *e)?
                 {
                     output::progress(&note);
                 }
@@ -1801,9 +1802,13 @@ fn without_cli_token(
     why: &str,
     dry_run: bool,
     own_token: bool,
+    user_fallback: bool,
 ) -> std::result::Result<Option<String>, Box<CliError>> {
     if dry_run {
         Ok(None)
+    } else if !user_fallback {
+        // Logging in would not help: this caller never sends the user's token.
+        Err(Box::new(error))
     } else if own_token {
         Ok(Some(format!("{why} Using your own token instead.")))
     } else {
@@ -3075,15 +3080,24 @@ mod cli_attempt_tests {
     #[test]
     fn without_a_token_of_their_own_the_user_is_told_to_log_in_unless_it_is_a_dry_run() {
         let error = || CliError::new("cli_token_forbidden", "refused");
-        let failed = without_cli_token(error(), "why", false, false).expect_err("no token");
+        let failed = without_cli_token(error(), "why", false, false, true).expect_err("no token");
         assert_eq!(failed.code, "cli_token_forbidden");
         assert_eq!(failed.fix, no_own_token_remedy().fix);
         assert!(matches!(
-            without_cli_token(error(), "why", true, false),
+            without_cli_token(error(), "why", true, false, true),
             Ok(None)
         ));
-        let note = without_cli_token(error(), "Why.", false, true).expect("own token");
+        let note = without_cli_token(error(), "Why.", false, true, true).expect("own token");
         assert_eq!(note.as_deref(), Some("Why. Using your own token instead."));
+
+        let no_fallback =
+            without_cli_token(error(), "why", false, true, false).expect_err("never falls back");
+        assert_eq!(no_fallback.code, "cli_token_forbidden");
+        assert_eq!(no_fallback.fix, None);
+        assert!(matches!(
+            without_cli_token(error(), "why", true, false, false),
+            Ok(None)
+        ));
     }
 
     #[test]

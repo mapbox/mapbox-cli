@@ -124,7 +124,7 @@ impl HttpSink {
 }
 
 pub(crate) fn deliver(line: &str) {
-    match cli_token::no_token_for(cli_token::TELEMETRY_CALLER) {
+    match cli_token::no_token_for(&cli_token::TELEMETRY_CALLER) {
         None => HttpSink { url: send_url() }.deliver(line),
         Some(reason) => log_delivery(line, json!({ "stage": "no_token", "reason": reason })),
     }
@@ -183,7 +183,7 @@ fn post(url: &str, event: &serde_json::Value) -> Result<(u16, Duration), String>
     // Reset when the request is built, so the time covers only the POST, not
     // a token fetch before it.
     let started = std::cell::Cell::new(Instant::now());
-    let response = cli_token::send(cli_token::TELEMETRY_CALLER, || {
+    let response = cli_token::send(&cli_token::TELEMETRY_CALLER, || {
         started.set(Instant::now());
         client
             .post(url)

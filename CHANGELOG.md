@@ -48,7 +48,8 @@ that may never merge. They are not releases and are not listed here.
     refusal with no different token served, stop telemetry sending and
     fetching for an hour. The count is telemetry's own: it never holds
     `mapbox report` or `MAPBOX_CLI_TOKEN`, and the waits an earlier dev
-    build kept in `cli-token.json` are ignored.
+    build kept in `cli-token.json` are ignored. A new token ends it, even
+    one `mapbox report` fetched.
 
 - `tilesets query` renders as a numbered list under `-o text` again, as
   documented. It had printed pretty JSON since 0.2.0, when the command moved

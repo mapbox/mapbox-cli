@@ -1545,21 +1545,24 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             let mut cli_failure = None;
             let chose_own_token = use_login || auth::typed_token(matches).is_some();
             let cli = (!chose_own_token)
-                .then(|| cli_token::for_command(&command, !dry_run))
+                .then(|| cli_token::command(&command))
                 .flatten();
-            if let Some(cli) = cli {
+            if let Some(caller) = cli {
                 let username = matches.get_one::<String>("username").cloned();
                 let attempt = try_cli_token(
                     op,
                     op_matches,
                     &command,
-                    cli,
+                    caller.token(!dry_run),
                     username.as_deref(),
                     flags,
                     mode,
                 );
                 match attempt {
                     CliAttempt::Done(result) => return result,
+                    CliAttempt::Unusable { error, .. } if !caller.user_fallback() => {
+                        return Err((*error).into())
+                    }
                     CliAttempt::Unusable { error, why, sent } => {
                         // The user already confirmed the request that was
                         // refused; sending it again with their own token is
@@ -1649,14 +1652,13 @@ enum CliAttempt {
     },
 }
 
-/// Runs a [`cli_token::Use::Preferred`] command on the CLI's token, given
-/// what [`cli_token::for_command`] found for it, by the rules in
-/// [`cli_token::send_with_cli_token`].
+/// Runs a command on the CLI's token, given what [`cli_token::Caller::token`]
+/// found for it, by the rules in [`cli_token::send_with_cli_token`].
 fn try_cli_token(
     op: &spec::Operation,
     op_matches: &clap::ArgMatches,
     command: &str,
-    cli: Result<cli_token::CommandToken, cli_token::Unavailable>,
+    cli: Result<cli_token::CliToken, cli_token::Unavailable>,
     username: Option<&str>,
     mut flags: executor::RunFlags,
     mode: output::Mode,
@@ -1681,8 +1683,7 @@ fn try_cli_token(
     if flags.dry_run {
         return CliAttempt::Done(execute(&token.token, flags));
     }
-    let sent = cli_token::send_for_command(
-        command,
+    let sent = cli_token::send_with(
         token,
         |token| {
             let result = execute(token, flags);
@@ -1777,6 +1778,8 @@ fn cli_token_unavailable(command: &str, why: &cli_token::Unavailable) -> CliErro
             "cli.mapbox.com did not return a usable one"
         }
         cli_token::Unavailable::NotFetched => "it has not been fetched yet",
+        cli_token::Unavailable::Quiet => "it failed several times in a row",
+        cli_token::Unavailable::OverrideNotPublic => "MAPBOX_CLI_TOKEN is not a public token",
     };
     CliError::new("cli_token_unavailable", provided_token(command, reason))
 }

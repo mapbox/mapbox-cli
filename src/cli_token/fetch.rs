@@ -4,7 +4,7 @@
 //! The token is published at `https://cli.mapbox.com/config/token.json` as
 //! `{"token": "pk...."}`, so rotating it needs no release. It is saved to
 //! `<config dir>/cli-token.json`, and fetched again when the saved one is
-//! missing or dead, or right after a background caller is refused.
+//! missing or dead, or right after a paced caller is refused.
 //!
 //! # A refusal
 //!
@@ -20,17 +20,22 @@
 //!
 //! # Quiet periods, per caller
 //!
-//! The token is shared, but each background caller (today only telemetry)
-//! keeps its own count of failures in a row ([`Failures`]). A failure is a
-//! fetch that found no usable token, or a refusal after which the fetch did
-//! not return a different token. A successful request resets the count, and
-//! so does a new token. After three failures in a row the caller goes quiet
-//! for an hour: it sends and fetches nothing. So while nothing changes, a
-//! caller contacts the endpoint at most three times an hour.
+//! The token is shared, but each paced caller (today only telemetry) keeps
+//! its own count of failures in a row ([`Failures`]). A failure is a fetch
+//! that found no usable token, or a refusal after which the fetch did not
+//! return a different token. A successful request resets the count. After
+//! three failures in a row the caller goes quiet for an hour: it sends and
+//! fetches nothing. So while nothing changes, a caller contacts the endpoint
+//! at most three times an hour.
 //!
-//! One caller's failures never stop another caller. A command someone is
-//! waiting on, such as `mapbox report`, keeps no count and never goes quiet
-//! ([`token_now`]).
+//! A new token resets every caller, whichever caller saved it. Each count
+//! remembers the token it was made with, and a count made with a token that
+//! is no longer on disk is treated as zero. So a caller that is quiet tries
+//! again on its next run once anyone saves a different token. The same token
+//! saved again resets nobody.
+//!
+//! One caller's failures never stop another caller. An unpaced caller, such
+//! as `mapbox report`, keeps no count and never goes quiet.
 //!
 //! A fetch that gets no response, with no token on disk, does not count: the
 //! machine is probably offline, and the next run tries again. After a
@@ -56,6 +61,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use super::TokenSource;
 use crate::{auth, http};
 
 const PRODUCTION_URL: &str = "https://cli.mapbox.com/config/token.json";
@@ -91,6 +97,12 @@ pub(crate) enum Unavailable {
     NoToken { revoked: bool },
     /// None on disk, and the caller asked not to fetch, as a dry run does.
     NotFetched,
+    /// The caller failed three times in a row and is quiet for up to an
+    /// hour.
+    Quiet,
+    /// `MAPBOX_CLI_TOKEN` is not a `pk.` token, and the caller may only
+    /// send a public one.
+    OverrideNotPublic,
 }
 
 impl std::fmt::Display for Unavailable {
@@ -104,6 +116,8 @@ impl std::fmt::Display for Unavailable {
                 write!(f, "the token endpoint did not return a usable token")
             }
             Self::NotFetched => write!(f, "it has not been fetched yet"),
+            Self::Quiet => write!(f, "it failed several times in a row"),
+            Self::OverrideNotPublic => write!(f, "MAPBOX_CLI_TOKEN is not a public token"),
         }
     }
 }
@@ -133,9 +147,7 @@ struct State {
     /// Cleared if the endpoint serves it again and it now checks valid.
     #[serde(default)]
     rejected: bool,
-    /// Each background caller's failures, keyed by the name passed to
-    /// [`token_for`]. Kept when the token changes: the count belongs to the
-    /// caller, and only that caller resets it.
+    /// Each paced caller's failures, keyed by its name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     callers: BTreeMap<String, Failures>,
     /// Whether it was written with an endpoint overridden ([`overridden`]).
@@ -156,6 +168,13 @@ struct Failures {
     /// Unix seconds before which the caller sends and fetches nothing.
     #[serde(default)]
     quiet_until: u64,
+    /// The token on disk when these failures happened. They count only while
+    /// it is still the one on disk. This is what keeps a reset safe when two
+    /// runs save at once: a run that still had the old token can write its
+    /// count back over the reset, but that count then names the old token
+    /// and holds nobody back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    token: Option<String>,
 }
 
 impl State {
@@ -165,68 +184,87 @@ impl State {
             .filter(|token| !self.rejected && is_plausible(token))
     }
 
-    fn quiet(&self, caller: &str, now: u64) -> bool {
+    /// `caller`'s failures, unless a different token was saved since.
+    fn failures(&self, caller: &str) -> Option<&Failures> {
         self.callers
             .get(caller)
+            .filter(|failures| failures.token == self.token)
+    }
+
+    fn quiet(&self, caller: &str, now: u64) -> bool {
+        self.failures(caller)
             .is_some_and(|failures| holds(failures.quiet_until, now))
     }
 
     fn fail(&mut self, caller: &str, now: u64) {
+        let token = self.token.clone();
         let failures = self.callers.entry(caller.to_owned()).or_default();
+        if failures.token != token {
+            *failures = Failures {
+                token,
+                ..Failures::default()
+            };
+        }
         failures.count += 1;
         if failures.count.is_multiple_of(FAILURES_BEFORE_QUIET) {
             failures.quiet_until = now + HOUR;
         }
     }
+
+    /// Without the failures that no longer count, so the file doesn't keep
+    /// them.
+    fn without_stale(mut self) -> State {
+        let token = self.token.clone();
+        self.callers.retain(|_, failures| failures.token == token);
+        self
+    }
 }
 
-/// The CLI's token for `caller` (today only `telemetry`): the saved one if
-/// it is not dead, otherwise a new one from the endpoint. `None` while the
-/// caller is quiet or no token is available.
-pub(crate) fn token_for(caller: &str) -> Option<String> {
+/// The CLI's token for `caller`: the saved one if it is not dead, otherwise
+/// a new one from the endpoint. A `paced` caller gets nothing while it is
+/// quiet, and a fetch that finds no usable token counts as its failure.
+pub(crate) fn token(caller: &str, paced: bool) -> Result<(String, TokenSource), Unavailable> {
     decided(caller, |state, now| {
-        acquire(state, caller, now, || get(&endpoint()), check)
+        acquire(state, caller, paced, now, || get(&endpoint()), check)
     })
 }
 
-fn decided(caller: &str, decide: impl FnOnce(&mut State, u64) -> Option<String>) -> Option<String> {
+fn decided<T>(caller: &str, decide: impl FnOnce(&mut State, u64) -> T) -> T {
     let mut state = read_state().unwrap_or_default();
     let before = state.clone();
-    let token = decide(&mut state, now());
+    let decision = decide(&mut state, now());
     save(&before, state, Some(caller));
-    token
+    decision
 }
 
-/// [`token_for`]'s logic, with the clock, the endpoint and the Tokens API
-/// passed in for tests.
+/// [`token`]'s logic, with the clock, the endpoint and the Tokens API passed
+/// in for tests.
 fn acquire(
     state: &mut State,
     caller: &str,
+    paced: bool,
     now: u64,
     get: impl FnOnce() -> Fetched,
     check: impl FnOnce(&str) -> Refusal,
-) -> Option<String> {
-    if state.quiet(caller, now) {
-        return None;
+) -> Result<(String, TokenSource), Unavailable> {
+    if paced && state.quiet(caller, now) {
+        return Err(Unavailable::Quiet);
     }
     if let Some(token) = state.usable_token() {
-        return Some(token.to_owned());
+        return Ok((token.to_owned(), TokenSource::Saved));
     }
-    let kept = state.token.clone();
-    match get() {
-        Fetched::Failed => None,
-        fetched => {
-            let token = judge(state, fetched, check);
-            match token.as_deref() {
-                None => state.fail(caller, now),
-                // A new token resets the count. The same dead token taken
-                // back does not.
-                Some(token) if Some(token) != kept.as_deref() => {
-                    state.callers.remove(caller);
-                }
-                Some(_) => {}
+    let revoked = state.rejected;
+    let fetched = get();
+    if matches!(fetched, Fetched::Failed) {
+        return Err(Unavailable::Unreachable);
+    }
+    match judge(state, fetched, check) {
+        Some(token) => Ok((token, TokenSource::Fetched)),
+        None => {
+            if paced {
+                state.fail(caller, now);
             }
-            token
+            Err(Unavailable::NoToken { revoked })
         }
     }
 }
@@ -240,12 +278,9 @@ pub(crate) fn accepted(caller: &str) {
     }
 }
 
-/// Fetches the CLI's token now, even if one is saved. This is for a command
-/// someone is waiting on, so a republished or reconfigured token is picked up
-/// right away. Quiet periods don't apply.
-///
-/// Only a token it gets is saved, and no failure is counted: the count paces
-/// background requests, and a user retrying a command must not extend it.
+/// Fetches the CLI's token now, even if one is saved, for an unpaced caller
+/// that resends after a refusal. Quiet periods don't apply, and no failure
+/// is counted.
 pub(crate) fn token_now() -> Result<String, Unavailable> {
     let mut state = read_state().unwrap_or_default();
     let before = state.clone();
@@ -306,8 +341,8 @@ fn merged(before: &State, state: State, mut disk: State, caller: Option<&str>) -
     disk
 }
 
-/// Why [`token_for`] has no token for `caller`, checked without the network.
-/// Today the only reason is `quiet`. `None` when it may have one.
+/// Why [`token`] has no token for a paced `caller`, checked without the
+/// network. Today the only reason is `quiet`. `None` when it may have one.
 pub(crate) fn no_token_for(caller: &str) -> Option<&'static str> {
     let state = read_state().unwrap_or_default();
     state.quiet(caller, now()).then_some("quiet")
@@ -322,7 +357,7 @@ pub(crate) enum Refusal {
     /// The token is fine; this API does not accept it.
     Forbidden,
     /// The Tokens API could not say. The token is kept but counts as a
-    /// failure for a background caller, as with [`Refusal::Forbidden`]:
+    /// failure for a paced caller, as with [`Refusal::Forbidden`]:
     /// sending it again right away would likely be refused again and cost
     /// another check.
     Unknown,
@@ -336,12 +371,12 @@ pub(crate) enum Refusal {
 /// Asks the Tokens API, at once, why `caller`'s request with the fetched
 /// `token` was refused, and marks a dead token.
 ///
-/// For a `background` caller such as telemetry, it then fetches the token
-/// again right away, so a rotated or republished token is saved for the next
-/// run. A different token resets the caller's count; anything else counts as
-/// a failure. A command someone is waiting on keeps no count and fetches a
-/// fresh token itself ([`token_now`]).
-pub(crate) fn refused(caller: &str, token: &str, background: bool) -> Refusal {
+/// For a `paced` caller such as telemetry, it then fetches the token again
+/// right away, so a rotated or republished token is saved for the next run.
+/// Anything but a different token counts as a failure. An unpaced caller
+/// keeps no count and fetches a fresh token itself if it resends
+/// ([`token_now`]).
+pub(crate) fn refused(caller: &str, token: &str, paced: bool) -> Refusal {
     if read_state()
         .filter(|state| state.token.as_deref() == Some(token))
         .is_none()
@@ -358,17 +393,16 @@ pub(crate) fn refused(caller: &str, token: &str, background: bool) -> Refusal {
             write_state(&state);
         }
     }
-    if background {
+    if paced {
         decided(caller, |state, now| {
             refetch(state, caller, token, now, get(&endpoint()), check);
-            None
         });
     }
     refusal
 }
 
-/// The fetch after a background caller's `refused` token, with its answer
-/// and the Tokens API passed in. No token, the same token again, or the dead
+/// The fetch after a paced caller's `refused` token, with its answer and
+/// the Tokens API passed in. No token, the same token again, or the dead
 /// token still dead counts as one failure.
 fn refetch(
     state: &mut State,
@@ -378,11 +412,8 @@ fn refetch(
     fetched: Fetched,
     check: impl FnOnce(&str) -> Refusal,
 ) {
-    match judge(state, fetched, check) {
-        Some(token) if token != refused => {
-            state.callers.remove(caller);
-        }
-        _ => state.fail(caller, now),
+    if judge(state, fetched, check).is_none_or(|token| token == refused) {
+        state.fail(caller, now);
     }
 }
 
@@ -410,9 +441,9 @@ fn verdict(code: Option<&str>) -> Refusal {
 }
 
 /// Applies a fetch's result to the saved token and returns the token to use,
-/// if any. A new token replaces the saved one. The dead token served again
-/// is used only if it now checks valid. Failure counts are left to the
-/// caller.
+/// if any. A new token replaces the saved one, which also resets every
+/// caller's count ([`State::failures`]). The dead token served again is used
+/// only if it now checks valid.
 fn judge(
     state: &mut State,
     fetched: Fetched,
@@ -501,7 +532,7 @@ fn read_state() -> Option<State> {
 fn write_state(state: &State) {
     let state = &State {
         overridden: overridden(),
-        ..state.clone()
+        ..state.clone().without_stale()
     };
     let Some(dir) = auth::config_dir_path() else {
         return;
@@ -543,18 +574,26 @@ mod tests {
         }
     }
 
-    fn with_failures(mut state: State, count: u32, quiet_until: u64) -> State {
-        state
-            .callers
-            .insert(CALLER.to_owned(), Failures { count, quiet_until });
+    /// `state` with `caller` failing `count` times in a row with its token.
+    fn failing(mut state: State, caller: &str, count: u32, quiet_until: u64) -> State {
+        let token = state.token.clone();
+        state.callers.insert(
+            caller.to_owned(),
+            Failures {
+                count,
+                quiet_until,
+                token,
+            },
+        );
         state
     }
 
+    fn with_failures(state: State, count: u32, quiet_until: u64) -> State {
+        failing(state, CALLER, count, quiet_until)
+    }
+
     fn count(state: &State) -> u32 {
-        state
-            .callers
-            .get(CALLER)
-            .map_or(0, |failures| failures.count)
+        state.failures(CALLER).map_or(0, |failures| failures.count)
     }
 
     /// Runs [`acquire`] for telemetry, with the endpoint returning `answer`
@@ -573,10 +612,24 @@ mod tests {
         answer: Fetched,
         verdict: Refusal,
     ) -> (Option<String>, bool, bool) {
+        let (result, asked, checked) = run_as(state, CALLER, true, now, answer, verdict);
+        (result.ok().map(|(token, _)| token), asked, checked)
+    }
+
+    /// Runs [`acquire`] for any caller and policy.
+    fn run_as(
+        state: &mut State,
+        caller: &str,
+        paced: bool,
+        now: u64,
+        answer: Fetched,
+        verdict: Refusal,
+    ) -> (Result<(String, TokenSource), Unavailable>, bool, bool) {
         let (mut asked, mut checked) = (false, false);
         let result = acquire(
             state,
-            CALLER,
+            caller,
+            paced,
             now,
             || {
                 asked = true;
@@ -616,7 +669,11 @@ mod tests {
         let mut state = with_failures(saved("pk.old", true), 2, 0);
         let (result, _) = run(&mut state, NOW, token("pk.new"));
         assert_eq!(result, Some("pk.new".to_owned()));
-        assert_eq!(state, saved("pk.new", false), "a new token starts over");
+        assert_eq!(
+            state.without_stale(),
+            saved("pk.new", false),
+            "a new token starts over"
+        );
     }
 
     #[test]
@@ -707,7 +764,8 @@ mod tests {
                 state.callers[CALLER],
                 Failures {
                     count: 1,
-                    quiet_until: 0
+                    quiet_until: 0,
+                    token: None,
                 }
             );
             assert_eq!(state.token, None, "nothing unusable is kept");
@@ -723,23 +781,40 @@ mod tests {
     }
 
     #[test]
-    fn judging_a_fetch_leaves_every_callers_count_alone() {
-        let mut state = with_failures(saved("pk.kept", false), 1, NOW);
+    fn a_new_token_resets_every_caller_and_the_same_one_resets_nobody() {
+        let quiet = |state: State| {
+            let state = with_failures(state, 3, NOW + HOUR);
+            failing(state, "other", 3, NOW + HOUR)
+        };
+        let mut state = quiet(saved("pk.kept", false));
         let before = state.clone();
         assert_eq!(
             judge(&mut state, token("pk.kept"), |_| Refusal::Dead),
             Some("pk.kept".to_owned())
         );
         assert_eq!(state, before);
+
+        // The dead token served again and now valid is still the same token.
+        let mut state = quiet(saved("pk.kept", true));
+        assert_eq!(
+            judge(&mut state, token("pk.kept"), |_| Refusal::Forbidden),
+            Some("pk.kept".to_owned())
+        );
+        assert!(!state.rejected);
+        for caller in [CALLER, "other"] {
+            assert!(state.quiet(caller, NOW), "{caller} was reset");
+        }
+
+        let mut state = quiet(saved("pk.kept", false));
         assert_eq!(
             judge(&mut state, token("pk.new"), |_| Refusal::Dead),
             Some("pk.new".to_owned())
         );
-        assert_eq!(state.token.as_deref(), Some("pk.new"));
-        assert_eq!(
-            state.callers, before.callers,
-            "only a caller ends its count"
-        );
+        for caller in [CALLER, "other"] {
+            assert!(!state.quiet(caller, NOW), "{caller} is still quiet");
+            assert_eq!(state.failures(caller), None, "{caller}");
+        }
+        assert!(state.without_stale().callers.is_empty());
     }
 
     #[test]
@@ -762,24 +837,72 @@ mod tests {
 
     #[test]
     fn another_callers_quiet_period_does_not_hold_this_one() {
-        let mut other = State::default();
-        other.callers.insert(
-            "other".to_owned(),
-            Failures {
-                count: 3,
-                quiet_until: NOW + HOUR,
-            },
-        );
+        let other = failing(saved("pk.kept", false), "other", 3, NOW + HOUR);
         let mut state = other.clone();
-        let (result, asked) = run(&mut state, NOW, token("pk.new"));
-        assert!(asked);
-        assert_eq!(result, Some("pk.new".to_owned()));
-        assert_eq!(state.callers, other.callers, "the other's count stands");
+        let (result, _) = run(&mut state, NOW, token("pk.new"));
+        assert_eq!(result, Some("pk.kept".to_owned()));
+        assert_eq!(state, other, "the other's count stands");
 
+        let other = failing(State::default(), "other", 3, NOW + HOUR);
         let mut state = other.clone();
         run(&mut state, NOW, Fetched::Nothing);
         assert_eq!(state.callers["other"], other.callers["other"]);
         assert_eq!(count(&state), 1, "this caller's own failure");
+    }
+
+    #[test]
+    fn fetching_a_new_token_ends_another_callers_quiet_period() {
+        let mut state = failing(saved("pk.old", true), "other", 3, NOW + HOUR);
+        assert!(state.quiet("other", NOW));
+        let (result, asked) = run(&mut state, NOW, token("pk.new"));
+        assert!(asked);
+        assert_eq!(result, Some("pk.new".to_owned()));
+        assert!(!state.quiet("other", NOW));
+        assert!(state.without_stale().callers.is_empty());
+    }
+
+    #[test]
+    fn an_unpaced_caller_ignores_quiet_periods_and_counts_nothing() {
+        let quiet = with_failures(saved("pk.old", true), 3, NOW + HOUR);
+        let mut state = quiet.clone();
+        let (result, asked, _) = run_as(
+            &mut state,
+            CALLER,
+            false,
+            NOW,
+            Fetched::Nothing,
+            Refusal::Dead,
+        );
+        assert!(asked, "held back by a quiet period");
+        assert_eq!(result, Err(Unavailable::NoToken { revoked: true }));
+        assert_eq!(state, quiet, "a failure was counted");
+
+        let mut state = State::default();
+        let (result, _, _) = run_as(
+            &mut state,
+            "report",
+            false,
+            NOW,
+            token("pk.new"),
+            Refusal::Dead,
+        );
+        assert_eq!(result, Ok(("pk.new".to_owned(), TokenSource::Fetched)));
+    }
+
+    /// Two runs at once: one saves a new token while another, still holding
+    /// the old one, records a failure. The failure names the old token, so
+    /// it holds nobody back once merged.
+    #[test]
+    fn a_count_merged_in_after_a_new_token_holds_nobody_back() {
+        let before = with_failures(saved("pk.old", true), 2, 0);
+        let mut failed = before.clone();
+        failed.fail(CALLER, NOW);
+        assert!(failed.quiet(CALLER, NOW));
+        let disk = saved("pk.new", false);
+        let written = merged(&before, failed, disk, Some(CALLER));
+        assert_eq!(written.token.as_deref(), Some("pk.new"));
+        assert!(!written.quiet(CALLER, NOW));
+        assert_eq!(written.without_stale(), saved("pk.new", false));
     }
 
     /// Runs [`refetch`] for telemetry after `pk.old` was refused, with the
@@ -794,7 +917,11 @@ mod tests {
         for rejected in [false, true] {
             let mut state = with_failures(saved("pk.old", rejected), 2, 0);
             refused_then(&mut state, NOW, token("pk.new"));
-            assert_eq!(state, saved("pk.new", false), "rejected: {rejected}");
+            assert_eq!(
+                state.without_stale(),
+                saved("pk.new", false),
+                "rejected: {rejected}"
+            );
         }
     }
 
@@ -911,6 +1038,7 @@ mod tests {
                 Failures {
                     count: 1,
                     quiet_until: 9,
+                    token: Some("pk.a".to_owned()),
                 },
             )]),
             overridden: true,

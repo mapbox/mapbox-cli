@@ -765,9 +765,11 @@ mod report_token {
         );
     }
 
-    fn telemetry_quiet() -> String {
+    /// Telemetry's entry for three failures with `token`, quiet for an hour.
+    fn telemetry_quiet(token: Option<&str>) -> String {
+        let token = token.map_or(String::new(), |token| format!(r#","token":"{token}""#));
         format!(
-            r#""callers":{{"telemetry":{{"count":3,"quiet_until":{}}}}}"#,
+            r#""callers":{{"telemetry":{{"count":3,"quiet_until":{}{token}}}}}"#,
             now() + 3600
         )
     }
@@ -779,7 +781,7 @@ mod report_token {
             &config,
             &format!(
                 r#"{{"token":"pk.saved","overridden":true,{}}}"#,
-                telemetry_quiet()
+                telemetry_quiet(Some("pk.saved"))
             ),
         );
         let out = sent_nowhere(&config, &["--debug", "report", "A test"])
@@ -793,10 +795,12 @@ mod report_token {
         assert!(!err.contains("recently"), "{err}");
     }
 
+    /// The new token also ends telemetry's quiet period, which was set with
+    /// the dead one.
     #[test]
     fn report_fetches_while_telemetry_is_quiet() {
         let config = config_dir("report-through-backoff");
-        let quiet = telemetry_quiet();
+        let quiet = telemetry_quiet(Some("pk.dead"));
         write_state(
             &config,
             &format!(r#"{{"token":"pk.dead","rejected":true,"overridden":true,{quiet}}}"#),
@@ -812,7 +816,10 @@ mod report_token {
         );
         let state = std::fs::read_to_string(config.join("cli-token.json")).expect("the state");
         assert!(state.contains(r#""token":"pk.fresh""#), "{state}");
-        assert!(state.contains(&quiet), "telemetry's count changed: {state}");
+        assert!(
+            !state.contains("callers"),
+            "telemetry is still quiet: {state}"
+        );
     }
 
     /// The error names what the fetch found, not telemetry's quiet period.
@@ -821,7 +828,7 @@ mod report_token {
         let config = config_dir("report-unreachable-backoff");
         write_state(
             &config,
-            &format!(r#"{{"overridden":true,{}}}"#, telemetry_quiet()),
+            &format!(r#"{{"overridden":true,{}}}"#, telemetry_quiet(None)),
         );
         let out = run(&config, &["-o", "json", "report", "A test"]);
         assert_eq!(error_code(&out), "cli_token_unavailable");

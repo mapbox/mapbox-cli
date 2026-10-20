@@ -501,7 +501,8 @@ and a different token served is used from the next run on. Three failures
 in a row, each a fetch that finds no usable token or a refusal the
 endpoint has no different token for, stop telemetry sending and fetching
 for an hour. That count is telemetry's own, and `MAPBOX_CLI_TOKEN` is sent
-whatever it says. The token is
+whatever it says. A new token ends it, even one `mapbox report` fetched.
+The token is
 restricted to `https://cli.mapbox.com/`, so every request with it carries
 that as its `Referer`. The CLI's token is only used for what
 `src/cli_token.rs` lists for it: telemetry, and `mapbox report`, which

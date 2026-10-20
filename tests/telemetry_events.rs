@@ -1249,7 +1249,8 @@ fn a_different_token_served_after_a_refusal_is_used_next_run() {
     let home = scratch("send-refused-rotated");
     save_cli_token_state(
         &home,
-        serde_json::json!({"token": "pk.old", "callers": {"telemetry": {"count": 2}}}),
+        serde_json::json!({"token": "pk.old",
+            "callers": {"telemetry": {"count": 2, "token": "pk.old"}}}),
     );
     let (heads, events_url) = answer_each(&[NOT_AUTHORIZED, ("204 No Content", "")]);
     let (_, tokens_url) = answer_once("200 OK", r#"{"code":"TokenValid"}"#);
@@ -1379,7 +1380,8 @@ fn only_an_accepted_event_ends_the_count() {
     let home = scratch("send-count-ends");
     save_cli_token_state(
         &home,
-        serde_json::json!({"token": "pk.kept", "callers": {"telemetry": {"count": 2}}}),
+        serde_json::json!({"token": "pk.kept",
+            "callers": {"telemetry": {"count": 2, "token": "pk.kept"}}}),
     );
     let (heads, events_url) = answer_each(&[("500 Internal Server Error", "{}")]);
     run_against(&home, &events_url, NOWHERE, NOWHERE);
@@ -1426,7 +1428,8 @@ fn an_unusable_clis_token_sends_nothing_even_with_a_users_token() {
         (
             "quiet",
             Some(serde_json::json!({"token": "pk.kept",
-                "callers": {"telemetry": {"count": 3, "quiet_until": later}}})),
+                "callers": {"telemetry": {"count": 3, "quiet_until": later,
+                "token": "pk.kept"}}})),
         ),
     ] {
         let home = scratch(&format!("send-nothing-{name}"));
@@ -1457,8 +1460,9 @@ fn no_wait_but_telemetrys_own_holds_it() {
     for (name, state, expected) in [
         (
             "other-caller",
-            serde_json::json!({"callers": {"other": {"count": 3, "quiet_until": later}}}),
-            "pk.new",
+            serde_json::json!({"token": "pk.kept", "callers": {"other": {"count": 3,
+                "quiet_until": later, "token": "pk.kept"}}}),
+            "pk.kept",
         ),
         (
             "earlier-build-pause",
@@ -1481,7 +1485,8 @@ fn no_wait_but_telemetrys_own_holds_it() {
         run_against(&home, &url, &token_url, NOWHERE);
         assert_eq!(sent_with(&received), expected, "{name}");
         if name == "other-caller" {
-            let state = cli_token_state(&home, "pk.new");
+            deliveries(&home, 2);
+            let state = read_cli_token_state(&home);
             assert_eq!(state["callers"]["other"]["count"], 3, "{state}");
             assert!(state["callers"].get("telemetry").is_none(), "{state}");
         }
@@ -1495,7 +1500,8 @@ fn an_override_is_sent_while_telemetry_is_quiet() {
     save_cli_token_state(
         &home,
         serde_json::json!({"token": "pk.kept",
-            "callers": {"telemetry": {"count": 3, "quiet_until": now() + 3000}}}),
+            "callers": {"telemetry": {"count": 3, "quiet_until": now() + 3000,
+            "token": "pk.kept"}}}),
     );
     let (received, url) = events_server(true);
     let out = command(&home)
@@ -1506,4 +1512,57 @@ fn an_override_is_sent_while_telemetry_is_quiet() {
         .expect("run mapbox");
     assert!(out.status.success());
     assert_eq!(sent_with(&received), "pk.cli");
+}
+
+/// A new token resets every caller: telemetry fetching one ends another
+/// caller's quiet period, which was set with the old token.
+#[test]
+fn a_new_token_telemetry_fetches_ends_another_callers_quiet_period() {
+    let home = scratch("send-new-token-resets-others");
+    save_cli_token_state(
+        &home,
+        serde_json::json!({"token": "pk.old", "rejected": true, "callers": {"other":
+            {"count": 3, "quiet_until": now() + 3000, "token": "pk.old"}}}),
+    );
+    let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.new"}"#);
+    let (received, url) = events_server(true);
+    run_against(&home, &url, &token_url, NOWHERE);
+    assert_eq!(sent_with(&received), "pk.new");
+    let state = cli_token_state(&home, "pk.new");
+    assert!(state.get("callers").is_none(), "{state}");
+}
+
+/// `report` fetching a new token while telemetry is quiet ends telemetry's
+/// quiet period, so the run's own event goes out with that token.
+#[test]
+fn a_new_token_report_fetches_ends_telemetrys_quiet_period() {
+    let home = scratch("send-report-resets-telemetry");
+    save_cli_token_state(
+        &home,
+        serde_json::json!({"token": "pk.dead", "rejected": true, "callers": {"telemetry":
+            {"count": 3, "quiet_until": now() + 3000, "token": "pk.dead"}}}),
+    );
+    let (fetched, token_url) = answer_once("200 OK", r#"{"token":"pk.fresh"}"#);
+    let (received, url) = events_server(true);
+    // The report itself goes to a dead proxy, so nothing reaches Mapbox.
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .env("HTTPS_PROXY", "http://127.0.0.1:9")
+        .env_remove("https_proxy")
+        .env_remove("ALL_PROXY")
+        .env_remove("all_proxy")
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
+        .args(["report", "A test"])
+        .output()
+        .expect("run mapbox");
+    assert!(!out.status.success(), "the report reached somewhere");
+    fetched
+        .recv_timeout(Duration::from_secs(10))
+        .expect("report fetched a token");
+    assert_eq!(sent_with(&received), "pk.fresh");
+    let state = cli_token_state(&home, "pk.fresh");
+    assert!(state.get("callers").is_none(), "{state}");
 }

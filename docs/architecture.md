@@ -216,4 +216,5 @@ otherwise the one every build fetches from
 (`src/cli_token/fetch.rs`). With no usable CLI token the event is dropped,
 and a send that fails is not tried again. Three failures in a row (a fetch
 with no usable token, or a refusal with no different token served) quiet
-telemetry for an hour, a count kept per caller in that same file.
+telemetry for an hour, a count kept per caller in that same file. A new
+token saved by any caller ends every caller's count.

@@ -41,7 +41,9 @@
 //!    saved until the Tokens API says it is dead ([`fetch`]).
 //!
 //! Every send goes through [`send_with_cli_token`], which checks a refusal
-//! right away and replaces a dead token, whatever the policy.
+//! right away. A dead token is replaced on disk whatever the policy, but
+//! only a caller that resends uses the new one in the same run. Telemetry
+//! uses it on its next run.
 //!
 //! # The token is public
 //!
@@ -279,9 +281,9 @@ impl Ledger for Disk {
         }
         fetch::refused(caller, token, self.policy.paced)
     }
-    fn accepted(&mut self, caller: &str, _: &str) {
+    fn accepted(&mut self, caller: &str, token: &str) {
         if self.policy.paced && self.source != TokenSource::Override {
-            fetch::accepted(caller);
+            fetch::accepted(caller, token);
         }
     }
     fn retries(&self) -> bool {

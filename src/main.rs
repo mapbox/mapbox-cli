@@ -1560,8 +1560,18 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                 );
                 match attempt {
                     CliAttempt::Done(result) => return result,
-                    CliAttempt::Unusable { error, .. } if !caller.user_fallback() => {
-                        return Err((*error).into())
+                    CliAttempt::Unusable { error, why, .. } if !caller.user_fallback() => {
+                        // It never sends the user's token, so it goes on as
+                        // if they had none.
+                        without_cli_token(*error, &why, dry_run, false).map_err(|e| *e)?;
+                        return executor::execute(
+                            op,
+                            op_matches,
+                            None,
+                            username.as_deref(),
+                            flags,
+                            mode,
+                        );
                     }
                     CliAttempt::Unusable { error, why, sent } => {
                         // The user already confirmed the request that was
@@ -1591,15 +1601,12 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             }
             .or_else(|| stored_creds.as_ref().map(|c| c.access_token.clone()));
 
-            // A command that could not use the CLI's token falls back to the
-            // user's, and with none says why the CLI's failed rather than
-            // sending a request bound to be refused. A dry run sends nothing
-            // and fetches nothing, so it plans with whatever there is.
-            if let Some((failure, why)) = cli_failure.filter(|_| !dry_run) {
-                if token.is_none() {
-                    return Err((*failure).with_remedy(no_own_token_remedy()).into());
+            if let Some((failure, why)) = cli_failure {
+                if let Some(note) =
+                    without_cli_token(*failure, &why, dry_run, token.is_some()).map_err(|e| *e)?
+                {
+                    output::progress(&note);
                 }
-                output::progress(&format!("{why} Using your own token instead."));
             }
             if use_login && token.is_none() {
                 return Err(no_stored_credentials(profile));
@@ -1782,6 +1789,26 @@ fn cli_token_unavailable(command: &str, why: &cli_token::Unavailable) -> CliErro
         cli_token::Unavailable::OverrideNotPublic => "MAPBOX_CLI_TOKEN is not a public token",
     };
     CliError::new("cli_token_unavailable", provided_token(command, reason))
+}
+
+/// What a command does when it could not use the CLI's token. With
+/// `own_token`, it sends the user's, and the note says why. Without, it says
+/// why the CLI's failed rather than sending a request bound to be refused.
+/// A dry run sends nothing and fetches nothing, so it plans with whatever
+/// there is.
+fn without_cli_token(
+    error: CliError,
+    why: &str,
+    dry_run: bool,
+    own_token: bool,
+) -> std::result::Result<Option<String>, Box<CliError>> {
+    if dry_run {
+        Ok(None)
+    } else if own_token {
+        Ok(Some(format!("{why} Using your own token instead.")))
+    } else {
+        Err(Box::new(error.with_remedy(no_own_token_remedy())))
+    }
 }
 
 /// What to do when a command could not use the CLI's token and the user has
@@ -3029,10 +3056,8 @@ mod cli_attempt_tests {
         }
     }
 
-    /// With no user token, the error says why the CLI's token could not be
-    /// used.
     #[test]
-    fn a_refusal_lets_the_users_token_stand_in() {
+    fn a_refusal_says_why_with_its_code_and_request_id() {
         for (refusal, code) in [
             (cli_token::Refusal::Dead, "cli_token_unavailable"),
             (cli_token::Refusal::Forbidden, "cli_token_forbidden"),
@@ -3045,6 +3070,20 @@ mod cli_attempt_tests {
             assert_eq!(error.request_id.as_deref(), Some("req-1"), "{refusal:?}");
             assert!(sent, "{refusal:?}: the request went out");
         }
+    }
+
+    #[test]
+    fn without_a_token_of_their_own_the_user_is_told_to_log_in_unless_it_is_a_dry_run() {
+        let error = || CliError::new("cli_token_forbidden", "refused");
+        let failed = without_cli_token(error(), "why", false, false).expect_err("no token");
+        assert_eq!(failed.code, "cli_token_forbidden");
+        assert_eq!(failed.fix, no_own_token_remedy().fix);
+        assert!(matches!(
+            without_cli_token(error(), "why", true, false),
+            Ok(None)
+        ));
+        let note = without_cli_token(error(), "Why.", false, true).expect("own token");
+        assert_eq!(note.as_deref(), Some("Why. Using your own token instead."));
     }
 
     #[test]

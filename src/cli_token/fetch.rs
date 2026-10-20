@@ -211,6 +211,21 @@ impl State {
         }
     }
 
+    /// Ends `caller`'s count, unless `token` is no longer the one on disk:
+    /// a run that succeeded with an old token says nothing about the new one.
+    fn accept(&mut self, caller: &str, token: &str) {
+        if self.token.as_deref() != Some(token) {
+            return;
+        }
+        if self
+            .callers
+            .get(caller)
+            .is_some_and(|failures| failures.token.as_deref().is_none_or(|t| t == token))
+        {
+            self.callers.remove(caller);
+        }
+    }
+
     /// Without the failures that no longer count, so the file doesn't keep
     /// them.
     fn without_stale(mut self) -> State {
@@ -269,11 +284,11 @@ fn acquire(
     }
 }
 
-/// Resets `caller`'s failure count after a successful request.
-pub(crate) fn accepted(caller: &str) {
-    if let Some(mut state) = read_state().filter(|state| state.callers.contains_key(caller)) {
+/// Resets `caller`'s failure count after a successful request with `token`.
+pub(crate) fn accepted(caller: &str, token: &str) {
+    if let Some(mut state) = read_state() {
         let before = state.clone();
-        state.callers.remove(caller);
+        state.accept(caller, token);
         save(&before, state, Some(caller));
     }
 }
@@ -1049,6 +1064,15 @@ mod tests {
             serde_json::from_str::<State>(r#"{"token":"pk.a"}"#).unwrap(),
             saved("pk.a", false)
         );
+    }
+
+    #[test]
+    fn a_success_with_an_old_token_keeps_the_count_made_with_the_new_one() {
+        let mut state = with_failures(saved("pk.new", false), 2, 0);
+        state.accept(CALLER, "pk.old");
+        assert_eq!(count(&state), 2);
+        state.accept(CALLER, "pk.new");
+        assert!(state.callers.is_empty());
     }
 
     #[test]

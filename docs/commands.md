@@ -5078,8 +5078,9 @@ named with `--repo`, set `GH_TOKEN` or `GITHUB_TOKEN`. It is sent only to
 exactly as a ref that does not exist does, and the error says both.
 
 **An installed workflow stops the install** unless `--force` is given. The new
-copy is staged and renamed into place, so an interrupted install leaves the
-old copy or the new one. Only regular files are taken. A symlink in a local
+copy is staged and renamed into place, and the old one is moved aside until
+then and moved back if that fails, so a failed or interrupted install leaves
+the old copy or the new one. Only regular files are taken. A symlink in a local
 directory is refused, and an archive entry whose path would leave the
 workflow's directory stops the read.
 

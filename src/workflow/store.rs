@@ -10,7 +10,8 @@
 //! reasons: everything is read and checked in memory first, an existing
 //! workflow stops the install unless `--force`, only regular files are
 //! taken, and a path that would leave the workflow's directory stops the
-//! read altogether. The new directory is staged and renamed into place.
+//! read altogether. The new directory is staged and renamed into place, and
+//! one it replaces is moved aside until then rather than removed first.
 
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -465,6 +466,14 @@ pub fn install(package: &Package, force: bool) -> Result<PathBuf> {
     std::fs::create_dir_all(&root)
         .with_context(|| format!("Could not create {}", root.display()))?;
     let target = root.join(name);
+    let previous = root.join(format!(".{name}.previous"));
+    // Left only by an install that stopped between moving the old copy
+    // aside and moving the new one in: the old copy is the workflow, so it
+    // goes back before anything else is decided.
+    if !target.exists() && previous.exists() {
+        std::fs::rename(&previous, &target)
+            .with_context(|| format!("Could not restore {}", target.display()))?;
+    }
     if target.exists() && !force {
         return Err(already_installed(name, &target, None));
     }
@@ -487,15 +496,49 @@ pub fn install(package: &Package, force: bool) -> Result<PathBuf> {
         )
         .context("Could not record where the workflow came from")?;
 
-        if target.exists() {
-            std::fs::remove_dir_all(&target)
-                .with_context(|| format!("Could not replace {}", target.display()))?;
-        }
-        std::fs::rename(&staging, &target)
-            .with_context(|| format!("Could not move the workflow into {}", target.display()))
+        swap_in(&staging, &target, &previous, |from, to| {
+            std::fs::rename(from, to)
+        })
     })();
     let _ = std::fs::remove_dir_all(&staging);
     result.map(|()| target)
+}
+
+/// Moves `staged` into `target`. An existing `target` is moved aside to
+/// `previous` rather than removed first, and moved back if the new copy
+/// cannot go in, so a failed `--force` leaves the old workflow installed.
+/// `rename` is a parameter so a test can make the last move fail.
+fn swap_in(
+    staged: &Path,
+    target: &Path,
+    previous: &Path,
+    rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<()> {
+    let _ = std::fs::remove_dir_all(previous);
+    let replacing = target.exists();
+    if replacing {
+        rename(target, previous)
+            .with_context(|| format!("Could not move {} aside", target.display()))?;
+    }
+    if let Err(e) = rename(staged, target) {
+        if replacing {
+            rename(previous, target).with_context(|| {
+                format!(
+                    "Could not move the workflow into {}, nor put the old one back; it is at {}",
+                    target.display(),
+                    previous.display()
+                )
+            })?;
+        }
+        return Err(anyhow::Error::new(e).context(format!(
+            "Could not move the workflow into {}",
+            target.display()
+        )));
+    }
+    if replacing {
+        let _ = std::fs::remove_dir_all(previous);
+    }
+    Ok(())
 }
 
 /// `retry` is the `install` line that would replace it, when the caller
@@ -602,6 +645,62 @@ mod tests {
             builder.append_data(&mut header, path, *bytes).unwrap();
         }
         builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mapbox-store-{name}-{:016x}",
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn holding(dir: &Path, text: &str) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("workflow.yaml"), text).unwrap();
+        dir.to_path_buf()
+    }
+
+    fn content(dir: &Path) -> String {
+        std::fs::read_to_string(dir.join("workflow.yaml")).unwrap()
+    }
+
+    #[test]
+    fn a_replacement_goes_in_and_the_old_copy_goes() {
+        let root = scratch_dir("swap");
+        let (staged, target, previous) = (
+            holding(&root.join(".demo.staging"), "new"),
+            holding(&root.join("demo"), "old"),
+            root.join(".demo.previous"),
+        );
+        swap_in(&staged, &target, &previous, |a, b| std::fs::rename(a, b)).expect("swapped");
+        assert_eq!(content(&target), "new");
+        assert!(!previous.exists() && !staged.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// The old copy must survive a `--force` whose last step fails.
+    #[test]
+    fn a_failed_final_move_leaves_the_old_workflow_installed() {
+        let root = scratch_dir("swap-fails");
+        let (staged, target, previous) = (
+            holding(&root.join(".demo.staging"), "new"),
+            holding(&root.join("demo"), "old"),
+            root.join(".demo.previous"),
+        );
+        let failing = |from: &Path, to: &Path| {
+            if from == staged {
+                Err(std::io::Error::other("disk full"))
+            } else {
+                std::fs::rename(from, to)
+            }
+        };
+        let err = swap_in(&staged, &target, &previous, failing).expect_err("the move fails");
+        assert!(format!("{err:#}").contains("disk full"), "{err:#}");
+        assert_eq!(content(&target), "old");
+        assert!(!previous.exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// A loopback stand-in for GitHub's API that answers each request in

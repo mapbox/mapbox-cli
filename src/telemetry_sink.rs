@@ -36,9 +36,9 @@ const DIR: &str = ".telemetry";
 /// Days of delivery-log files kept, today included.
 const KEEP_DAYS: u64 = 7;
 
-/// Production Mapbox Events, for every build. A login is a production login,
-/// so a build from source sends where a release does rather than to a
-/// staging host its tokens mean nothing to.
+/// Production Mapbox Events, for every build. The CLI's token is a
+/// production token whatever the channel, so a build from source sends
+/// where a release does rather than to a staging host it means nothing to.
 const ENDPOINT: &str = "https://events.mapbox.com/events/v2";
 
 /// Set by [`HttpSink`] on the child it spawns, and read by [`is_send_child`]
@@ -67,8 +67,7 @@ const DELIVERY_DIR: &str = "deliveries";
 /// a refused token and fetch its replacement.
 const SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Ample for one event and its envelope; anything larger on stdin is not one
-/// of ours.
+/// Ample for one event; anything larger on stdin is not one of ours.
 const MAX_EVENT_BYTES: u64 = 64 * 1024;
 
 /// Sends each event to Mapbox Events from a detached child, so the command
@@ -82,12 +81,6 @@ const MAX_EVENT_BYTES: u64 = 64 * 1024;
 /// the command, block its exit, or write to stdout.
 struct HttpSink {
     url: String,
-}
-
-/// What the parent writes to the child's stdin.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Envelope {
-    event: serde_json::Value,
 }
 
 impl HttpSink {
@@ -112,15 +105,10 @@ impl HttpSink {
             .stderr(Stdio::null());
         crate::detach::detach(&mut command);
 
-        let Ok(event) = serde_json::from_str(line) else {
+        if serde_json::from_str::<serde_json::Value>(line).is_err() {
             log_delivery(line, json!({ "stage": "bad_event" }));
             return;
-        };
-        let envelope = Envelope { event };
-        let Ok(envelope) = serde_json::to_string(&envelope) else {
-            log_delivery(line, json!({ "stage": "bad_event" }));
-            return;
-        };
+        }
         let Ok(mut child) = command.spawn() else {
             log_delivery(line, json!({ "stage": "spawn_failed" }));
             return;
@@ -131,7 +119,7 @@ impl HttpSink {
         // One event fits in a pipe buffer, so this does not wait on the
         // child. Dropping `stdin` closes it, which is the child's end of input.
         if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(envelope.as_bytes());
+            let _ = stdin.write_all(line.as_bytes());
         }
         // Not waited on: the parent is about to exit.
     }
@@ -140,10 +128,9 @@ impl HttpSink {
 /// Hands `line` to [`HttpSink`] when [`cli_token`] has a CLI token it could
 /// send it with, and drops it otherwise.
 pub(crate) fn deliver(line: &str) {
-    if cli_token::has_token_for(cli_token::TELEMETRY_CALLER) {
-        HttpSink { url: send_url() }.deliver(line)
-    } else {
-        log_delivery(line, json!({ "stage": "no_token" }));
+    match cli_token::no_token_for(cli_token::TELEMETRY_CALLER) {
+        None => HttpSink { url: send_url() }.deliver(line),
+        Some(reason) => log_delivery(line, json!({ "stage": "no_token", "reason": reason })),
     }
 }
 
@@ -166,8 +153,11 @@ pub fn run_send_child() -> ExitCode {
         let read = std::io::stdin()
             .take(MAX_EVENT_BYTES)
             .read_to_string(&mut input);
-        match (read, serde_json::from_str::<Envelope>(input.trim())) {
-            (Ok(_), Ok(envelope)) => send(&url, &envelope),
+        match (
+            read,
+            serde_json::from_str::<serde_json::Value>(input.trim()),
+        ) {
+            (Ok(_), Ok(event)) => send(&url, &event),
             _ => log_delivery("", json!({ "stage": "bad_envelope" })),
         }
     }
@@ -178,9 +168,8 @@ pub fn run_send_child() -> ExitCode {
 /// is the product token alone: Mapbox Events stores it in every record, and
 /// the markers `http::client` adds (an `agent/` among them) must not ride
 /// along.
-fn send(url: &str, envelope: &Envelope) {
-    let line = envelope.event.to_string();
-    let outcome = match post(url, envelope) {
+fn send(url: &str, event: &serde_json::Value) {
+    let outcome = match post(url, event) {
         Ok((status, elapsed)) => json!({
             "stage": "responded",
             "status": status,
@@ -188,12 +177,12 @@ fn send(url: &str, envelope: &Envelope) {
         }),
         Err(error) => json!({ "stage": "failed", "error": error }),
     };
-    log_delivery(&line, outcome);
+    log_delivery(&event.to_string(), outcome);
 }
 
 /// The response's status and how long it took, or why there was none.
-fn post(url: &str, envelope: &Envelope) -> Result<(u16, Duration), String> {
-    let body = serde_json::to_string(&[&envelope.event]).map_err(|err| err.to_string())?;
+fn post(url: &str, event: &serde_json::Value) -> Result<(u16, Duration), String> {
+    let body = serde_json::to_string(&[event]).map_err(|err| err.to_string())?;
     let client = http::client().map_err(|err| err.to_string())?;
     // Set as the request is built, so the time is the POST alone, not the
     // token fetch that may come before it.

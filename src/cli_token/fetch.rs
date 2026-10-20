@@ -26,11 +26,14 @@
 //!
 //! A caller resting from a token an API refused while it was valid
 //! ([`Cooldown`]) has no token it can use, so [`token_for`] asks the endpoint
-//! for another, paced as any fetch that finds nothing usable: the token it
-//! rests from served again counts as a miss, and the third in a row waits an
-//! hour. A different token served ends the rest, so a rotation that fixes a
-//! scope or URL restriction is picked up without waiting out the hour, and
-//! no faster than fetching already allows.
+//! for another, under the fetch's own pause and paced as any fetch that
+//! finds nothing usable: the token it rests from served again counts as a
+//! miss, and the third in a row waits an hour. Those misses are the rest's
+//! own, kept on its [`Cooldown`], so they never shorten the wait for a token
+//! that later turns out dead. Only a different token served ends the rest,
+//! so a rotation that fixes a scope or URL restriction is picked up without
+//! waiting out the hour, and no faster than fetching already allows; the
+//! same token taken back after another caller saw it dead does not.
 //!
 //! # Where it is fetched from
 //!
@@ -169,6 +172,24 @@ struct Cooldown {
     /// Unix seconds before which it is not used again.
     #[serde(default)]
     until: u64,
+    /// Consecutive fetches during the rest that served the token it rests
+    /// from, paced as [`State::failures`] but apart from it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    misses: u32,
+    /// Unix seconds before which the endpoint is not asked during the rest.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    retry_at: u64,
+}
+
+impl Cooldown {
+    fn miss(&mut self, now: u64) {
+        self.misses += 1;
+        self.retry_at = now + backoff(self.misses);
+    }
+}
+
+fn is_zero<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
 }
 
 /// The wait after `failures` consecutive misses: an hour after every third,
@@ -186,9 +207,14 @@ fn backoff(failures: u32) -> u64 {
 /// with it, so nothing is refused or checked; a different token served at
 /// the endpoint ends the rest (see "A rotation during a rest" above).
 pub(crate) fn token_for(caller: &str) -> Option<String> {
+    decided(|state, now| acquire_for(state, caller, now, || get(&endpoint()), check))
+}
+
+/// Runs `decide` on the state on disk, and saves what it changed.
+fn decided(decide: impl FnOnce(&mut State, u64) -> Option<String>) -> Option<String> {
     let mut state = read_state().unwrap_or_default();
     let before = state.clone();
-    let token = acquire_for(&mut state, caller, now(), || get(&endpoint()), check);
+    let token = decide(&mut state, now());
     if state != before {
         save_fetch(&before, state);
     }
@@ -204,28 +230,34 @@ fn acquire_for(
     get: impl FnOnce() -> Fetched,
     check: impl FnOnce(&str) -> Refusal,
 ) -> Option<String> {
-    if !resting(state, caller, now) {
+    let Some(cooldown) = rest(state, caller, now) else {
         return acquire(state, now, get, check);
-    }
-    if holds(state.retry_at, now) {
+    };
+    if holds(state.retry_at, now) || holds(cooldown.retry_at, now) {
         return None;
     }
-    let resting_on = state.token.clone();
+    let rested = state.token.clone();
     match judge(state, now, get(), check) {
-        Some(token) if Some(&token) != resting_on.as_ref() => Some(token),
+        Some(token) if Some(&token) != rested.as_ref() => Some(token),
+        // The token it rests from, served again or taken back: a usable
+        // answer, so the endpoint's own count is left alone. `judge` kept
+        // the cooldown, since the token did not change.
         Some(_) => {
-            state.fail(now);
+            if let Some(cooldown) = state.cooldowns.get_mut(caller) {
+                cooldown.miss(now);
+            }
             None
         }
         None => None,
     }
 }
 
-fn resting(state: &State, caller: &str, now: u64) -> bool {
+/// `caller`'s cooldown, while it holds.
+fn rest<'a>(state: &'a State, caller: &str, now: u64) -> Option<&'a Cooldown> {
     state
         .cooldowns
         .get(caller)
-        .is_some_and(|cooldown| holds(cooldown.until, now))
+        .filter(|cooldown| holds(cooldown.until, now))
 }
 
 /// Records that `caller`'s request with the saved `token` went through, which
@@ -242,13 +274,7 @@ pub(crate) fn accepted(caller: &str, token: &str) {
 /// one from the endpoint unless it is being waited for. `None` when there is
 /// none to be had right now.
 pub(crate) fn token() -> Option<String> {
-    let mut state = read_state().unwrap_or_default();
-    let before = state.clone();
-    let token = acquire(&mut state, now(), || get(&endpoint()), check);
-    if state != before {
-        save_fetch(&before, state);
-    }
-    token
+    decided(|state, now| acquire(state, now, || get(&endpoint()), check))
 }
 
 /// [`token`], but asking the endpoint now, whatever the backoff says and
@@ -284,6 +310,10 @@ pub(crate) fn saved_token() -> Option<String> {
 /// can take seconds: if the token, its verdict or the count changed on disk
 /// meanwhile, that run's answer stands. Cooldowns another run added are
 /// kept, unless this fetch brought a new token, which ends them all.
+///
+/// So two runs that miss at once count one miss, not two: the slower one's
+/// write is dropped, or for a rest's miss, writes the same count. That only
+/// ever delays a wait, never starts one early.
 fn save_fetch(before: &State, state: State) {
     if let Some(state) = merged(before, state, read_state().unwrap_or_default()) {
         write_state(&state);
@@ -301,18 +331,29 @@ fn merged(before: &State, mut state: State, disk: State) -> Option<State> {
         return None;
     }
     if state.token == before.token {
-        state.cooldowns = disk.cooldowns;
+        // Disk's cooldowns, with the ones this fetch changed: a rest's miss.
+        let mut cooldowns = disk.cooldowns;
+        for (caller, cooldown) in state.cooldowns {
+            if before.cooldowns.get(&caller) != Some(&cooldown) {
+                cooldowns.insert(caller, cooldown);
+            }
+        }
+        state.cooldowns = cooldowns;
     }
     Some(state)
 }
 
-/// Whether [`token_for`] could have one for `caller`, judged without the
-/// network.
-pub(crate) fn may_have_token(caller: &str) -> bool {
+/// Why [`token_for`] cannot have one for `caller`, judged without the
+/// network: `resting` from the token on disk with the endpoint not to be
+/// asked yet, or fetching `paused` with no usable token. `None` when it may.
+pub(crate) fn no_token_for(caller: &str) -> Option<&'static str> {
     let state = read_state().unwrap_or_default();
     let now = now();
-    let usable = state.usable_token().is_some() && !resting(&state, caller, now);
-    usable || !holds(state.retry_at, now)
+    let paused = holds(state.retry_at, now);
+    match rest(&state, caller, now) {
+        Some(cooldown) => (paused || holds(cooldown.retry_at, now)).then_some("resting"),
+        None => (paused && state.usable_token().is_none()).then_some("paused"),
+    }
 }
 
 /// What a `401` or `403` to the CLI's token meant.
@@ -408,9 +449,11 @@ fn acquire(
     judge(state, now, get(), check)
 }
 
-/// What a fetch's answer does to the state. A token that is new, or the dead
-/// one taken back, replaces what is kept, cooldowns and counts with it; the
-/// kept token again, not dead, leaves it as it is.
+/// What a fetch's answer does to the state. A token that is new replaces
+/// what is kept, cooldowns and counts with it. The dead one taken back
+/// starts its counts again but keeps its cooldowns: it is the token a caller
+/// rests from, and only a different one ends that. The kept token again,
+/// not dead, leaves it as it is.
 fn judge(
     state: &mut State,
     now: u64,
@@ -424,9 +467,16 @@ fn judge(
                 && (!(state.rejected && state.token.as_deref() == Some(token.as_str()))
                     || check(&token) == Refusal::Forbidden) =>
         {
-            if state.rejected || state.token.as_deref() != Some(token.as_str()) {
+            let same = state.token.as_deref() == Some(token.as_str());
+            if state.rejected || !same {
+                let cooldowns = if same {
+                    std::mem::take(&mut state.cooldowns)
+                } else {
+                    BTreeMap::new()
+                };
                 *state = State {
                     token: Some(token.clone()),
+                    cooldowns,
                     ..State::default()
                 };
             }
@@ -449,9 +499,9 @@ fn holds(until: u64, now: u64) -> bool {
 }
 
 /// Whether `value` looks like a public token and nothing else. Checked on
-/// what the endpoint returns and on what is read back from disk, since both
-/// end up in a request.
-fn is_plausible(value: &str) -> bool {
+/// what the endpoint returns, on what is read back from disk and on
+/// telemetry's `MAPBOX_CLI_TOKEN`, since all end up in a request.
+pub(super) fn is_plausible(value: &str) -> bool {
     value.starts_with("pk.")
         && value.len() <= MAX_TOKEN_LEN
         && value
@@ -707,6 +757,7 @@ mod tests {
                 Cooldown {
                     failures: 1,
                     until: NOW,
+                    ..Cooldown::default()
                 },
             )]),
             ..saved("pk.kept", false)
@@ -748,12 +799,14 @@ mod tests {
         let cooldown = Cooldown {
             failures: 3,
             until: NOW + HOUR,
+            ..Cooldown::default()
         };
         assert!(holds(cooldown.until, NOW));
         assert!(!holds(cooldown.until, NOW + HOUR));
         let edited = Cooldown {
             failures: 3,
             until: u64::MAX,
+            ..Cooldown::default()
         };
         assert!(
             !holds(edited.until, NOW),
@@ -769,6 +822,7 @@ mod tests {
                 Cooldown {
                     failures: 3,
                     until: NOW + HOUR,
+                    ..Cooldown::default()
                 },
             )]),
             ..saved("pk.old", true)
@@ -839,6 +893,7 @@ mod tests {
                 Cooldown {
                     failures: 1,
                     until: 9,
+                    ..Cooldown::default()
                 },
             )]),
             overridden: true,
@@ -858,6 +913,7 @@ mod tests {
                 Cooldown {
                     failures: 3,
                     until: NOW + HOUR,
+                    ..Cooldown::default()
                 },
             )]),
             ..saved(token, false)
@@ -903,15 +959,80 @@ mod tests {
             let (result, asked) = run_for(&mut state, now, token("pk.old"));
             assert!(asked);
             assert_eq!(result, None, "the token it rests from is not used");
-            waits.push(state.retry_at - now);
-            now = state.retry_at;
+            let retry_at = state.cooldowns["telemetry"].retry_at;
+            waits.push(retry_at - now);
+            now = retry_at;
         }
         assert_eq!(waits, [0, 0, HOUR], "the fetch's own schedule");
-        assert!(resting(&state, "telemetry", NOW), "still resting");
+        assert!(rest(&state, "telemetry", NOW).is_some(), "still resting");
+        assert_eq!(state.failures, 0, "the endpoint's own count is untouched");
 
         let (result, asked) = run_for(&mut state, now - 1, token("pk.new"));
-        assert!(!asked, "asked during the fetch pause");
+        assert!(!asked, "asked during the rest's pause");
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn a_rest_waits_out_the_fetch_pause_too() {
+        let mut state = State {
+            retry_at: NOW + 10,
+            ..resting_on("pk.old")
+        };
+        let (result, asked) = run_for(&mut state, NOW, token("pk.new"));
+        assert!(!asked);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn a_rests_miss_is_written_over_cooldowns_another_run_changed() {
+        let before = resting_on("pk.old");
+        let mut missed = before.clone();
+        run_for(&mut missed, NOW, token("pk.old"));
+        let mut disk = before.clone();
+        disk.cooldowns
+            .insert("report".to_owned(), Cooldown::default());
+        let written = merged(&before, missed.clone(), disk).expect("written");
+        assert_eq!(
+            written.cooldowns["telemetry"],
+            missed.cooldowns["telemetry"]
+        );
+        assert!(written.cooldowns.contains_key("report"));
+    }
+
+    #[test]
+    fn misses_during_a_rest_do_not_shorten_a_dead_tokens_wait() {
+        let mut state = resting_on("pk.old");
+        for _ in 0..2 {
+            run_for(&mut state, NOW, token("pk.old"));
+        }
+        // The rest is over, and then the token is called dead.
+        state.rejected = true;
+        let later = NOW + HOUR;
+        let (result, asked) = run_for(&mut state, later, token("pk.old"));
+        assert!(asked);
+        assert_eq!(result, None);
+        assert_eq!(
+            state.retry_at, later,
+            "the dead token's first miss waits for nothing"
+        );
+    }
+
+    #[test]
+    fn the_rested_token_taken_back_during_a_rest_keeps_the_rest() {
+        let mut state = State {
+            rejected: true,
+            ..resting_on("pk.old")
+        };
+        let result = acquire_for(
+            &mut state,
+            "telemetry",
+            NOW,
+            || token("pk.old"),
+            |_| Refusal::Forbidden,
+        );
+        assert_eq!(result, None, "the token it rests from is not used");
+        assert!(!state.rejected, "taken back");
+        assert!(rest(&state, "telemetry", NOW).is_some(), "still resting");
     }
 
     #[test]

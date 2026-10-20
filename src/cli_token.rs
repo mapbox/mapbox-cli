@@ -11,8 +11,10 @@
 //! dropped. It sends with:
 //!
 //! 1. `MAPBOX_CLI_TOKEN` at run time, when set: the CLI's token chosen by a
-//!    developer, such as one for staging. Sent as it is, never checked,
-//!    counted or replaced.
+//!    developer, such as one for staging. Never checked, counted or
+//!    replaced, but only ever a `pk.` token, as a fetched one must be;
+//!    anything else drops the event rather than storing a user's or a
+//!    secret token beside it.
 //! 2. Otherwise the token published on the release channel, fetched and kept
 //!    on disk until the Tokens API calls it dead. See [`fetch`] for when it
 //!    is fetched again, and for a caller's rest from it.
@@ -36,7 +38,9 @@
 //! that refuses a valid one. A command, unlike telemetry, sends again with a
 //! fresh token, and one that cannot use the CLI's token falls back to the
 //! user's, and with none says why: unavailable right now ([`Unavailable`])
-//! or refused by this API ([`Refusal`]).
+//! or refused by this API ([`Refusal`]). A command's `MAPBOX_CLI_TOKEN` is
+//! sent whatever it holds, since its request carries the user's token
+//! anyway when the CLI's cannot be used.
 //!
 //! # The token is public
 //!
@@ -206,7 +210,8 @@ fn chosen(
     fetched: impl FnOnce() -> Option<String>,
 ) -> Option<Chosen> {
     match usable(override_token) {
-        Some(token) => Some(Chosen::Override(token.to_owned())),
+        // Not the fetched token instead: whoever set it meant another one.
+        Some(token) => fetch::is_plausible(token).then(|| Chosen::Override(token.to_owned())),
         None => fetched().map(Chosen::Fetched),
     }
 }
@@ -225,9 +230,9 @@ pub(crate) enum Sent<R> {
 pub(crate) trait Ledger {
     fn refused(&mut self, caller: &str, token: &str) -> Refusal;
     fn accepted(&mut self, caller: &str, token: &str);
-    /// Whether a request refused for `refusal` is worth sending again with
-    /// a [`fresh`](Ledger::fresh) token.
-    fn retries(&self, refusal: Refusal) -> bool;
+    /// Whether a refused request is sent again with a
+    /// [`fresh`](Ledger::fresh) token.
+    fn retries(&self) -> bool;
     fn fresh(&mut self) -> Option<String>;
 }
 
@@ -268,18 +273,14 @@ impl Ledger for Disk {
             fetch::accepted(caller, token);
         }
     }
-    fn retries(&self, _: Refusal) -> bool {
-        match self {
-            Disk::Background => false,
-            Disk::Command { fetched } => !fetched,
-            Disk::Unchecked => false,
-        }
+    fn retries(&self) -> bool {
+        matches!(self, Disk::Command { fetched: false })
     }
     fn fresh(&mut self) -> Option<String> {
         match self {
-            Disk::Background => fetch::token(),
             Disk::Command { .. } => fetch::token_now().ok(),
-            Disk::Unchecked => None,
+            // Never asked: neither sends again.
+            Disk::Background | Disk::Unchecked => None,
         }
     }
 }
@@ -306,7 +307,7 @@ pub(crate) fn send_with_cli_token<R>(
         match status(&answer) {
             Some(401 | 403) => {
                 let refusal = ledger.refused(caller, &token);
-                if ledger.retries(refusal) && !replaced {
+                if ledger.retries() && !replaced {
                     if let Some(fresh) = ledger.fresh().filter(|fresh| *fresh != token) {
                         token = fresh;
                         replaced = true;
@@ -322,12 +323,14 @@ pub(crate) fn send_with_cli_token<R>(
     }
 }
 
-/// Whether [`send`] has a CLI token it could try for `caller`, judged
-/// without the network, so a caller can skip work that would only find
-/// nothing to send with.
-pub(crate) fn has_token_for(caller: &str) -> bool {
-    usable(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref()).is_some()
-        || fetch::may_have_token(caller)
+/// Why [`send`] has no CLI token it could try for `caller`, judged without
+/// the network, so a caller can skip work that would only find nothing to
+/// send with. `None` when it may have one.
+pub(crate) fn no_token_for(caller: &str) -> Option<&'static str> {
+    match usable(std::env::var("MAPBOX_CLI_TOKEN").ok().as_deref()) {
+        Some(token) => (!fetch::is_plausible(token)).then_some("override_not_public"),
+        None => fetch::no_token_for(caller),
+    }
 }
 
 fn usable(token: Option<&str>) -> Option<&str> {
@@ -342,6 +345,13 @@ mod tests {
     fn the_override_is_sent_trimmed_and_never_fetches() {
         let chosen = chosen(Some(" pk.override\n"), || panic!("fetched"));
         assert_eq!(chosen, Some(Chosen::Override("pk.override".to_owned())));
+    }
+
+    #[test]
+    fn an_override_that_is_not_public_sends_nothing() {
+        for token in ["sk.secret", "tk.login", "pk.has space"] {
+            assert_eq!(chosen(Some(token), || panic!("fetched")), None, "{token}");
+        }
     }
 
     #[test]
@@ -362,14 +372,9 @@ mod tests {
 
     #[test]
     fn telemetry_never_sends_again() {
-        for refusal in [
-            Refusal::Dead,
-            Refusal::Forbidden,
-            Refusal::Unknown,
-            Refusal::NotFetched,
-        ] {
-            assert!(!Disk::Background.retries(refusal), "{refusal:?}");
-        }
+        let mut ledger = Disk::Background;
+        assert!(!ledger.retries());
+        assert_eq!(ledger.fresh(), None);
     }
 
     #[test]
@@ -413,13 +418,12 @@ mod tests {
         assert_eq!(for_command("styles list", true), None);
     }
 
-    /// A ledger that answers every refusal with `verdict` and has `fresh`
-    /// to hand out once, and records what it was told.
+    /// A ledger that answers every refusal with `verdict`, sends again as a
+    /// command does when it `retries`, with `fresh` to hand out once, and
+    /// records what it was told.
     #[derive(Default)]
     struct FakeLedger {
-        /// Retries after any refusal, as [`Disk::Command`] does, rather than
-        /// only a dead token.
-        command: bool,
+        retries: bool,
         verdict: Option<Refusal>,
         fresh: Option<String>,
         refused: Vec<String>,
@@ -434,11 +438,21 @@ mod tests {
         fn accepted(&mut self, _: &str, token: &str) {
             self.accepted.push(token.to_owned());
         }
-        fn retries(&self, refusal: Refusal) -> bool {
-            self.command || refusal == Refusal::Dead
+        fn retries(&self) -> bool {
+            self.retries
         }
         fn fresh(&mut self) -> Option<String> {
             self.fresh.take()
+        }
+    }
+
+    /// A command's ledger, as [`Disk::Command`] for a token from disk.
+    fn command_ledger(verdict: Refusal, fresh: &str) -> FakeLedger {
+        FakeLedger {
+            retries: true,
+            verdict: Some(verdict),
+            fresh: Some(fresh.to_owned()),
+            ..FakeLedger::default()
         }
     }
 
@@ -464,45 +478,42 @@ mod tests {
     }
 
     #[test]
-    fn a_dead_token_is_replaced_and_sent_once_more() {
-        let mut ledger = FakeLedger {
-            verdict: Some(Refusal::Dead),
-            fresh: Some("pk.new".to_owned()),
-            ..FakeLedger::default()
-        };
-        let (outcome, sent) = send_cli(&mut ledger, &[Some(401), Some(200)]);
-        assert_eq!(outcome, Sent::Answered(Some(200)));
-        assert_eq!(sent, ["pk.old", "pk.new"]);
-        assert_eq!(ledger.accepted, ["pk.new"]);
+    fn a_command_tries_a_fresh_token_after_any_refusal() {
+        for verdict in [
+            Refusal::Dead,
+            Refusal::Forbidden,
+            Refusal::Unknown,
+            Refusal::NotFetched,
+        ] {
+            let mut ledger = command_ledger(verdict, "pk.new");
+            let (outcome, sent) = send_cli(&mut ledger, &[Some(403), Some(200)]);
+            assert_eq!(outcome, Sent::Answered(Some(200)), "{verdict:?}");
+            assert_eq!(sent, ["pk.old", "pk.new"], "{verdict:?}");
+            assert_eq!(ledger.accepted, ["pk.new"], "{verdict:?}");
+        }
     }
 
     #[test]
-    fn a_replacement_that_is_refused_too_is_not_replaced_again() {
-        let mut ledger = FakeLedger {
-            verdict: Some(Refusal::Dead),
-            fresh: Some("pk.new".to_owned()),
-            ..FakeLedger::default()
-        };
+    fn a_commands_replacement_that_is_refused_too_is_not_replaced_again() {
+        let mut ledger = command_ledger(Refusal::Dead, "pk.new");
         let (outcome, sent) = send_cli(&mut ledger, &[Some(401), Some(401)]);
         assert_eq!(outcome, Sent::Refused(Some(401), Refusal::Dead));
         assert_eq!(sent, ["pk.old", "pk.new"]);
     }
 
     #[test]
-    fn a_dead_token_with_no_new_one_is_handed_back() {
-        let mut ledger = FakeLedger {
-            verdict: Some(Refusal::Dead),
-            fresh: Some("pk.old".to_owned()),
-            ..FakeLedger::default()
-        };
-        let (outcome, sent) = send_cli(&mut ledger, &[Some(403)]);
-        assert_eq!(outcome, Sent::Refused(Some(403), Refusal::Dead));
-        assert_eq!(sent, ["pk.old"], "the same token is not sent again");
+    fn a_command_gets_the_same_token_back_and_does_not_resend_it() {
+        for verdict in [Refusal::Dead, Refusal::Forbidden] {
+            let mut ledger = command_ledger(verdict, "pk.old");
+            let (outcome, sent) = send_cli(&mut ledger, &[Some(403)]);
+            assert_eq!(outcome, Sent::Refused(Some(403), verdict));
+            assert_eq!(sent, ["pk.old"], "the same token is not sent again");
+        }
     }
 
     #[test]
-    fn a_token_this_api_refuses_is_handed_back_without_a_fetch() {
-        for verdict in [Refusal::Forbidden, Refusal::Unknown] {
+    fn in_the_background_any_refusal_is_handed_back_without_a_fetch() {
+        for verdict in [Refusal::Dead, Refusal::Forbidden, Refusal::Unknown] {
             let mut ledger = FakeLedger {
                 verdict: Some(verdict),
                 fresh: Some("pk.new".to_owned()),
@@ -511,36 +522,9 @@ mod tests {
             let (outcome, sent) = send_cli(&mut ledger, &[Some(403)]);
             assert_eq!(outcome, Sent::Refused(Some(403), verdict));
             assert_eq!(sent, ["pk.old"]);
+            assert_eq!(ledger.refused, ["pk.old"], "{verdict:?} not checked");
             assert!(ledger.fresh.is_some(), "{verdict:?} fetched a new token");
         }
-    }
-
-    #[test]
-    fn a_command_tries_a_fresh_token_after_any_refusal() {
-        for verdict in [Refusal::Forbidden, Refusal::Unknown, Refusal::NotFetched] {
-            let mut ledger = FakeLedger {
-                command: true,
-                verdict: Some(verdict),
-                fresh: Some("pk.new".to_owned()),
-                ..FakeLedger::default()
-            };
-            let (outcome, sent) = send_cli(&mut ledger, &[Some(403), Some(200)]);
-            assert_eq!(outcome, Sent::Answered(Some(200)), "{verdict:?}");
-            assert_eq!(sent, ["pk.old", "pk.new"], "{verdict:?}");
-        }
-    }
-
-    #[test]
-    fn a_command_gets_the_same_token_back_and_does_not_resend_it() {
-        let mut ledger = FakeLedger {
-            command: true,
-            verdict: Some(Refusal::Forbidden),
-            fresh: Some("pk.old".to_owned()),
-            ..FakeLedger::default()
-        };
-        let (outcome, sent) = send_cli(&mut ledger, &[Some(403)]);
-        assert_eq!(outcome, Sent::Refused(Some(403), Refusal::Forbidden));
-        assert_eq!(sent, ["pk.old"]);
     }
 
     #[test]
@@ -550,14 +534,7 @@ mod tests {
             (Disk::Command { fetched: true }, false),
             (Disk::Unchecked, false),
         ] {
-            for refusal in [
-                Refusal::Dead,
-                Refusal::Forbidden,
-                Refusal::Unknown,
-                Refusal::NotFetched,
-            ] {
-                assert_eq!(ledger.retries(refusal), retries, "{refusal:?}");
-            }
+            assert_eq!(ledger.retries(), retries);
         }
     }
 

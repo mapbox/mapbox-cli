@@ -491,8 +491,8 @@ and `--dry-run` show it alongside everything else on the request.
 ### The CLI's own requests
 
 The CLI has a token of its own, for requests it makes for itself.
-Telemetry uses only that token, never yours: `MAPBOX_CLI_TOKEN`, or a
-public token fetched from `https://cli.mapbox.com/config/token.json` and
+Telemetry uses only that token, never yours: `MAPBOX_CLI_TOKEN` when it
+holds a public `pk.` token, or a public token fetched from `https://cli.mapbox.com/config/token.json` and
 kept in `~/.mapbox/cli-token.json`. With neither usable, the event is
 dropped. It is replaced only when the Tokens API says it is revoked,
 invalid, expired or malformed, not when one API refuses it; the event that

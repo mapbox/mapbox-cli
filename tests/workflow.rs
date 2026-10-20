@@ -32,7 +32,12 @@ fn run(home: &Path, args: &[&str]) -> Output {
 
 /// [`run`], with `env` set on top of what it sets.
 fn run_with(home: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_mapbox"))
+    command(home, args, env).output().expect("run mapbox")
+}
+
+fn command(home: &Path, args: &[&str], env: &[(&str, &str)]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_mapbox"));
+    command
         // Telemetry is not under test here, and would post to Mapbox. Every
         // step's child inherits these.
         .env("MAPBOX_CLI_NO_TELEMETRY", "1")
@@ -51,9 +56,8 @@ fn run_with(home: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("MAPBOX_CONFIG_DIR", home.join(".mapbox"))
         .envs(env.iter().copied())
-        .args(args)
-        .output()
-        .expect("run mapbox")
+        .args(args);
+    command
 }
 
 fn stdout_json(out: &Output) -> Value {
@@ -190,6 +194,82 @@ fn a_failing_step_stops_the_run() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("exited with 3"), "{stderr}");
     assert!(!stderr.contains("[2/2]"), "the second step ran: {stderr}");
+}
+
+/// Ctrl-C at a terminal reaches the whole foreground process group: the
+/// step's child and `mapbox` alike. The run must still remove its working
+/// directory, which a process that simply died would leave behind.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_stops_the_run_and_removes_its_directory() {
+    use std::os::unix::process::CommandExt as _;
+    use std::time::{Duration, Instant};
+
+    let home = scratch("interrupt");
+    let marker = home.join("workdir");
+    let yaml = "version: 1\nname: slow\nsummary: Waits to be interrupted\n\
+                inputs:\n  marker: { type: string, required: true }\nsteps:\n\
+                \x20 - id: wait\n    script: wait.sh\n    args: ['${{ inputs.marker }}']\n\
+                \x20 - id: after\n    command: config list\n";
+    let script =
+        "printf %s \"$MAPBOX_WORKFLOW_WORKDIR\" > \"$1.tmp\"\nmv \"$1.tmp\" \"$1\"\nsleep 30\n";
+    let dir = write_workflow(&home, "slow", yaml, &[("wait.sh", script)]);
+    assert!(run(&home, &["workflow", "install", dir.to_str().unwrap()])
+        .status
+        .success());
+
+    let marker_arg = marker.display().to_string();
+    let child = command(
+        &home,
+        &[
+            "workflow",
+            "run",
+            "slow",
+            "--marker",
+            &marker_arg,
+            "-o",
+            "json",
+        ],
+        &[],
+    )
+    .process_group(0)
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped())
+    .spawn()
+    .expect("start mapbox");
+
+    let started = Instant::now();
+    while !marker.exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the step never started"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let workdir = PathBuf::from(std::fs::read_to_string(&marker).unwrap());
+    assert!(workdir.is_dir(), "{}", workdir.display());
+
+    let group = format!("-{}", child.id());
+    assert!(Command::new("kill")
+        .args(["-INT", "--", &group])
+        .status()
+        .expect("run kill")
+        .success());
+    let out = child.wait_with_output().expect("wait for mapbox");
+
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "the run outlived the step"
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!workdir.exists(), "{} was left behind", workdir.display());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("cancelled"), "{stderr}");
+    assert!(
+        stderr.contains("Interrupted during step `wait`"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("[2/2]"), "the next step ran: {stderr}");
 }
 
 #[test]

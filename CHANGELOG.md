@@ -36,8 +36,9 @@ that may never merge. They are not releases and are not listed here.
   its details. `--quiet` drops the details but keeps warnings. A workflow's
   optional `result` template is what text mode prints; `-o json` prints its
   outputs. A command step's `save: <file>` keeps its stdout, such as a
-  style's ZIP, as a file for later steps, in a working directory removed
-  when the run ends; a command step may be marked `dry_run` only when its command
+  style's ZIP, as a file for later steps, in an owner-only working directory
+  removed when the run ends, Ctrl-C included (the run then fails with
+  `cancelled`); a command step may be marked `dry_run` only when its command
   is known to change nothing: an API `GET`, or a local read such as
   `config list`. The
   generated agent skill leaves `workflow` out. The first one published is

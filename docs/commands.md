@@ -5460,7 +5460,7 @@ faults and are not:
 | `invalid_file` | A file could not be read: one named by `--file`, or one named by `--data @<path>`. Also a `@<path>` that is not valid UTF-8, which a JSON body has to be. |
 | `binary_response` | The response was bytes and stdout is a terminal. Redirect it to a file. |
 | `missing_subcommand` | A command group was named with no operation. |
-| `cancelled` | A delete was declined at the confirmation prompt. Nothing was sent. |
+| `cancelled` | A delete was declined at the confirmation prompt, and nothing was sent; or `workflow run` was interrupted with Ctrl-C, and the steps after the current one did not run. |
 | `cli_token_unavailable` | A command that prefers the CLI's own token (`report`) could not use it — it could not be fetched, or it is revoked and no new one is published yet — and you have no token of your own to fall back to. |
 | `cli_token_forbidden` | This API refused the CLI's own token, even after fetching it afresh, and you have no token of your own to fall back to. |
 | `usage` | Anything else clap rejected. Exit code 2, not 1. |

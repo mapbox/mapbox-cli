@@ -21,6 +21,7 @@ use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command as Process, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{anyhow, Context as _, Result};
 use clap::{Arg, ArgAction, Command};
@@ -259,6 +260,7 @@ fn run_steps(
     dry_run: bool,
 ) -> Result<BTreeMap<String, Value>> {
     let exe = std::env::current_exe().context("Could not find this program's own path")?;
+    catch_interrupt();
     let workdir = Workdir::create()?;
     let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
     let total = workflow.steps.len();
@@ -325,12 +327,34 @@ fn run_steps(
         let is_script = matches!(step.action, Action::Script { .. });
         let view = display.start(index, title, &step.label(), is_script);
         let result = execute(&mut process, stdin.as_ref(), step, &view, workdir.path());
-        view.finish(result.is_ok());
+        let interrupted = INTERRUPTED.load(Ordering::SeqCst);
+        view.finish(result.is_ok() && !interrupted);
+        if interrupted {
+            return Err(CliError::new(
+                "cancelled",
+                format!(
+                    "Interrupted during step `{}`; the steps after it did not run.",
+                    step.id
+                ),
+            )
+            .into());
+        }
         outputs.insert(step.id.clone(), result?);
     }
 
     display.finish_run();
     Ok(outputs)
+}
+
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+/// Ctrl-C reaches the running step's child as well as this process. The
+/// child stops; this process only notes it and fails once the child has
+/// gone, so the run's [`Workdir`] is dropped rather than left in place by a
+/// process that died holding it.
+fn catch_interrupt() {
+    // Fails only when a handler is already set, and only a run sets one.
+    let _ = ctrlc::set_handler(|| INTERRUPTED.store(true, Ordering::SeqCst));
 }
 
 fn size(bytes: usize) -> String {

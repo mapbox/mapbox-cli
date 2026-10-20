@@ -182,7 +182,7 @@ pub fn command() -> Command {
     };
 
     Command::new(COMMAND)
-        .about("Get or set a persisted mapbox setting")
+        .about("Get or set persisted settings: telemetry, update checks, history and logs")
         .long_about(
             "Get or set a mapbox setting that persists across shells and sessions, \
              written to a file beside the stored credentials rather than an \
@@ -196,7 +196,7 @@ pub fn command() -> Command {
         )
         .subcommand(
             Command::new("set")
-                .about("Persist a setting")
+                .about("Turn a setting on or off, and keep it that way")
                 .arg(key_arg())
                 .arg(Arg::new("value").required(true).value_parser([ON, OFF])),
         )

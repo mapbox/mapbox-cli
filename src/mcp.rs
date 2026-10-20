@@ -354,6 +354,11 @@ pub fn command() -> ClapCommand {
         .subcommand(
             ClapCommand::new(INSTALL)
                 .about("Register a server with a client. With neither flag, every known server for every detected client")
+                .long_about(
+                    "Register the Mapbox MCP and Mapbox DevKit MCP servers with a coding agent: \
+                     Claude Code, Codex, VS Code or Cursor. With neither flag, registers every known \
+                     server with every detected client.",
+                )
                 .arg(
                     Arg::new(SERVER_ARG)
                         .long(SERVER_ARG)

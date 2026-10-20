@@ -443,12 +443,13 @@ fn help_names_env_variables_without_their_values() {
     assert!(!text.contains("=]"), "an env note still shows `=`: {text}");
 }
 
-const AGENT_HINT: &str = "Agents: `mapbox --schema`";
+const AGENT_HINT: &str = "Agents: `mapbox commands search";
 
-/// An agent reading top-level help is pointed at `--schema` rather than left
-/// to chain `--help` calls. Only there: subcommand help stays as it was.
+/// An agent reading top-level help is pointed at `commands search` and
+/// `--schema` rather than left to chain `--help` calls. Only there:
+/// subcommand help stays as it was.
 #[test]
-fn an_agent_is_pointed_at_the_schema() {
+fn an_agent_is_pointed_at_search_and_the_schema() {
     let out = command()
         .env("CLAUDECODE", "1")
         .arg("--help")
@@ -456,6 +457,11 @@ fn an_agent_is_pointed_at_the_schema() {
         .expect("run mapbox");
     assert!(out.status.success());
     assert!(stdout(&out).contains(AGENT_HINT), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("`mapbox --schema`"),
+        "{}",
+        stdout(&out)
+    );
 
     let sub = command()
         .env("CLAUDECODE", "1")
@@ -1293,4 +1299,97 @@ fn text_into_a_pipe_carries_no_color_and_no_banner() {
             assert!(!text.contains("mapbox · v"), "{args:?} {stream}: {text:?}");
         }
     }
+}
+
+/// `commands search` answers on stdout alone under `json`: the matches as
+/// `[{command, summary}]`, best first, with nothing on stderr for a caller
+/// to have to tell apart from a warning.
+#[test]
+fn commands_search_prints_its_matches_as_json() {
+    let out = run(&["-o", "json", "commands", "search", "upload", "a", "font"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stderr(&out), "");
+    let matches = json(&stdout(&out));
+    let matches = matches.as_array().expect("an array");
+    assert_eq!(matches[0]["command"], "mapbox fonts upload");
+    assert!(matches.len() <= 5, "{matches:?}");
+    for entry in matches {
+        let keys: Vec<&String> = entry.as_object().expect("an object").keys().collect();
+        assert_eq!(keys, ["command", "summary"], "{entry}");
+    }
+}
+
+/// A person gets a table on stdout and the next step on stderr, so
+/// `> file` keeps the table alone.
+#[test]
+fn commands_search_prints_a_table_and_a_tip_as_text() {
+    let out = run(&["-o", "text", "commands", "search", "upload a font"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.starts_with("COMMAND"), "{text}");
+    assert!(text.contains("mapbox fonts upload"), "{text}");
+    assert!(stderr(&out).contains("Tip:"), "{}", stderr(&out));
+}
+
+/// No match is an empty answer, not a failure: the query was fine, the CLI
+/// just has nothing for it.
+#[test]
+fn commands_search_with_no_match_is_an_empty_list() {
+    let out = run(&["-o", "json", "commands", "search", "xyzzy"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(json(&stdout(&out)), serde_json::json!([]));
+}
+
+#[test]
+fn commands_list_names_every_command_once() {
+    let out = run(&["-o", "json", "commands", "list"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let listed = json(&stdout(&out));
+    let listed: Vec<&str> = listed
+        .as_array()
+        .expect("an array")
+        .iter()
+        .map(|entry| entry["command"].as_str().expect("a command"))
+        .collect();
+    let schema = json(&stdout(&run(&["--schema"])));
+    let mut described: Vec<&str> = schema["commands"]
+        .as_array()
+        .expect("commands")
+        .iter()
+        .map(|entry| entry["command"].as_str().expect("a command"))
+        .collect();
+    described.sort_unstable();
+    assert_eq!(listed, described);
+}
+
+/// A command name nothing resembles is pointed at `commands search`, in
+/// both modes. One clap has a near spelling for keeps clap's suggestion,
+/// which is the better answer.
+#[test]
+fn an_unknown_command_is_pointed_at_search() {
+    let out = run(&["-o", "json", "upload-font"]);
+    assert_eq!(out.status.code(), Some(2));
+    let error = json(&stderr(&out));
+    assert!(
+        error["fix"]
+            .as_str()
+            .is_some_and(|fix| fix.contains("mapbox commands search")),
+        "{error}"
+    );
+
+    let out = run(&["-o", "text", "upload-font"]);
+    assert!(
+        stderr(&out).contains("mapbox commands search"),
+        "{}",
+        stderr(&out)
+    );
+
+    let out = run(&["-o", "json", "styles", "lst"]);
+    let error = json(&stderr(&out));
+    assert!(
+        error["fix"]
+            .as_str()
+            .is_some_and(|fix| fix.contains("'list'")),
+        "{error}"
+    );
 }

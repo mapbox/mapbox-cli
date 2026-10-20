@@ -113,6 +113,56 @@ jobs:
         shell: bash
         run: sh scripts/test-completion.sh
 
+  # Which `commands search` queries a PR fixed and broke, against its base,
+  # written to the job summary. It reports and never fails: the floors that
+  # `cargo test` holds in the build job are the gate. A job summary rather
+  # than a PR comment because it needs no write token, so a PR from a fork
+  # gets one too. One runner: ranking is the same everywhere.
+  search-eval:
+    name: commands search eval
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      # Whole history, so the base commit is there to check out beside it.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # As in the build job: install exactly the pinned toolchain.
+      - name: Read the pinned toolchain
+        id: toolchain
+        run: |
+          echo "toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -1)" >>"$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.toolchain.outputs.toolchain }}
+
+      # `|| true`: a run below its floor still writes its reports, and the
+      # build job is where that failure is reported.
+      - name: Run the eval on this branch
+        run: MAPBOX_SEARCH_EVAL_REPORT="$RUNNER_TEMP/eval-head" cargo test --locked --bin mapbox eval_set || true
+
+      # In a worktree sharing this target directory, so only the crate itself
+      # rebuilds. A base from before the eval existed matches no test and
+      # writes no reports; the summary then shows this branch's scores alone.
+      - name: Run the eval on the base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
+          cd "$RUNNER_TEMP/base"
+          CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
+            MAPBOX_SEARCH_EVAL_REPORT="$RUNNER_TEMP/eval-base" \
+            cargo test --locked --bin mapbox eval_set || true
+
+      - name: Write the summary
+        run: python3 scripts/commands-search-report.py "$RUNNER_TEMP/eval-head" "$RUNNER_TEMP/eval-base" >>"$GITHUB_STEP_SUMMARY"
+
   # No Rust: this is where the repo's shell gets checked, install.sh above all
   # — it is served to machines we do not control, and this is the only thing
   # that checks it. Both runners, because the portability it has to get right

@@ -1276,3 +1276,35 @@ fn an_unexplained_refusal_starts_a_cooldown_too() {
     assert_eq!(state["rejected"], false);
     assert!(state["cooldowns"]["telemetry"]["until"].is_u64(), "{state}");
 }
+
+/// A search query is whatever the caller typed — a customer's name, a
+/// token pasted by mistake — so it leaves as its length and never as text.
+#[test]
+fn a_search_query_is_sent_as_its_length() {
+    let home = scratch("commands-search");
+    let (out, event) = run_sent(
+        &home,
+        &[
+            "-o",
+            "json",
+            "commands",
+            "search",
+            "secret-customer-name",
+            "upload",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(event["command"], serde_json::json!(["commands", "search"]));
+    assert!(
+        !event.to_string().contains("secret-customer-name"),
+        "the query's text was sent: {event}"
+    );
+    assert_eq!(
+        event["params"],
+        serde_json::json!([{ "name": "query", "length": "secret-customer-name upload".len() }])
+    );
+}

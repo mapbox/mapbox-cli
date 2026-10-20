@@ -26,6 +26,7 @@ mod agent_skills;
 mod api_command_surface;
 mod auth;
 mod cli_token;
+mod commands;
 mod completion;
 mod config;
 mod confirm;
@@ -71,8 +72,9 @@ const REPO_URL: &str = repo_url!();
 /// by chaining `--help` calls, one command at a time; `--schema` answers the
 /// same question for every command in one document.
 const AGENT_HELP_HINT: &str = "\
-Agents: `mapbox --schema` describes every command, its arguments and the request it makes
-as one JSON document. Use it instead of chaining --help calls.";
+Agents: `mapbox commands search \"<task>\"` finds the command for a task. `mapbox --schema`
+describes every command, its arguments and the request it makes as one JSON document. Use
+these instead of chaining --help calls.";
 
 /// Help headings for the global options, which otherwise share one
 /// "Options:" list with every command's own.
@@ -784,6 +786,10 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
     // Beside `config`, which turns the history it reads on and off.
     app = app.subcommand(history::command());
 
+    // Reads the same tree `--schema` does, so it is built from the commands
+    // above rather than listing them itself.
+    app = app.subcommand(commands::command());
+
     // Reads what the other hand-written commands above also read — the
     // token store, the proxy environment, the config and telemetry
     // switches — so it belongs beside them rather than the API surface
@@ -1032,6 +1038,9 @@ fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> u8 
             run_record::add_stdout_bytes(err.render().to_string().len());
         }
         let _ = err.print();
+        if let Some(fix) = search_fix(&err, &rendered) {
+            output::print_tips(&[fix.to_string()]);
+        }
         return code;
     }
 
@@ -1054,14 +1063,27 @@ fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> u8 
         // answers that, and inventing one would be worse than the message
         // alone — but clap's own suggester sometimes already has the answer,
         // and `-o text` shows it; carry it over rather than losing it here.
-        _ => match clap_tip(&rendered) {
-            Some(tip) => Remedy::default().with_fix(&tip),
+        _ => match clap_tip(&rendered)
+            .as_deref()
+            .or(search_fix(&err, &rendered))
+        {
+            Some(fix) => Remedy::default().with_fix(fix),
             None => Remedy::default(),
         },
     });
 
     output::emit_error(mode, &error.into());
     code
+}
+
+/// Where to go after a command name nothing resembles, which is usually a
+/// guess at what the command is called — the question `commands search`
+/// answers. A fix rather than an action: the query is the caller's to write.
+/// Nothing when clap already suggested a near spelling, which is the better
+/// answer.
+fn search_fix(err: &clap::Error, rendered: &str) -> Option<&'static str> {
+    (err.kind() == ErrorKind::InvalidSubcommand && clap_tip(rendered).is_none())
+        .then_some("To find a command by what it does: mapbox commands search \"<task>\"")
 }
 
 /// The `tip: …` line clap's own suggester renders for an unrecognized
@@ -1394,6 +1416,14 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             Some(("list", list_matches)) => history::list(list_matches, mode)?,
             Some(("show", show_matches)) => history::show(show_matches, mode)?,
             _ => unreachable!("`history` sets subcommand_required(true)"),
+        },
+        // Ahead of the generic service arm too, and handed `app` for the
+        // same reason `generate-skills` is: it reads the command tree already
+        // in memory. No token and no request.
+        Some((commands::COMMAND, commands_matches)) => match commands_matches.subcommand() {
+            Some(("search", search_matches)) => commands::search(app, specs, search_matches, mode)?,
+            Some(("list", _)) => commands::list(app, specs, mode)?,
+            _ => unreachable!("`commands` sets subcommand_required(true)"),
         },
         // Also ahead of the generic service arm: read-only except for the
         // opt-in `--verify` request, and needs no credential load of its own

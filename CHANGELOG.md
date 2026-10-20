@@ -19,6 +19,13 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- New `mapbox commands search "<task>"` finds the commands that match a
+  task, best first, and `mapbox commands list` lists every command with its
+  summary. Both are local keyword lookups: no request, no token. `json`
+  gives `[{command, summary}]`. The query is sent in telemetry as its length
+  only. Top-level help now points to `commands search` (agents see it in
+  their hint), and an unknown command with no near spelling suggests it in
+  the error's `fix`. No existing command or output changes.
 - New `mapbox report "<message>"` sends feedback about the CLI itself to
   the Mapbox CLI team, with the CLI's version and OS appended. It is filed
   under Mapbox's account, not yours. It is sent with the CLI's own token,

@@ -21,6 +21,7 @@ mapbox styles list
   - [Named profiles](#named-profiles)
 - [Commands](#commands)
   - [API commands](#api-commands)
+  - [Finding a command](#finding-a-command)
   - [Diagnostics and settings](#diagnostics-and-settings)
   - [Shell completion](#shell-completion)
   - [Tileset CLI](#tileset-cli)
@@ -307,6 +308,17 @@ otherwise; Mapbox Events keeps the token an event was sent with, and the
 account it belongs to, alongside the event. With no token of your own and
 no way to fetch the CLI's, the event is dropped.
 `MAPBOX_CLI_NO_TELEMETRY=1` or `mapbox config set telemetry off` turns it off.
+
+### Finding a command
+
+```sh
+mapbox commands search upload a font   # the commands that match a task, best first
+mapbox commands list                   # every command with its summary
+```
+
+Both are local keyword lookups over the CLI's own commands: no model, no
+request and no token. Agents get the same matches as JSON. See
+[Commands](./docs/commands.md#commands).
 
 ### Diagnostics and settings
 

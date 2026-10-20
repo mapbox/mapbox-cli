@@ -178,9 +178,12 @@ pub fn warn_yes_ignored(matches: &ArgMatches) {
 
 pub fn command() -> Command {
     Command::new(COMMAND)
-        .about("Run the Mapbox Tilesets CLI (`tilesets`, installed separately)")
+        .about("Run the Mapbox Tilesets CLI (installed separately): upload data, publish tilesets")
         .long_about(format!(
-            "Forward arguments to the Mapbox Tilesets CLI.\n\n\
+            "Forward arguments to the Mapbox Tilesets CLI, the command-line client for \
+             Mapbox Tiling Service (MTS): upload GeoJSON as a tileset source, validate a \
+             recipe, create and publish a tileset, and check on its jobs. It also lists, \
+             updates and deletes tilesets and tileset sources.\n\n\
              Everything after `{COMMAND}` is passed through to the `tilesets` binary \
              untouched — including flags, so `{COMMAND} --help` shows the Tilesets \
              CLI's own help rather than this one. `tilesets` ships separately as the \

@@ -1695,6 +1695,12 @@ fn try_cli_token(
             Err(error) => error.downcast_ref::<CliError>().and_then(|e| e.status),
         },
     );
+    cli_attempt(command, sent)
+}
+
+/// What a command's send with the CLI's token came to, for its caller: the
+/// result, or why the user's token should stand in.
+fn cli_attempt(command: &str, sent: cli_token::Sent<Result<()>>) -> CliAttempt {
     let (result, refusal) = match sent {
         cli_token::Sent::Answered(result) => match rate_limited(result) {
             // Every install shares the CLI's token, so a limit on it says
@@ -2997,5 +3003,63 @@ paths:
             rendered("get-new"),
             ("Fetch a thing".to_string(), "The long one.".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod cli_attempt_tests {
+    use super::*;
+
+    fn api_error(status: u16) -> Result<()> {
+        Err(CliError {
+            status: Some(status),
+            ..CliError::new("http_error", "refused")
+        }
+        .with_request_id(Some("req-1".to_owned()))
+        .into())
+    }
+
+    fn unusable(attempt: CliAttempt) -> (Box<CliError>, bool) {
+        match attempt {
+            CliAttempt::Unusable { error, sent, .. } => (error, sent),
+            CliAttempt::Done(result) => panic!("done: {result:?}"),
+        }
+    }
+
+    /// A refusal is never the command's answer: the user's token may stand
+    /// in, and with none the error says why the CLI's could not be used.
+    #[test]
+    fn a_refusal_lets_the_users_token_stand_in() {
+        for (refusal, code) in [
+            (cli_token::Refusal::Dead, "cli_token_unavailable"),
+            (cli_token::Refusal::Forbidden, "cli_token_forbidden"),
+            (cli_token::Refusal::Unknown, "cli_token_forbidden"),
+            (cli_token::Refusal::NotFetched, "cli_token_forbidden"),
+        ] {
+            let sent = cli_token::Sent::Refused(api_error(403), refusal);
+            let (error, sent) = unusable(cli_attempt("report", sent));
+            assert_eq!(error.code, code, "{refusal:?}");
+            assert_eq!(error.request_id.as_deref(), Some("req-1"), "{refusal:?}");
+            assert!(sent, "{refusal:?}: the request went out");
+        }
+    }
+
+    #[test]
+    fn a_rate_limit_lets_the_users_token_stand_in() {
+        let sent = cli_token::Sent::Answered(api_error(429));
+        let (error, sent) = unusable(cli_attempt("report", sent));
+        assert_eq!(error.status, Some(429));
+        assert!(sent);
+    }
+
+    #[test]
+    fn any_other_answer_is_the_commands() {
+        for result in [Ok(()), api_error(500)] {
+            let expected = format!("{result:?}");
+            match cli_attempt("report", cli_token::Sent::Answered(result)) {
+                CliAttempt::Done(result) => assert_eq!(format!("{result:?}"), expected),
+                CliAttempt::Unusable { .. } => panic!("{expected}: unusable"),
+            }
+        }
     }
 }

@@ -568,12 +568,7 @@ fn without_the_switch_there_is_no_delivery_log() {
 /// CLI's: none of them is stored beside it in Mapbox Events.
 #[test]
 fn a_users_token_never_reaches_the_send() {
-    for args in [
-        &["--token", "sk.typed", "config", "list"][..],
-        &["--use-login", "config", "list"],
-        &["--version"],
-        &["nosuchcommand"],
-    ] {
+    for args in USER_TOKEN_RUNS {
         let home = scratch("send-never-user");
         log_in(&home, "tk.login");
         let (received, url) = events_server(true);
@@ -1185,23 +1180,46 @@ fn token_sent(heads: &mpsc::Receiver<String>) -> (String, Option<String>) {
 
 const CLI_REFERER: Option<&str> = Some("https://cli.mapbox.com/");
 
-/// Logged in, with a token in the environment too, the event goes with the
-/// fetched CLI token.
+/// Runs that each hold a token of the user's, for the tests that show none
+/// is sent: typed, from the login, and paths that never resolve one.
+const USER_TOKEN_RUNS: [&[&str]; 5] = [
+    &["--token", "sk.typed", "config", "list"],
+    &["--use-login", "config", "list"],
+    &["--version"],
+    &["nosuchcommand"],
+    &["styles", "list", "--schema"],
+];
+
+/// Every token of the user's at once, and the event still goes with the
+/// fetched CLI token, as it does with the override.
 #[test]
 fn a_logged_in_run_sends_with_the_clis_token() {
-    let home = scratch("send-logged-in-cli");
-    log_in(&home, "tk.login");
-    let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.fetched"}"#);
-    let (received, url) = events_server(true);
-    let out = command(&home)
-        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
-        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
-        .env("MAPBOX_ACCESS_TOKEN", "sk.env")
-        .args(["config", "list"])
-        .output()
-        .expect("run mapbox");
-    assert!(out.status.success());
-    assert_eq!(sent_with(&received), "pk.fetched");
+    for args in USER_TOKEN_RUNS {
+        let home = scratch("send-logged-in-cli");
+        log_in(&home, "tk.login");
+        let (_, token_url) = answer_once("200 OK", r#"{"token":"pk.fetched"}"#);
+        let (received, url) = events_server(true);
+        let _ = command(&home)
+            .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+            .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+            .env("MAPBOX_ACCESS_TOKEN", "sk.env")
+            .env("MapboxAccessToken", "sk.legacy")
+            .args(args)
+            .output()
+            .expect("run mapbox");
+        let request = received
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the event was posted");
+        assert!(
+            request.head.contains("access_token=pk.fetched "),
+            "{args:?}: {}",
+            request.head
+        );
+        let whole = format!("{}{}", request.head, request.body);
+        for user in ["sk.typed", "tk.login", "sk.env", "sk.legacy"] {
+            assert!(!whole.contains(user), "{args:?}: `{user}` was sent");
+        }
+    }
 }
 
 /// Runs `config list` with a token in the environment, which is never sent,
@@ -1466,4 +1484,80 @@ fn a_token_served_after_the_fetch_pause_is_used() {
     assert!(out.status.success());
     assert_eq!(sent_with(&received), "pk.new");
     assert_eq!(cli_token_state(&home, "pk.new")["failures"], 0);
+}
+
+/// `MAPBOX_CLI_TOKEN` is the developer's choice: a refusal of it is sent
+/// once, never checked, and leaves the fetched token's state alone, even
+/// when it is the token on disk.
+#[test]
+fn a_refused_override_is_not_checked_or_replaced() {
+    let home = scratch("send-override-refused");
+    let state = serde_json::json!({"token": "pk.cli", "overridden": true}).to_string();
+    std::fs::write(config_dir(&home).join("cli-token.json"), &state).expect("write the state");
+    let (heads, events_url) = answer_each(&[
+        ("401 Unauthorized", r#"{"message":"Not Authorized"}"#),
+        ("204 No Content", ""),
+    ]);
+    let (fetched, token_url) = answer_once("200 OK", r#"{"token":"pk.new"}"#);
+    let (checked, tokens_url) = answer_once("200 OK", r#"{"code":"TokenRevoked"}"#);
+    let out = command(&home)
+        .env("MAPBOX_INTERNAL_TELEMETRY_LOG", "1")
+        .env("MAPBOX_INTERNAL_TELEMETRY_URL", &events_url)
+        .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
+        .env("MAPBOX_INTERNAL_TOKENS_URL", &tokens_url)
+        .env("MAPBOX_CLI_TOKEN", "pk.cli")
+        .args(["config", "list"])
+        .output()
+        .expect("run mapbox");
+    assert!(out.status.success());
+    assert_eq!(token_sent(&heads).0, "pk.cli");
+    // The child logs once it is done with the refusal.
+    let lines = deliveries(&home, 2);
+    assert_eq!(lines[1]["status"], 401, "{lines:?}");
+    assert!(
+        heads.recv_timeout(Duration::from_millis(500)).is_err(),
+        "the event was sent again"
+    );
+    assert!(
+        checked.recv_timeout(Duration::from_millis(100)).is_err(),
+        "the override was checked"
+    );
+    assert!(
+        fetched.recv_timeout(Duration::from_millis(100)).is_err(),
+        "a token was fetched to replace the override"
+    );
+    let after =
+        std::fs::read_to_string(config_dir(&home).join("cli-token.json")).expect("the state");
+    assert_eq!(after, state);
+}
+
+/// A rest or a fetch pause is about the fetched token, so an override is
+/// sent through either.
+#[test]
+fn an_override_is_sent_while_resting_or_paused() {
+    let later = now() + 3000;
+    for (name, state) in [
+        (
+            "paused",
+            serde_json::json!({"token": "pk.old", "rejected": true,
+                "failures": 3, "retry_at": later}),
+        ),
+        (
+            "resting",
+            serde_json::json!({"token": "pk.kept", "failures": 3, "retry_at": later,
+                "cooldowns": {"telemetry": {"failures": 3, "until": later}}}),
+        ),
+    ] {
+        let home = scratch(&format!("send-override-{name}"));
+        save_cli_token_state(&home, state);
+        let (received, url) = events_server(true);
+        let out = command(&home)
+            .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
+            .env("MAPBOX_CLI_TOKEN", "pk.cli")
+            .args(["config", "list"])
+            .output()
+            .expect("run mapbox");
+        assert!(out.status.success());
+        assert_eq!(sent_with(&received), "pk.cli", "{name}");
+    }
 }

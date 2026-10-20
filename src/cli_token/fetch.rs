@@ -973,6 +973,27 @@ mod tests {
     }
 
     #[test]
+    fn a_rest_outlasting_the_fetch_pause_asks_once_the_pause_ends() {
+        let pause_ends = NOW + 10;
+        let paused = || State {
+            retry_at: pause_ends,
+            ..resting_on("pk.old")
+        };
+        let mut state = paused();
+        let (result, asked) = run_for(&mut state, pause_ends, token("pk.new"));
+        assert!(asked);
+        assert_eq!(result, Some("pk.new".to_owned()), "a different token");
+        assert!(state.cooldowns.is_empty(), "ends the rest");
+
+        let mut state = paused();
+        let (result, asked) = run_for(&mut state, pause_ends, token("pk.old"));
+        assert!(asked);
+        assert_eq!(result, None);
+        assert_eq!(state.cooldowns["telemetry"].misses, 1, "the rest's miss");
+        assert!(rest(&state, "telemetry", pause_ends).is_some());
+    }
+
+    #[test]
     fn a_rest_waits_out_the_fetch_pause_too() {
         let mut state = State {
             retry_at: NOW + 10,

@@ -1410,13 +1410,6 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             Some(("unset", unset_matches)) => config::unset(unset_matches, mode)?,
             _ => unreachable!("`config` sets subcommand_required(true)"),
         },
-        // Ahead of the generic service arm too: it reads local history and
-        // makes no request.
-        Some((history::COMMAND, history_matches)) => match history_matches.subcommand() {
-            Some(("list", list_matches)) => history::list(list_matches, mode)?,
-            Some(("show", show_matches)) => history::show(show_matches, mode)?,
-            _ => unreachable!("`history` sets subcommand_required(true)"),
-        },
         // Ahead of the generic service arm too, and handed `app` for the
         // same reason `generate-skills` is: it reads the command tree already
         // in memory. No token and no request.
@@ -1424,6 +1417,13 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             Some(("search", search_matches)) => commands::search(app, specs, search_matches, mode)?,
             Some(("list", _)) => commands::list(app, specs, mode)?,
             _ => unreachable!("`commands` sets subcommand_required(true)"),
+        },
+        // Ahead of the generic service arm too: it reads local history and
+        // makes no request.
+        Some((history::COMMAND, history_matches)) => match history_matches.subcommand() {
+            Some(("list", list_matches)) => history::list(list_matches, mode)?,
+            Some(("show", show_matches)) => history::show(show_matches, mode)?,
+            _ => unreachable!("`history` sets subcommand_required(true)"),
         },
         // Also ahead of the generic service arm: read-only except for the
         // opt-in `--verify` request, and needs no credential load of its own

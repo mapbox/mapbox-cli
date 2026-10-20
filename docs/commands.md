@@ -4754,8 +4754,9 @@ and description, its group's description and its arguments' help, with a
 command's name counting most. A word can be a prefix (`geo`), a different
 ending of the same stem (`geocoding` for `geocoder`) or one typo away
 (`uplaod`), unless some command's text uses the word as it is: "match" is a
-word, not a typo for "batch". A plural matches its singular. A few common words stand in for
-the ones commands use ("remove" for "delete", "rename" for "update").
+word, not a typo for "batch". A plural matches its singular. A few common
+words stand in for the ones commands use ("remove" for "delete", "rename"
+for "update").
 Words like "how", "my", "to" and "mapbox" are ignored. It cannot find a
 command whose text uses none of the query's words, so a query names the
 action and the thing acted on: "upload a font", not "get my typeface onto

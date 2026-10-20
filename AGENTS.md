@@ -128,12 +128,12 @@ an entry outlives its command. A command it misses still shows, under
 
 ## `commands search` and its query sets
 
-`mapbox commands search` ranks commands by the words in their names, summaries,
-descriptions, help-group lines and argument help, so **editing a command's
-`about`, an argument's `help` or a line in `DESCRIPTIONS` changes search
-results**, not only `--help`. The `eval_set_*`
-tests in `src/commands.rs` run the query sets in `tests/fixtures/commands_search/`
-and hold each to a floor of how many queries rank right. Each file's header says
+`mapbox commands search` ranks commands by the words in their names,
+summaries, descriptions, help-group lines and argument help, so **editing a
+command's `about`, an argument's `help` or a line in `DESCRIPTIONS` changes
+search results**, not only `--help`. The `eval_set_*` tests in
+`src/commands.rs` run the query sets in `tests/fixtures/commands_search/` and
+hold each to a floor of how many queries rank right. Each file's header says
 where its queries came from and how much the search was tuned against them.
 `cargo test eval_set -- --nocapture` prints the scores and every miss, and
 that directory's README explains each set and how to read its score.

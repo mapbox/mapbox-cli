@@ -4,12 +4,19 @@ summary.
 
     commands-search-report.py --head DIR --head-status N
                               [--base DIR --base-status N] [--sets DIR]
+                              [--comment-dir DIR]
 
 Each directory holds the per-set reports the `eval_set_*` tests write when
 MAPBOX_SEARCH_EVAL_REPORT names it; each status is the exit code of the
 `cargo test` run that wrote them. No `--base` means there was no base to run
 (not a pull request). `--sets` is the fixture directory, so a set whose
 report is missing is named rather than left out.
+
+With `--comment-dir`, also writes what the PR comment workflow
+(.github/workflows/search-eval-comment.yml) needs: `state`, one of `drop`
+(some set dropped by LARGE_DROP_QUERIES or LARGE_DROP_POINTS against the
+base), `ok` (compared, no large drop) or `none` (nothing to compare), and,
+for `drop`, `body.md`.
 
 The status is what tells apart a base that predates the eval (the run passed
 and wrote nothing) from one whose run failed: the reports alone look the
@@ -92,6 +99,16 @@ def cell(text):
 def score(report, key):
     return sum(row[key] for row in report.rows.values())
 
+
+# A set losing this many first-place queries against the base, or this many
+# percentage points of its first-place share, gets the PR a comment. Smaller
+# trade-offs stay in the job summary: the floors already make each one a
+# decision in the diff, and a comment for every one would be noise.
+LARGE_DROP_QUERIES = 3
+LARGE_DROP_POINTS = 5
+
+# Rows of "no longer first" per set in a comment; the job summary has the rest.
+COMMENT_ROWS = 20
 
 # Under the table, so a reader need not know the tests to read it.
 LEGEND = (
@@ -255,6 +272,80 @@ def render(head, head_status, base, base_given, base_status, expected_sets):
     return out + ["", LEGEND, "", *details]
 
 
+def share(first, total):
+    return 100 * first / total if total else 0.0
+
+
+def large_drops(head, base):
+    """Each set that dropped far enough against the base to comment on, as
+    (name, base first, base rows, head first, head rows)."""
+    drops = []
+    for name in sorted(set(head) & set(base)):
+        report, base_report = head[name], base[name]
+        first, base_first = score(report, "first"), score(base_report, "first")
+        rows, base_rows = len(report.rows), len(base_report.rows)
+        lost = base_first - first
+        points = share(base_first, base_rows) - share(first, rows)
+        if lost >= LARGE_DROP_QUERIES or points >= LARGE_DROP_POINTS:
+            drops.append((name, base_first, base_rows, first, rows))
+    return drops
+
+
+def comment(head, head_status, base, base_status):
+    """The comment state, and its body when there is a large drop."""
+    if not head or not base or base_status != 0 or head_status is None:
+        return "none", None
+    drops = large_drops(head, base)
+    if not drops:
+        return "ok", None
+    out = [
+        "### `commands search` ranks fewer queries first than the base",
+        "",
+        "| Query set | Base | This PR | Change |",
+        "| --- | --- | --- | --- |",
+    ]
+    details = []
+    for name, base_first, base_rows, first, rows in drops:
+        points = share(base_first, base_rows) - share(first, rows)
+        out.append(
+            f"| `{cell(name)}` | {count(base_first, base_rows, None)} | "
+            f"{count(first, rows, None)} | {first - base_first:+d} queries, "
+            f"{-points:+.0f} points |"
+        )
+        _, broken = changed(head[name].rows, base[name].rows)
+        if broken:
+            shown = broken[:COMMENT_ROWS]
+            more = len(broken) - len(shown)
+            details += [
+                f"<details><summary><code>{cell(name)}</code>: {len(broken)} no longer first</summary>",
+                "",
+                "| Query | Want | Base | This PR |",
+                "| --- | --- | --- | --- |",
+                *shown,
+                *([f"\n{more} more in the job summary."] if more else []),
+                "",
+                "</details>",
+                "",
+            ]
+    out += [
+        "",
+        f"A set losing {LARGE_DROP_QUERIES} or more first-place queries, or "
+        f"{LARGE_DROP_POINTS} or more points, posts this. If the trade-off is "
+        "intended, say why in the PR; the floors in `EVAL_SETS` decide whether "
+        "`cargo test` passes.",
+        "",
+        *details,
+    ]
+    return "drop", "\n".join(out)
+
+
+def write_comment(directory, state, body):
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "state").write_text(state + "\n", encoding="utf-8")
+    if body is not None:
+        (directory / "body.md").write_text(body + "\n", encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--head", type=Path, required=True)
@@ -262,20 +353,18 @@ def main():
     parser.add_argument("--base", type=Path)
     parser.add_argument("--base-status", default="")
     parser.add_argument("--sets", type=Path)
+    parser.add_argument("--comment-dir", type=Path)
     args = parser.parse_args()
 
     expected_sets = []
     if args.sets is not None and args.sets.is_dir():
         expected_sets = [path.name for path in args.sets.glob("*.tsv")]
-    lines = render(
-        load(args.head),
-        parse_status(args.head_status),
-        load(args.base),
-        args.base is not None,
-        parse_status(args.base_status),
-        expected_sets,
-    )
+    head, base = load(args.head), load(args.base)
+    head_status, base_status = parse_status(args.head_status), parse_status(args.base_status)
+    lines = render(head, head_status, base, args.base is not None, base_status, expected_sets)
     print("\n".join(lines))
+    if args.comment_dir is not None:
+        write_comment(args.comment_dir, *comment(head, head_status, base, base_status))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,107 @@
+name: commands search eval comment
+
+# Comments on a PR whose `commands search` eval dropped far enough against
+# its base (see LARGE_DROP_QUERIES in scripts/commands-search-report.py), and
+# updates that one comment on later pushes, to say so once it recovers.
+#
+# Two workflows rather than one step in CI: a `pull_request` run from a fork
+# gets a read-only token, so CI's search-eval job only leaves an artifact.
+# This runs from main's copy of this file, with write access, and so must
+# never run the PR's code. It checks nothing out and reads only that
+# artifact, as untrusted text: the PR is found from the triggering run's head
+# commit rather than from anything the artifact says, the body is capped,
+# and @-mentions in it are defused.
+#
+# `workflow_run` only fires for the copy of this file on the default branch,
+# so a PR that changes it does not run its own version.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_URL: ${{ github.event.workflow_run.html_url }}
+    steps:
+      # Missing when the run was canceled before the eval, or failed to build
+      # it; there is then nothing to say.
+      - name: Download the eval's comment
+        run: |
+          gh run download "$RUN_ID" --repo "$REPO" --name search-eval-comment \
+            --dir "$RUNNER_TEMP/comment" || echo "No comment artifact."
+
+      - name: Post or update the comment
+        run: |
+          dir="$RUNNER_TEMP/comment"
+          if [ ! -f "$dir/state" ]; then
+            echo "Nothing to do."
+            exit 0
+          fi
+          # Matched against fixed words and never echoed: printed, a crafted
+          # value could read as a workflow command.
+          state=$(head -n 1 "$dir/state")
+
+          # The open PR whose head is the commit CI ran on. Never the
+          # artifact's word for it: a fork controls what its run uploads.
+          pr=$(gh pr list --repo "$REPO" --state open --limit 200 \
+            --json number,headRefOid \
+            --jq ".[] | select(.headRefOid == \"$HEAD_SHA\") | .number" | head -1)
+          if [ -z "$pr" ]; then
+            echo "No open PR has head $HEAD_SHA."
+            exit 0
+          fi
+
+          marker='<!-- commands-search-eval -->'
+          existing=$(gh api --paginate "repos/$REPO/issues/$pr/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -1)
+
+          body="$RUNNER_TEMP/body.md"
+          case "$state" in
+            drop)
+              {
+                echo "$marker"
+                # A zero-width space after each @ keeps a crafted body from
+                # pinging anyone.
+                head -c 60000 "$dir/body.md" | sed 's/@/@\xe2\x80\x8b/g'
+                echo
+                echo "Every query that changed is in the [job summary]($RUN_URL). Updated for $HEAD_SHA."
+              } >"$body"
+              ;;
+            ok)
+              if [ -z "$existing" ]; then
+                echo "No large drop, and no earlier comment to update."
+                exit 0
+              fi
+              {
+                echo "$marker"
+                echo "### \`commands search\` recovered"
+                echo
+                echo "No query set ranks far fewer queries first than the base any more, as of $HEAD_SHA. [Job summary]($RUN_URL)."
+              } >"$body"
+              ;;
+            *)
+              echo "Nothing to compare against."
+              exit 0
+              ;;
+          esac
+
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$existing" -F "body=@$body" >/dev/null
+            echo "Updated comment $existing on #$pr."
+          else
+            gh api "repos/$REPO/issues/$pr/comments" -F "body=@$body" >/dev/null
+            echo "Commented on #$pr."
+          fi

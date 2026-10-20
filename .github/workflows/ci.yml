@@ -187,9 +187,21 @@ jobs:
           set -- --head "$RUNNER_TEMP/eval-head" --head-status "$HEAD_STATUS" \
             --sets tests/fixtures/commands_search
           if [ "$EVENT" = pull_request ]; then
-            set -- "$@" --base "$RUNNER_TEMP/eval-base" --base-status "$BASE_STATUS"
+            set -- "$@" --base "$RUNNER_TEMP/eval-base" --base-status "$BASE_STATUS" \
+              --comment-dir "$RUNNER_TEMP/eval-comment"
           fi
           python3 scripts/commands-search-report.py "$@" >>"$GITHUB_STEP_SUMMARY"
+
+      # For search-eval-comment.yml, which posts a PR comment on a large drop.
+      # This job cannot post one itself: a fork's PR gets a read-only token.
+      - name: Keep the comment for the comment workflow
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: search-eval-comment
+          path: ${{ runner.temp }}/eval-comment
+          retention-days: 1
+          if-no-files-found: ignore
 
   # No Rust: this is where the repo's shell gets checked, install.sh above all
   # — it is served to machines we do not control, and this is the only thing

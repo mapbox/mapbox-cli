@@ -159,6 +159,56 @@ if summarize --head "$BAD" --head-status 101 --sets "$SETS"; then
     expect "an unreadable report is named" "unreadable"
 fi
 
+# The PR comment: `drop` only past the threshold, `ok` when compared and
+# below it, `none` when there was nothing to compare against.
+# Four rows each; a "won" row ranks first, a "lost" one does not.
+won() { row "$1" 'mapbox x' 'mapbox x' 1 1; }
+lost() { row "$1" 'mapbox x' 'mapbox y' 0 0; }
+report "$WORK/cbase/a.tsv" "$(won q1)" "$(won q2)" "$(won q3)" "$(won q4)"
+report "$WORK/cdrop/a.tsv" "$(lost q1)" "$(lost q2)" "$(lost q3)" "$(won q4)"
+report "$WORK/cslip/a.tsv" "$(won q1)" "$(won q2)" "$(won q3)" "$(won q4)"
+
+check_state() {
+    case_name="$1"
+    want="$2"
+    got="$(cat "$WORK/comment/state" 2>/dev/null || echo missing)"
+    if [ "$got" = "$want" ]; then
+        say "ok: $case_name"
+    else
+        fail "$case_name: state is $got, not $want"
+    fi
+}
+
+if summarize --head "$WORK/cdrop" --head-status 0 --base "$WORK/cbase" --base-status 0 \
+    --comment-dir "$WORK/comment"; then
+    check_state "three queries lost is a drop" drop
+    cp "$WORK/comment/body.md" "$WORK/out"
+    expect "the comment names the set and the change" "| \`a.tsv\` | 4 (100%) | 1 (25%) | -3 queries, -75 points |"
+    expect "the comment lists what is no longer first" "3 no longer first"
+fi
+rm -rf "$WORK/comment"
+
+if summarize --head "$WORK/cslip" --head-status 0 --base "$WORK/cbase" --base-status 0 \
+    --comment-dir "$WORK/comment"; then
+    check_state "no loss is ok" ok
+    if [ -e "$WORK/comment/body.md" ]; then
+        fail "an ok state wrote a comment body"
+    else
+        say "ok: an ok state writes no body"
+    fi
+fi
+rm -rf "$WORK/comment"
+
+if summarize --head "$WORK/cdrop" --head-status 0 --base "$WORK/cbase" --base-status 101 \
+    --comment-dir "$WORK/comment"; then
+    check_state "a failed base run is nothing to compare" none
+fi
+rm -rf "$WORK/comment"
+
+if summarize --head "$WORK/cdrop" --head-status 0 --comment-dir "$WORK/comment"; then
+    check_state "no base is nothing to compare" none
+fi
+
 if [ "$failures" -ne 0 ]; then
     say "$failures check(s) failed."
     exit 1

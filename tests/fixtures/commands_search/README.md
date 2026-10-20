@@ -8,8 +8,11 @@ CI's `commands search eval` job puts the scores in its job summary, with the
 queries the change fixed and broke against the base branch. It also says
 when there was nothing to compare against, and why: a push with no base, a
 base from before these sets, or a base run that failed.
-`scripts/test-commands-search-report.sh` checks that summary against
-hand-written reports.
+When a set ranks 3 or more fewer queries first than the base, or loses 5 or
+more points, `.github/workflows/search-eval-comment.yml` also comments on
+the PR, and updates that comment once a later push recovers.
+`scripts/test-commands-search-report.sh` checks the summary and the
+comment's content against hand-written reports.
 
 ## Format
 

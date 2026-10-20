@@ -38,4 +38,4 @@ Nothing was removed. To remove what was created:
 
 Each command runs as its profile's login and names that login's account with `--username`, so a `MAPBOX_ACCESS_TOKEN` or `MAPBOX_USERNAME` in the environment cannot send a request as, or to, a different account.
 
-Needs `python3` on `PATH`.
+Needs `python3` on `PATH`. On Windows the python.org installer does not add one, and this workflow has not been run there.

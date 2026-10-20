@@ -42,7 +42,9 @@ that may never merge. They are not releases and are not listed here.
   `cancelled`); a command step may be marked `dry_run` only when its command
   is known to change nothing: an API `GET`, or a local read such as
   `config list`. The
-  generated agent skill leaves `workflow` out. The first one published is
+  generated agent skill leaves `workflow` out. A script step needs its interpreter on `PATH`: on Windows,
+  `.py` needs a `python3`, which the python.org installer does not add.
+  The first one published is
   `copy-style`, which copies a style between accounts with its custom fonts
   and icons, and on a partial failure lists what it created and the
   commands that remove it. The command, the `version: 1` format and the published

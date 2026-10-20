@@ -119,7 +119,7 @@ A script runs from the installed copy of `scripts/`, in the directory `mapbox wo
 - A non-zero exit stops the workflow.
 - `MAPBOX_CLI` is the path to this `mapbox` binary, for a script that runs commands of its own. `MAPBOX_WORKFLOW_ROOT` is the installed workflow's directory. `MAPBOX_WORKFLOW_WORKDIR` is the run's working directory, where a `save`d file is; anything a script writes there is removed with it when the run ends.
 - Prefer a command step where one will do, so `workflow show` and `install` can see the command. A script is for what a step cannot do: a loop, or logic.
-- The interpreter must be installed on the machine. `.sh` runs under `sh`, `.py` under `python3` and `.js` under `node`, and any other extension needs `interpreter`.
+- The interpreter must be installed on the machine. `.sh` runs under `sh`, `.py` under `python3` and `.js` under `node`, and any other extension needs `interpreter`. Windows has none of these by default, and the python.org installer adds `python` and `py` but not `python3`, so a `.py` step needs a `python3` on `PATH` there.
 
 ### Reporting progress
 

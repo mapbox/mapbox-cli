@@ -173,6 +173,29 @@ fn a_run_carries_values_between_steps_and_prints_only_the_result() {
     assert!(stderr.contains("not recommended for use"), "{stderr}");
 }
 
+/// A `.py` script with no `interpreter` runs under `python3` from `PATH`,
+/// as `copy-style`'s do. Unix only: Windows has no `python3` by default.
+#[cfg(unix)]
+#[test]
+fn a_python_step_runs_under_python3_by_default() {
+    let home = scratch("python");
+    let yaml = "version: 1\nname: py\nsummary: Runs Python\nsteps:\n\
+                \x20 - id: hello\n    script: hello.py\n";
+    let script = "import json, sys\nprint(json.dumps({\"major\": sys.version_info[0]}))\n";
+    let dir = write_workflow(&home, "py", yaml, &[("hello.py", script)]);
+    assert!(run(&home, &["workflow", "install", dir.to_str().unwrap()])
+        .status
+        .success());
+
+    let out = run(&home, &["workflow", "run", "py", "-o", "json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_json(&out), json!({ "major": 3 }));
+}
+
 #[test]
 fn a_failing_step_stops_the_run() {
     let home = scratch("fail");

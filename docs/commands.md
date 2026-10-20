@@ -4996,6 +4996,15 @@ None ships inside the binary. `install` copies one into
 `~/.mapbox/workflows/<name>/`, and every other subcommand works on what is
 installed there.
 
+**On Windows**, CI runs workflows with command steps and `sh` script steps,
+but no published workflow has been run there. A script step runs the
+interpreter its extension names, and Windows ships none of them: `.sh` needs
+an `sh` on `PATH`, such as Git Bash's, and `.py` needs `python3`, which the
+python.org installer does not add (it adds `python` and `py`). So
+`copy-style` runs on Windows only where `python3` is on `PATH`. A missing
+interpreter fails the step with `` `python3` is not installed or not on
+PATH ``.
+
 ---
 
 ### `mapbox workflow list`

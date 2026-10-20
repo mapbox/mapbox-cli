@@ -93,11 +93,22 @@ def score(report, key):
     return sum(row[key] for row in report.rows.values())
 
 
-def delta(head, base):
-    if base is None:
-        return f"{head}"
-    change = head - base
-    return f"{head} ({change:+d})" if change else f"{head}"
+# Under the table, so a reader need not know the tests to read it.
+LEGEND = (
+    "**Ranked first**: the expected command was the first result. "
+    "**In top 3**: it was among the first three. "
+    "**Required**: the floor in `EVAL_SETS` (src/commands.rs); a lower score fails `cargo test`. "
+    "A query the CLI cannot serve counts as right only when nothing comes back. "
+    "How each set was gathered is in tests/fixtures/commands_search/README.md."
+)
+
+
+def count(head, total, base):
+    """`22 (37%)`, with the change against the base when there is one:
+    `22 (37%, +1)`."""
+    share = f"{round(100 * head / total)}%" if total else "-"
+    change = head - base if base is not None else 0
+    return f"{head} ({share}, {change:+d})" if change else f"{head} ({share})"
 
 
 def changed(head_rows, base_rows):
@@ -185,7 +196,7 @@ def render(head, head_status, base, base_given, base_status, expected_sets):
     compare = bool(base)
 
     out += [
-        "| Set | Rows | First | Top 3 | Floor | Note |",
+        "| Query set | Queries | Ranked first | In top 3 | Required (first / top 3) | Note |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
     details = []
@@ -208,8 +219,8 @@ def render(head, head_status, base, base_given, base_status, expected_sets):
         if compare and base_report is None:
             row_notes.insert(0, "only in this branch")
         out.append(
-            f"| {label} | {len(report.rows)} | {delta(first, base_first)} | "
-            f"{delta(top3, base_top3)} | {floor} | {cell('; '.join(row_notes))} |"
+            f"| {label} | {len(report.rows)} | {count(first, len(report.rows), base_first)} | "
+            f"{count(top3, len(report.rows), base_top3)} | {floor} | {cell('; '.join(row_notes))} |"
         )
 
         if report.invalid:
@@ -241,7 +252,7 @@ def render(head, head_status, base, base_given, base_status, expected_sets):
                 "",
             ]
 
-    return out + ["", *details]
+    return out + ["", LEGEND, "", *details]
 
 
 def main():

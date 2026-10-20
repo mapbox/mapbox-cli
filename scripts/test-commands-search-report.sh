@@ -107,6 +107,10 @@ if summarize --head "$HEAD" --head-status 0 --base "$BASE" --base-status 0 --set
     expect "a fix against the base is listed" "1 now first"
     expect "a set new in this branch is marked" "only in this branch"
     expect "a pipe in a cell is escaped" 'a \| b query'
+    expect "a score carries its share and its change" "| 1 (50%, +1) |"
+    expect "an unchanged score carries its share alone" "| 1 (50%) |"
+    expect "the columns are named" "| Query set | Queries | Ranked first | In top 3 |"
+    expect "the legend says what the columns mean" "**Ranked first**: the expected command"
     reject "no emoji" "⚠"
 fi
 

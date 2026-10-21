@@ -350,6 +350,15 @@ that may never merge. They are not releases and are not listed here.
   which would have collapsed `agent/claude-code` into `agentclaude-code` and
   lost the separator. Comment-only: neither installer's behavior changed.
 
+- `rustls-webpki` moved to 0.103.16 and `webpki-roots` to 1.0.10, fixing
+  [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382) and
+  [RUSTSEC-2026-0381](https://rustsec.org/advisories/RUSTSEC-2026-0381)
+  (CVE-2026-111943): certificate verification could accept a path through
+  distrusted emSign intermediates, whose private keys are now public. Both
+  are reached through `reqwest`, so every HTTPS request this CLI makes used
+  the affected versions; nothing in the crate itself had to change. Fixed in
+  [mapbox/mapbox-cli#106](https://github.com/mapbox/mapbox-cli/pull/106).
+
 ## 0.3.0 - 2026-09-22
 
 ### Added

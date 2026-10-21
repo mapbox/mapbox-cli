@@ -100,9 +100,9 @@ or given a new default; an exit code or stdout/stderr change; a `--schema`
 field removed or repurposed. Not breaking: new commands, new API response
 fields, new `--schema` fields, and any wording.
 
-A command marked beta, such as `mapbox workflow`, is outside this promise
-until the label is removed: it says so in its help and on every run, and it
-may change or be removed in any release.
+A command marked beta is outside this promise until the label is removed:
+it says so in its help and on every run, and it may change or be removed in
+any release.
 
 Deprecated commands and endpoints print a warning before the request goes
 out, and are marked `[deprecated]` in `--help` and `--schema`.

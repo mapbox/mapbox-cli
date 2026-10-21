@@ -657,9 +657,18 @@ mod tests {
     /// targeted tests below are the hard gate for specific queries.
     const SLACK: usize = 3;
 
+    /// Where [`eval_set_keeps_its_scores`] writes its reports, when set.
+    const REPORT_DIR_ENV: &str = "MAPBOX_SEARCH_EVAL_REPORT";
+
     /// Holds one set to its recorded scores, less [`SLACK`].
     /// `cargo test eval_set -- --nocapture` prints the scores, and each query
     /// that did not rank first. One test per set, so they run in parallel.
+    ///
+    /// With [`REPORT_DIR_ENV`] set, also writes every query's result to
+    /// `<dir>/<set>`, before anything is asserted, so a failing run still
+    /// leaves one: a set missing from CI's summary would read as a set
+    /// nobody added. A row that cannot be scored goes in the report as a
+    /// `# invalid` line rather than stopping the run there.
     fn eval_set_keeps_its_scores(wanted: &str) {
         let &(name, text, recorded_first, recorded_top3) = EVAL_SETS
             .iter()
@@ -677,6 +686,12 @@ mod tests {
 
         let (mut rows, mut first, mut top3) = (0, 0, 0);
         let (mut misses, mut invalid) = (vec![], vec![]);
+        // The scores below which the test fails, not the recorded ones.
+        let mut report = format!(
+            "# floors\t{}\t{}\n",
+            recorded_first.saturating_sub(SLACK),
+            recorded_top3.saturating_sub(SLACK)
+        );
         for line in text
             .lines()
             .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
@@ -713,6 +728,13 @@ mod tests {
                     found.iter().any(|c| expected.contains(&c.as_str())),
                 )
             };
+            report.push_str(&format!(
+                "{query}\t{}\t{}\t{}\t{}\n",
+                expected.join("|"),
+                found.join("|"),
+                u8::from(is_first),
+                u8::from(in_top3)
+            ));
             rows += 1;
             first += usize::from(is_first);
             top3 += usize::from(in_top3);
@@ -720,6 +742,15 @@ mod tests {
                 misses.push(format!("  \"{query}\": want {expected:?}, got {found:?}"));
             }
         }
+        for problem in &invalid {
+            report.push_str(&format!("# invalid\t{problem}\n"));
+        }
+        if let Some(dir) = std::env::var_os(REPORT_DIR_ENV) {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).expect("create the report directory");
+            std::fs::write(dir.join(name), report).expect("write the report");
+        }
+
         eprintln!(
             "{name}: {first}/{rows} first (recorded {recorded_first}), \
              {top3}/{rows} in top 3 (recorded {recorded_top3})"

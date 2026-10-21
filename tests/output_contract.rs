@@ -1301,9 +1301,9 @@ fn text_into_a_pipe_carries_no_color_and_no_banner() {
     }
 }
 
-/// `commands search` answers on stdout alone under `json`: the matches as
-/// `[{command, summary}]`, best first, with nothing on stderr for a caller
-/// to have to tell apart from a warning.
+/// `commands search` answers on stdout under `json`: the matches as
+/// `[{command, summary, score}]`, best first. A match leaves stderr empty;
+/// no match adds a hint there (below).
 #[test]
 fn commands_search_prints_its_matches_as_json() {
     let out = run(&["-o", "json", "commands", "search", "upload", "a", "font"]);
@@ -1315,7 +1315,28 @@ fn commands_search_prints_its_matches_as_json() {
     assert!(matches.len() <= 5, "{matches:?}");
     for entry in matches {
         let keys: Vec<&String> = entry.as_object().expect("an object").keys().collect();
-        assert_eq!(keys, ["command", "summary"], "{entry}");
+        assert_eq!(keys, ["command", "score", "summary"], "{entry}");
+    }
+    let scores: Vec<f64> = matches
+        .iter()
+        .map(|entry| entry["score"].as_f64().expect("a number"))
+        .collect();
+    assert_eq!(scores[0], 1.0, "{scores:?}");
+    assert!(
+        scores.windows(2).all(|pair| pair[0] >= pair[1]) && scores.iter().all(|s| *s > 0.0),
+        "{scores:?}"
+    );
+}
+
+/// An empty query is most likely a script's empty variable, so it fails as
+/// a usage error rather than answering like a query that found nothing.
+#[test]
+fn commands_search_refuses_a_query_with_no_words() {
+    for query in ["", "  ", "?!"] {
+        let out = run(&["-o", "json", "commands", "search", query]);
+        assert_eq!(out.status.code(), Some(2), "{query:?}: {}", stderr(&out));
+        assert_eq!(json(&stderr(&out))["code"], "usage", "{query:?}");
+        assert_eq!(stdout(&out), "", "{query:?}");
     }
 }
 

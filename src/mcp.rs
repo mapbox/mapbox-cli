@@ -329,6 +329,15 @@ fn spawn_live(client: &Client, args: &[&str]) -> io::Result<(ExitStatus, String)
     Err(last_err.unwrap_or_else(|| io::Error::from(io::ErrorKind::NotFound)))
 }
 
+/// "A, B or C", for help text built from [`SERVERS`] and [`CLIENTS`].
+fn joined(items: impl Iterator<Item = &'static str>, last: &str) -> String {
+    let items: Vec<&str> = items.collect();
+    match items.split_last() {
+        Some((tail, init)) if !init.is_empty() => format!("{} {last} {tail}", init.join(", ")),
+        _ => items.concat(),
+    }
+}
+
 pub fn command() -> ClapCommand {
     let server_flags: Vec<&'static str> = SERVERS.iter().map(|s| s.flag).collect();
     let client_flags: Vec<&'static str> = CLIENTS.iter().map(|c| c.flag).collect();
@@ -354,11 +363,12 @@ pub fn command() -> ClapCommand {
         .subcommand(
             ClapCommand::new(INSTALL)
                 .about("Register a server with a client. With neither flag, every known server for every detected client")
-                .long_about(
-                    "Register the Mapbox MCP and Mapbox DevKit MCP servers with a coding agent: \
-                     Claude Code, Codex, VS Code or Cursor. With neither flag, registers every known \
-                     server with every detected client.",
-                )
+                .long_about(format!(
+                    "Register the {} servers with a coding agent: {}. With neither flag, registers \
+                     every known server with every detected client.",
+                    joined(SERVERS.iter().map(|s| s.label), "and"),
+                    joined(CLIENTS.iter().map(|c| c.label), "or"),
+                ))
                 .arg(
                     Arg::new(SERVER_ARG)
                         .long(SERVER_ARG)

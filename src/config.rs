@@ -182,7 +182,7 @@ pub fn command() -> Command {
     };
 
     Command::new(COMMAND)
-        .about("Get or set settings: telemetry, update checks, history, logs")
+        .about(format!("Get or set settings: {}", KEYS.join(", ")))
         .long_about(
             "Get or set a mapbox setting that persists across shells and sessions, \
              written to a file beside the stored credentials rather than an \

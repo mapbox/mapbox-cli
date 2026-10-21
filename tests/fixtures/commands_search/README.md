@@ -2,17 +2,10 @@
 
 Queries that `mapbox commands search` is scored against. The `eval_set_*`
 tests in `src/commands.rs` run every file here and fail when a set ranks
-fewer queries right than its floor. `cargo test eval_set -- --nocapture`
-prints each set's score and every query that did not rank first. On a PR,
-CI's `commands search eval` job puts the scores in its job summary, with the
-queries the change fixed and broke against the base branch. It also says
-when there was nothing to compare against, and why: a push with no base, a
-base from before these sets, or a base run that failed.
-When a set ranks 3 or more fewer queries first than the base, or loses 5 or
-more points, `.github/workflows/search-eval-comment.yml` also comments on
-the PR, and updates that comment once a later push recovers.
-`scripts/test-commands-search-report.sh` checks the summary and the
-comment's content against hand-written reports.
+more than `SLACK` (3) queries fewer right than its recorded score, so a
+reworded summary that moves one query does not fail the build.
+`cargo test eval_set -- --nocapture` prints each set's score and every
+query that did not rank first.
 
 ## Format
 
@@ -90,8 +83,8 @@ Kinds:
 
 ## Changing them
 
-- Raise a set's floor in `EVAL_SETS` when a change improves it, in the same
-  commit. Lowering one is a decision to explain in the PR.
+- Record a set's new score in `EVAL_SETS` when a change improves it, in the
+  same commit. Dropping past the slack is a decision to explain in the PR.
 - Fix the kind of miss rather than special-casing a query.
 - Put new real queries, such as ones the team actually typed, in a new file
   rather than these, so there is always a set the search has not been

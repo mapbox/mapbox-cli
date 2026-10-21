@@ -4744,7 +4744,8 @@ Log       no longer available: it expired or was removed to keep diagnostic logs
 Finding a command by what it does. Both read the same command surface
 `mapbox --schema` describes, so they cover every command this build has,
 and both are local: no request and no token. `json` gives each command as
-`{command, summary}`; `mapbox <command> --schema` has the rest.
+`{command, summary}`, plus a `score` from `search`; `mapbox <command>
+--schema` has the rest.
 
 ### `mapbox commands search`
 
@@ -4764,8 +4765,14 @@ Mapbox". Matches far below the best one are left out. A task no command
 does usually still comes back with a few weak guesses, so check the
 summaries before running one.
 
-The query can be quoted or not. No match is not an error: `text` prints
-nothing and says so on stderr, `json` prints `[]`, and both exit 0. The
+Under `json`, each match has a `score` from 0 to 1 that reads the same for
+any query: 1 means the command's name and summary use every word of it, a
+few tenths is a guess on a word found elsewhere, and under 0.1 is barely a
+match.
+
+The query can be quoted or not. One with no words at all, such as an
+empty string, is a usage error (exit 2). No match is not an error: `text`
+prints nothing and says so on stderr, `json` prints `[]`, and both exit 0. The
 `commands` group itself is left out of the results. Telemetry records the
 query's length, never its text.
 
@@ -4805,10 +4812,12 @@ mapbox fonts delete  Delete a font
 [
   {
     "command": "mapbox fonts upload",
+    "score": 1.0,
     "summary": "Upload a font"
   },
   {
     "command": "mapbox fonts list",
+    "score": 0.65,
     "summary": "List fonts for an owner"
   },
   ...

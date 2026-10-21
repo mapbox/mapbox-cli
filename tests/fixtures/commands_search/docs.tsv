@@ -1,0 +1,64 @@
+# Task phrasings from Mapbox docs, blog posts and tutorials, unseen until the
+# last tuning round and then used once to choose between two changes. The
+# least tuned-against of the three. Columns: query, expected first result,
+# kind, source.
+turn a list of customer addresses into coordinates	mapbox geocoder batch|mapbox geocoder forward	human	https://hackersandslackers.com/preparing-data-for-mapbox-geocoding/
+find the address nearest to a gps point	mapbox geocoder reverse|mapbox search reverse	human	https://docs.mapbox.com/help/dive-deeper/geocoding.md
+look up a place name and get its coordinates	mapbox geocoder forward|mapbox search forward	human	https://designcode.io/react-hooks-handbook-geocoding-mapbox
+geocode addresses for a spreadsheet	mapbox geocoder batch|mapbox geocoder forward	human	https://interworks.com/blog/2020/07/28/geocoding-in-tableau-prep-with-mapbox/
+search for an address in japan	mapbox search forward|mapbox geocoder forward	human	https://docs.mapbox.com/help/troubleshooting/japan-specific-considerations-search-api.md
+reverse lookup that returns several results instead of one	mapbox geocoder reverse|mapbox search reverse	human	https://docs.mapbox.com/android/search/api/core/2.7.0/sdk/com.mapbox.search/-reverse-geo-options/limit.html
+route that avoids toll roads	mapbox directions	human	https://docs.mapbox.com/api/navigation/directions/
+cycling route with distance and duration	mapbox directions	human	https://docs.mapbox.com/help/dive-deeper/directions.md
+route through several stops in order	mapbox directions	human	https://rdrr.io/cran/mapboxapi/man/mb_directions.html
+driving time with live traffic	mapbox directions	human	https://docs.mapbox.com/api/navigation/directions/
+add a pin to a static map	mapbox static get-image	human	https://blog.mapbox.com/static-api-with-overlays-932ffc5fcf3d
+map image url to use in an img tag	mapbox static get-image	human	https://scour.ing/@tomasz/p/https://dev.to/mapbox/server-rendered-maps-for-web-and-mobile-51f7
+make a map picture for printing	mapbox static get-image	human	https://docs.mapbox.com/help/dive-deeper/static-maps.md
+static map with a custom icon marker	mapbox static get-image	human	https://docs.mapbox.com/android/java/guides/static-image/
+export my studio style to a json file	mapbox styles get|mapbox styles download	human	https://docs.mapbox.com/atlas/guides/styles/
+create a style from a json file	mapbox styles create	human	https://docs.mapbox.com/style-spec/guides/
+change a published style without opening studio	mapbox styles update	human	https://docs.mapbox.com/style-spec/guides/
+save work in progress on a style before publishing	mapbox styles draft update	human	https://docs.mapbox.com/atlas/guides/styles/
+add svg icons to my style	mapbox sprites upload|mapbox sprites upload-batch	human	https://docs.mapbox.com/studio-manual/examples/custom-icon
+add a whole folder of svg icons at once	mapbox sprites upload-batch	human	https://docs.mapbox.com/style-spec/reference/sprite.md
+which fontstacks can i use for labels	mapbox fonts list	human	https://docs.mapbox.com/api/maps/fonts/
+remove a font i uploaded by mistake	mapbox fonts delete	human	https://docs.mapbox.com/api/maps/fonts/
+turn populated places data into vector tiles	mapbox tilesets-cli	human	https://docs.mapbox.com/help/tutorials/get-started-mts-and-tilesets-cli.md
+check a recipe is valid before using it	mapbox tilesets-cli	human	https://pypi.org/project/mapbox-tilesets/1.5.0
+why did my tileset fail to publish	mapbox tilesets-cli	human	https://docs.mapbox.com/mapbox-tiling-service/guides/errors/
+find out which source features were dropped	mapbox tilesets-cli	human	https://docs.mapbox.com/mapbox-tiling-service/guides/frequentlyaskedquestions.md
+pick the minimum and maximum zoom for my tiles	mapbox tilesets-cli	human	https://docs.mapbox.com/mapbox-tiling-service/examples/basic-recipe-using-zoom-levels/
+which poi and building layers are within 30 meters of a point	mapbox tilesets query	human	https://docs.mapbox.com/api/maps/tilequery.md
+get the nearest features from a tileset around a location	mapbox tilesets query	human	https://docs.mapbox.com/android/java/guides/services/tilequery/
+make a token that only works on my website	-	none	https://docs.mapbox.com/help/dive-deeper/access-tokens/
+which scopes do i need to upload fonts	mapbox accounts list-scopes	human	https://docs.mapbox.com/api/maps/fonts/
+what is the difference between public and secret tokens	mapbox accounts list-scopes|mapbox accounts list-tokens	human	https://docs.mapbox.com/accounts/guides/tokens/
+see every token on my account and when it was created	mapbox accounts list-tokens	human	https://docs.mapbox.com/accounts/guides/tokens/
+switch between two saved accounts	mapbox auth profiles|mapbox auth login	human	https://docs.mapbox.com/cli/reference.md
+take mapbox off my laptop	mapbox uninstall	human	https://docs.mapbox.com/cli/reference/uninstall/
+tab completion for fish	mapbox completion	human	https://docs.mapbox.com/cli/reference.md
+disable the update check	mapbox config set	human	https://docs.mapbox.com/cli/reference.md
+what did i run yesterday	mapbox history list	human	https://docs.mapbox.com/cli/reference.md
+connect cursor to mapbox tools	mapbox mcp install	human	https://cdn.jsdelivr.net/gh/mapbox/mcp-devkit-server@main/README.md
+how many requests did i make last week	mapbox usage	human	https://docs.mapbox.com/accounts/guides/statistics/
+which product is using most of my quota	mapbox usage	human	https://docs.mapbox.com/help/faq/what-statistics-are-available-for-my-mapbox-account/
+how far can i walk in ten minutes	mapbox isochrone	human	https://www.mapbox.com/insights/isochrones
+delivery catchment area around a store	mapbox isochrone	human	https://www.mapbox.com/blog/using-isochrones-to-understand-reachability-in-web-and-mobile-applications
+durations from one warehouse to many customers	mapbox matrix	human	https://docs.mapbox.com/api/navigation/matrix.md
+pick the closest depot by drive time	mapbox matrix|mapbox directions	human	https://blog.afi.io/blog/real-time-traffic-with-the-mapbox-api/
+fix gps jitter in a recorded ride	mapbox map-match	human	https://docs.mapbox.com/playground/map-matching/
+find bookstores along my route	mapbox search category	human	https://docs.mapbox.com/mapbox-search-js/api/core/search.md
+get details and coordinates for a venue from a search result	mapbox places	human	https://mapbox.com/blog/introducing-search-box
+tell mapbox a road is missing from the map	mapbox feedback create	human	https://docs.mapbox.com/help/dive-deeper/mapbox-data.md
+check on a map problem i reported earlier	mapbox feedback get|mapbox feedback list	human	https://docs.mapbox.com/help/dive-deeper/mapbox-data.md
+show map labels in another language in gl js	-	none	https://docs.mapbox.com/help/dive-deeper/change-language
+show a popup when someone clicks a point	-	none	https://docs.mapbox.com/mapbox-gl-js/example/popup-on-click/
+how much does mapbox cost per month	-	none	https://docs.mapbox.com/accounts/overview/pricing/
+delete my mapbox account	-	none	https://docs.mapbox.com/help/account/settings
+add 3d buildings to my map	-	none	https://docs.mapbox.com/help/dive-deeper/z_add-3d-buildings-studio.md
+make a choropleth map	-	none	https://docs.mapbox.com/help/tutorials/choropleth-studio-gl-pt-1.md
+offline maps in an ios app	-	none	https://docs.mapbox.com/help/tutorials/ios-offline-maps.md
+toggle layers with checkboxes in react	-	none	https://docs.mapbox.com/help/tutorials/react-toggle-layers.md
+turn by turn navigation in my ios app	-	none	https://docs.mapbox.com/help/tutorials/ios-navigation.md
+geofencing in an android app	-	none	https://docs.mapbox.com/help/tutorials/android-geofencing.md

@@ -479,8 +479,7 @@ fn credentials_path_readonly(profile: Option<&str>) -> Option<PathBuf> {
 /// directory as a side effect of reading it — see
 /// [`credentials_path_readonly`]. What [`profiles`] reads each stored
 /// profile through, since listing what exists must not be the reason a
-/// directory starts to exist or its permissions change, and what
-/// [`crate::cli_token`] reads the login through for the same reason.
+/// directory starts to exist or its permissions change.
 pub(crate) fn load_credentials_readonly(profile: Option<&str>) -> Option<Credentials> {
     let data = std::fs::read_to_string(credentials_path_readonly(profile)?).ok()?;
     serde_json::from_str(&data).ok()
@@ -718,7 +717,7 @@ pub fn warn_if_environment_token_shadows_login(profile: Option<&str>, remedy: &s
     }
 }
 
-pub(crate) fn token_needs_refresh(token: &str) -> bool {
+fn token_needs_refresh(token: &str) -> bool {
     match token_expires_at(token) {
         Some(exp) => {
             let now = std::time::SystemTime::now()
@@ -1090,8 +1089,8 @@ pub fn logout(profile: Option<&str>, mode: Mode) -> Result<()> {
     let path = credentials_path(profile)?;
     let had_credentials = path.exists();
     if had_credentials {
-        // Waits out a refresh in flight, such as the telemetry sender's from
-        // the previous run, which would otherwise write the login back.
+        // Wait for another run's login refresh to finish, so it can't write
+        // the login back after it is removed.
         let _lock = CredentialLock::acquire(profile).ok();
         crate::run_record::set_auth_step("remove_credentials");
         std::fs::remove_file(&path)?;

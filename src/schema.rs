@@ -386,6 +386,14 @@ fn commands(app: &Command, specs: &[ServiceSpec], path: &[String]) -> Vec<Comman
         ));
     }
 
+    if wants(crate::commands::COMMAND) {
+        out.extend(builtin_commands(
+            app,
+            crate::commands::COMMAND,
+            wanted_command,
+        ));
+    }
+
     if wants(crate::history::COMMAND) {
         out.extend(builtin_commands(
             app,

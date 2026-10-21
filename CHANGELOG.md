@@ -4,15 +4,18 @@ What changed, and what it means for scripts that already use this tool.
 Newest first, written by hand — the commit subject rarely explains why a
 change matters.
 
-Versions follow [semantic versioning](https://semver.org/). Pre-1.0 rule:
-while the version starts with `0.`, a breaking change raises the minor
-number (`0.1.0` → `0.2.0`); everything else raises the patch. What counts as
-breaking is [written down in CONTRIBUTING.md](CONTRIBUTING.md#compatibility) — briefly,
-command names, flags, the two output modes and the exit codes are promises;
-the Mapbox APIs' own response bodies are not.
+Versions follow [semantic versioning](https://semver.org/): a breaking
+change raises the major number (`1.0.0` → `2.0.0`), a new feature the minor,
+and a fix the patch. Before 1.0, a breaking change raised the minor number
+instead. What counts as breaking is [written down in
+CONTRIBUTING.md](CONTRIBUTING.md#compatibility) — briefly, command names,
+flags, the two output modes and the exit codes are promises; the Mapbox APIs'
+own response bodies, and commands marked beta, are not.
 
 Cutting a release adds a `## <version> - <date>` heading below
 `## Unreleased`, which stays in place so the next change has somewhere to go.
+`tests/changelog.rs` fails while `Cargo.toml` names a version with no such
+heading.
 
 Dev-channel builds (`v0.1.3-dev.<sha>`) are published straight from a branch
 that may never merge. They are not releases and are not listed here.
@@ -60,6 +63,8 @@ that may never merge. They are not releases and are not listed here.
   subcommand says so on stderr. Nothing changes for a script that does not
   use them.
 
+## 1.0.0 - 2026-10-22
+
 - New `mapbox report "<message>"` sends feedback about the CLI itself to
   the Mapbox CLI team, with the CLI's version and OS appended. It is filed
   under Mapbox's account, not yours. It is sent with the CLI's own token,
@@ -72,24 +77,39 @@ that may never merge. They are not releases and are not listed here.
   `cli_token_unavailable` and `cli_token_forbidden` (see
   [Errors](docs/commands.md#errors)).
 
-- The CLI's own token, used for telemetry when you have no token of your
-  own, is now fetched from `https://cli.mapbox.com/config/token.json` and
-  kept in `~/.mapbox/cli-token.json` instead of being built into the binary,
+- The CLI's own token, used for telemetry, is now fetched from
+  `https://cli.mapbox.com/config/token.json` and kept in
+  `~/.mapbox/cli-token.json` instead of being built into the binary,
   so it can be rotated without a release. What changes for an existing
   setup:
   - `MAPBOX_CLI_BUNDLED_TOKEN` is no longer read at build time. A build
     from source fetches the token like a release does.
   - Keeping the token creates `~/.mapbox` if it is missing, even on a run
     whose only network use is telemetry.
-  - When an API refuses the token, the Tokens API is asked why. Only a
-    revoked, invalid, expired or malformed token is replaced, at once.
-    Three fetches in a row that find no usable token, or three refusals
-    in a row of a valid one, pause that for an hour.
+  - When an API refuses the token, the Tokens API is asked why and the
+    endpoint asked for a new token at once. A revoked, invalid, expired or
+    malformed token is replaced; a different token served is used from the
+    next run on.
+  - Three failures in a row, each a fetch that finds no usable token or a
+    refusal with no different token served, stop telemetry sending and
+    fetching for an hour. The count is telemetry's own: it never holds
+    `mapbox report` or `MAPBOX_CLI_TOKEN`, and the waits an earlier dev
+    build kept in `cli-token.json` are ignored. A new token ends it, even
+    one `mapbox report` fetched.
 
 - `tilesets query` renders as a numbered list under `-o text` again, as
   documented. It had printed pretty JSON since 0.2.0, when the command moved
   from `tilequery get` and the renderer kept matching the old name.
   `-o json` is unchanged.
+
+- New `mapbox commands search "<task>"` finds the commands that match a
+  task, best first, and `mapbox commands list` lists every command with its
+  summary. Both are local keyword lookups: no request, no token. `json`
+  gives `[{command, summary, score}]`, where `score` (0 to 1) is how much
+  of the query the command's own text covers. The query is sent in telemetry as its length
+  only. Top-level help now points to `commands search` (agents see it in
+  their hint), and an unknown command with no near spelling suggests it in
+  the error's `fix`. No existing command or output changes.
 
 - `mapbox usage` reads as a chart: one row per product with no blank
   lines between, every sparkline as wide as the period, bars scaled from
@@ -346,13 +366,14 @@ that may never merge. They are not releases and are not listed here.
   file, so with two installs, set it again after using the older one.
 
 - Each run sends one `cli.command` telemetry event to Mapbox, from a
-  background process the command doesn't wait for, with your own token
-  (`--token`, `MAPBOX_ACCESS_TOKEN` or your login) or, when you have none,
-  one built into the CLI. A build from source has no built-in token, so with
-  no token of your own the event is dropped. It never touches stdout, the
-  exit code or how long a command takes, so a script sees no difference; a
-  machine that already has `~/.mapbox` finds a `.telemetry` directory in it.
-  `MAPBOX_CLI_NO_TELEMETRY=1` turns it off.
+  background process the command doesn't wait for. It is only ever sent
+  with the CLI's own public token, never yours (`--token`,
+  `MAPBOX_ACCESS_TOKEN` or your login), since Mapbox Events keeps the token
+  an event was sent with. When the CLI's token can't be used, or the send
+  fails, the event is dropped; it is never sent twice. It never touches
+  stdout, the exit code or how long a command takes, so a script sees no
+  difference; a machine that already has `~/.mapbox` finds a `.telemetry`
+  directory in it. `MAPBOX_CLI_NO_TELEMETRY=1` turns it off.
 
 - `MAPBOX_CLI_EXTRA_QUERY` appends raw query parameters to every request, in
   the same `k1=v1&k2=v2` shape as a URL's own query string — for an API
@@ -371,13 +392,12 @@ that may never merge. They are not releases and are not listed here.
   only part of this that makes a request — the same precedent
   `auth whoami --verify` sets.
 
-- A native `aarch64-pc-windows-msvc` build. Windows on Arm ran the x64 build
-  under emulation before this — including inside a VM on Apple Silicon, the
-  larger of the two populations this serves — which `install.ps1` already
-  said out loud and now no longer has reason to. `install.ps1` already asked
-  the manifest for this target before falling back to the x64 one, and
-  `.cargo/config.toml` already named it, so publishing the artifact was the
-  whole client-side change.
+- A native `aarch64-pc-windows-msvc` build. Windows on Arm, including in a
+  VM on Apple Silicon, ran the x64 build under emulation before this, which
+  `install.ps1` already said out loud and now no longer has reason to.
+  `install.ps1` already asked the manifest for this target before falling
+  back to the x64 one, and `.cargo/config.toml` already named it, so
+  publishing the artifact was the whole client-side change.
 
 - `install.sh`/`install.ps1` now document a convention for `MAPBOX_CLI_INSTALL_SOURCE`
   when a coding agent invokes the installer on someone's behalf: `agent-<name>`
@@ -386,6 +406,15 @@ that may never merge. They are not releases and are not listed here.
   earlier proposal used — `/` is stripped by the installers' own sanitizer,
   which would have collapsed `agent/claude-code` into `agentclaude-code` and
   lost the separator. Comment-only: neither installer's behavior changed.
+
+- `rustls-webpki` moved to 0.103.16 and `webpki-roots` to 1.0.10, fixing
+  [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382) and
+  [RUSTSEC-2026-0381](https://rustsec.org/advisories/RUSTSEC-2026-0381)
+  (CVE-2026-111943): certificate verification could accept a path through
+  distrusted emSign intermediates, whose private keys are now public. Both
+  are reached through `reqwest`, so every HTTPS request this CLI makes used
+  the affected versions; nothing in the crate itself had to change. Fixed in
+  [mapbox/mapbox-cli#106](https://github.com/mapbox/mapbox-cli/pull/106).
 
 ## 0.3.0 - 2026-09-22
 

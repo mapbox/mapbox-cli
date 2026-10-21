@@ -349,8 +349,7 @@ pub(crate) fn deliver(record: &Record) {
     }
     let event = build(record);
     if let Ok(line) = serde_json::to_string(&event) {
-        let profile = record.options.as_ref().and_then(|o| o.profile.as_deref());
-        telemetry_sink::deliver(&line, profile);
+        telemetry_sink::deliver(&line);
     }
 }
 

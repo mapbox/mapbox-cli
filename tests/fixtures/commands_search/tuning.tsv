@@ -1,0 +1,104 @@
+# Written by hand while building the search, and tuned against: the scoring and
+# the help text were changed until these ranked well, so this set flatters it.
+# Columns: query, expected first result (`|` between acceptable answers, `-`
+# for none), kind.
+how do I log in to mapbox	mapbox auth login	human
+sign in	mapbox auth login	synonym
+log out of my account	mapbox auth logout	human
+remove my saved credentials	mapbox auth logout	human
+refresh my access token	mapbox auth refresh	human
+who am I logged in as	mapbox auth whoami	human
+which token will the next command use	mapbox auth whoami	agent
+show stored credential profiles	mapbox auth profiles	human
+list my access tokens	mapbox accounts list-tokens	human
+what scopes can a token have	mapbox accounts list-scopes	human
+token permissions	mapbox accounts list-scopes	synonym
+get details of one token	mapbox accounts retrieve-token	human
+create a new map style	mapbox styles create	human
+list all styles in my account	mapbox styles list	human
+get the json of a style	mapbox styles get	agent
+update an existing style	mapbox styles update	human
+delete a style	mapbox styles delete	human
+download a style as a zip	mapbox styles download	human
+back up my style offline	mapbox styles download	synonym
+edit the draft of a style	mapbox styles draft update	human
+get a style draft	mapbox styles draft get	agent
+discard a style draft	mapbox styles draft delete	synonym
+rename my style	mapbox styles update	synonym
+find styles I deleted	mapbox styles list	human
+add an icon to a sprite	mapbox sprites upload	human
+upload many images to a sprite at once	mapbox sprites upload-batch	human
+remove an image from the sprite	mapbox sprites delete	human
+delete several sprite images	mapbox sprites delete-batch	human
+get sprite json	mapbox sprites get-json	agent
+what icons are in my sprite	mapbox sprites get-json	human
+upload a custom font	mapbox fonts upload	human
+list fonts	mapbox fonts list	agent
+delete a font	mapbox fonts delete	agent
+add a ttf font	mapbox fonts upload	human
+which fonts do I have	mapbox fonts list	human
+get a vector tile	mapbox tilesets get-mvt	agent
+fetch a raster tile from a tileset	mapbox tilesets get-tile	agent
+query features near a coordinate	mapbox tilesets query	agent
+what features are at this point	mapbox tilesets query	human
+upload a tileset	mapbox tilesets-cli	human
+create a tileset from geojson	mapbox tilesets-cli	human
+download mvt	mapbox tilesets get-mvt	agent
+render a static map image	mapbox static get-image	agent
+make a png of a map	mapbox static get-image	human
+static raster tile	mapbox static get-tile	agent
+map picture for an email	mapbox static get-image	synonym
+thumbnail of my style	mapbox static get-image	synonym
+search for an address	mapbox search forward|mapbox geocoder forward	human
+find a poi by name	mapbox search forward	agent
+what is at this coordinate	mapbox search reverse|mapbox geocoder reverse|mapbox tilesets query	human
+find restaurants nearby	mapbox search category	human
+list poi categories	mapbox search list-category	agent
+category ids for search	mapbox search list-category	agent
+get details for a place	mapbox places	human
+look up a place by its id	mapbox places	agent
+geocode an address	mapbox geocoder forward|mapbox search forward	agent
+reverse geocode a coordinate	mapbox geocoder reverse|mapbox search reverse	agent
+batch geocode many addresses	mapbox geocoder batch	agent
+turn coordinates into an address	mapbox geocoder reverse|mapbox search reverse	human
+convert an address to lat long	mapbox geocoder forward|mapbox search forward	human
+directions from a to b	mapbox directions	human
+driving route	mapbox directions	agent
+walking directions between two points	mapbox directions	human
+travel time between many locations	mapbox matrix	human
+distance matrix	mapbox matrix	agent
+area reachable in 15 minutes	mapbox isochrone	human
+drive time polygon	mapbox isochrone	synonym
+snap gps points to roads	mapbox map-match	human
+match a gps trace	mapbox map-match	agent
+clean up a noisy gps track	mapbox map-match	synonym
+report a wrong address on the map	mapbox feedback create	human
+list data feedback I submitted	mapbox feedback list	human
+get a feedback item	mapbox feedback get	agent
+send feedback about the cli	mapbox report	human
+file a bug about this tool	mapbox report	synonym
+install an mcp server	mapbox mcp install	agent
+list mcp servers	mapbox mcp list	agent
+set up mapbox for claude code	mapbox mcp install|mapbox agent-skills install	human
+install agent skills	mapbox agent-skills install	agent
+update installed skills	mapbox agent-skills update	agent
+remove skills	mapbox agent-skills uninstall	human
+list available skills	mapbox agent-skills list	agent
+write a skill describing this cli	mapbox generate-skills	agent
+shell completion for zsh	mapbox completion	human
+enable tab completion	mapbox completion	human
+uninstall the cli	mapbox uninstall	human
+turn off telemetry	mapbox config set	human
+show current settings	mapbox config list	human
+reset a setting to its default	mapbox config unset	human
+show recent commands I ran	mapbox history list	human
+details of the last run	mapbox history show	human
+check my proxy settings	mapbox doctor	human
+how much have I used this month	mapbox usage	human
+api usage by day	mapbox usage	agent
+uplaod a font	mapbox fonts upload	typo
+direcitons	mapbox directions	typo
+isochorne	mapbox isochrone	typo
+dleete a style	mapbox styles delete	typo
+bake a cake	-	none
+deploy to kubernetes	-	none

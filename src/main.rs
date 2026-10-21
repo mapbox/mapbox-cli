@@ -26,6 +26,7 @@ mod agent_skills;
 mod api_command_surface;
 mod auth;
 mod cli_token;
+mod commands;
 mod completion;
 mod config;
 mod confirm;
@@ -72,8 +73,9 @@ const REPO_URL: &str = repo_url!();
 /// by chaining `--help` calls, one command at a time; `--schema` answers the
 /// same question for every command in one document.
 const AGENT_HELP_HINT: &str = "\
-Agents: `mapbox --schema` describes every command, its arguments and the request it makes
-as one JSON document. Use it instead of chaining --help calls.";
+Agents: `mapbox commands search \"<task>\"` finds the command for a task.
+`mapbox --schema` describes every command, its arguments and the request it
+makes as one JSON document. Use these instead of chaining --help calls.";
 
 /// Help headings for the global options, which otherwise share one
 /// "Options:" list with every command's own.
@@ -785,6 +787,10 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
     // Beside `config`, which turns the history it reads on and off.
     app = app.subcommand(history::command());
 
+    // Reads the same tree `--schema` does, so it is built from the commands
+    // above rather than listing them itself.
+    app = app.subcommand(commands::command());
+
     // Reads what the other hand-written commands above also read — the
     // token store, the proxy environment, the config and telemetry
     // switches — so it belongs beside them rather than the API surface
@@ -844,7 +850,6 @@ fn no_stored_credentials(profile: Option<&str>) -> anyhow::Error {
 /// Answers `--schema`, from either of the two places it can be noticed.
 fn emit_schema(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches) -> u8 {
     run_record::set_parsed(app, specs, matches, run_record::Invocation::Schema);
-    telemetry_sink::remember_user_token(cli_token::user_token(matches));
     let mode = Mode::from_matches(matches);
     match schema::emit(mode, app, specs, matches) {
         Ok(()) => 0,
@@ -947,6 +952,11 @@ fn cli() -> u8 {
         },
     };
 
+    if let Err(e) = commands::check_query(&matches) {
+        run_record::set_unparsed(&app, &raw_argv, e.kind());
+        return report_parse_result(e, &raw_argv);
+    }
+
     // Before anything resolves a token: describing a command makes no
     // request, and asking for a login first would be a poor way to answer a
     // question about what a login is for.
@@ -955,7 +965,6 @@ fn cli() -> u8 {
     }
 
     run_record::set_parsed(&app, &specs, &matches, run_record::Invocation::Execute);
-    telemetry_sink::remember_user_token(cli_token::user_token(&matches));
     output::banner::show(&matches);
     let mode = Mode::from_matches(&matches);
     match run(&app, &specs, &matches, mode) {
@@ -1046,6 +1055,9 @@ fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> u8 
             run_record::add_stdout_bytes(err.render().to_string().len());
         }
         let _ = err.print();
+        if let Some(fix) = search_fix(&err, &rendered) {
+            output::print_tips(&[fix.to_string()]);
+        }
         return code;
     }
 
@@ -1068,14 +1080,27 @@ fn report_parse_result(err: clap::Error, raw_argv: &[std::ffi::OsString]) -> u8 
         // answers that, and inventing one would be worse than the message
         // alone — but clap's own suggester sometimes already has the answer,
         // and `-o text` shows it; carry it over rather than losing it here.
-        _ => match clap_tip(&rendered) {
-            Some(tip) => Remedy::default().with_fix(&tip),
+        _ => match clap_tip(&rendered)
+            .as_deref()
+            .or(search_fix(&err, &rendered))
+        {
+            Some(fix) => Remedy::default().with_fix(fix),
             None => Remedy::default(),
         },
     });
 
     output::emit_error(mode, &error.into());
     code
+}
+
+/// Where to go after a command name nothing resembles, which is usually a
+/// guess at what the command is called — the question `commands search`
+/// answers. A fix rather than an action: the query is the caller's to write.
+/// Nothing when clap already suggested a near spelling, which is the better
+/// answer.
+fn search_fix(err: &clap::Error, rendered: &str) -> Option<&'static str> {
+    (err.kind() == ErrorKind::InvalidSubcommand && clap_tip(rendered).is_none())
+        .then_some("To find a command by what it does: mapbox commands search \"<task>\"")
 }
 
 /// The `tip: …` line clap's own suggester renders for an unrecognized
@@ -1402,6 +1427,14 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             Some(("unset", unset_matches)) => config::unset(unset_matches, mode)?,
             _ => unreachable!("`config` sets subcommand_required(true)"),
         },
+        // Ahead of the generic service arm too, and handed `app` for the
+        // same reason `generate-skills` is: it reads the command tree already
+        // in memory. No token and no request.
+        Some((commands::COMMAND, commands_matches)) => match commands_matches.subcommand() {
+            Some(("search", search_matches)) => commands::search(app, specs, search_matches, mode)?,
+            Some(("list", _)) => commands::list(app, specs, mode)?,
+            _ => unreachable!("`commands` sets subcommand_required(true)"),
+        },
         // Ahead of the generic service arm too: it reads local history and
         // makes no request.
         Some((history::COMMAND, history_matches)) => match history_matches.subcommand() {
@@ -1574,15 +1607,15 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             let mut cli_failure = None;
             let chose_own_token = use_login || auth::typed_token(matches).is_some();
             let cli = (!chose_own_token)
-                .then(|| cli_token::for_command(&command, !dry_run))
+                .then(|| cli_token::command(&command))
                 .flatten();
-            if let Some(cli) = cli {
+            if let Some(caller) = cli {
                 let username = matches.get_one::<String>("username").cloned();
                 let attempt = try_cli_token(
                     op,
                     op_matches,
                     &command,
-                    cli,
+                    caller.token(!dry_run),
                     username.as_deref(),
                     flags,
                     mode,
@@ -1617,15 +1650,12 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             }
             .or_else(|| stored_creds.as_ref().map(|c| c.access_token.clone()));
 
-            // A command that could not use the CLI's token falls back to the
-            // user's, and with none says why the CLI's failed rather than
-            // sending a request bound to be refused. A dry run sends nothing
-            // and fetches nothing, so it plans with whatever there is.
-            if let Some((failure, why)) = cli_failure.filter(|_| !dry_run) {
-                if token.is_none() {
-                    return Err((*failure).with_remedy(no_own_token_remedy()).into());
+            if let Some((failure, why)) = cli_failure {
+                if let Some(note) =
+                    without_cli_token(*failure, &why, dry_run, token.is_some()).map_err(|e| *e)?
+                {
+                    output::progress(&note);
                 }
-                output::progress(&format!("{why} Using your own token instead."));
             }
             if use_login && token.is_none() {
                 return Err(no_stored_credentials(profile));
@@ -1678,14 +1708,13 @@ enum CliAttempt {
     },
 }
 
-/// Runs a [`cli_token::Use::Preferred`] command on the CLI's token, given
-/// what [`cli_token::for_command`] found for it, by the rules in
-/// [`cli_token::send_with_cli_token`].
+/// Runs a command on the CLI's token, given what [`cli_token::Caller::token`]
+/// found for it, by the rules in [`cli_token::send_with_cli_token`].
 fn try_cli_token(
     op: &spec::Operation,
     op_matches: &clap::ArgMatches,
     command: &str,
-    cli: Result<cli_token::CommandToken, cli_token::Unavailable>,
+    cli: Result<cli_token::CliToken, cli_token::Unavailable>,
     username: Option<&str>,
     mut flags: executor::RunFlags,
     mode: output::Mode,
@@ -1710,8 +1739,7 @@ fn try_cli_token(
     if flags.dry_run {
         return CliAttempt::Done(execute(&token.token, flags));
     }
-    let sent = cli_token::send_for_command(
-        command,
+    let sent = cli_token::send_with(
         token,
         |token| {
             let result = execute(token, flags);
@@ -1724,6 +1752,12 @@ fn try_cli_token(
             Err(error) => error.downcast_ref::<CliError>().and_then(|e| e.status),
         },
     );
+    cli_attempt(command, sent)
+}
+
+/// Turns a command's send with the CLI's token into either the result or
+/// the reason to fall back to the user's token.
+fn cli_attempt(command: &str, sent: cli_token::Sent<Result<()>>) -> CliAttempt {
     let (result, refusal) = match sent {
         cli_token::Sent::Answered(result) => match rate_limited(result) {
             // Every install shares the CLI's token, so a limit on it says
@@ -1800,8 +1834,30 @@ fn cli_token_unavailable(command: &str, why: &cli_token::Unavailable) -> CliErro
             "cli.mapbox.com did not return a usable one"
         }
         cli_token::Unavailable::NotFetched => "it has not been fetched yet",
+        cli_token::Unavailable::Quiet => "it failed several times in a row",
+        cli_token::Unavailable::OverrideNotPublic => "MAPBOX_CLI_TOKEN is not a public token",
     };
     CliError::new("cli_token_unavailable", provided_token(command, reason))
+}
+
+/// What a command does when it could not use the CLI's token. With
+/// `own_token`, it sends the user's, and the note says why. Without, it says
+/// why the CLI's failed rather than sending a request bound to be refused.
+/// A dry run sends nothing and fetches nothing, so it plans with whatever
+/// there is.
+fn without_cli_token(
+    error: CliError,
+    why: &str,
+    dry_run: bool,
+    own_token: bool,
+) -> std::result::Result<Option<String>, Box<CliError>> {
+    if dry_run {
+        Ok(None)
+    } else if own_token {
+        Ok(Some(format!("{why} Using your own token instead.")))
+    } else {
+        Err(Box::new(error.with_remedy(no_own_token_remedy())))
+    }
 }
 
 /// What to do when a command could not use the CLI's token and the user has
@@ -3033,5 +3089,75 @@ paths:
             rendered("get-new"),
             ("Fetch a thing".to_string(), "The long one.".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod cli_attempt_tests {
+    use super::*;
+
+    fn api_error(status: u16) -> Result<()> {
+        Err(CliError {
+            status: Some(status),
+            ..CliError::new("http_error", "refused")
+        }
+        .with_request_id(Some("req-1".to_owned()))
+        .into())
+    }
+
+    fn unusable(attempt: CliAttempt) -> (Box<CliError>, bool) {
+        match attempt {
+            CliAttempt::Unusable { error, sent, .. } => (error, sent),
+            CliAttempt::Done(result) => panic!("done: {result:?}"),
+        }
+    }
+
+    #[test]
+    fn a_refusal_says_why_with_its_code_and_request_id() {
+        for (refusal, code) in [
+            (cli_token::Refusal::Dead, "cli_token_unavailable"),
+            (cli_token::Refusal::Forbidden, "cli_token_forbidden"),
+            (cli_token::Refusal::Unknown, "cli_token_forbidden"),
+            (cli_token::Refusal::NotFetched, "cli_token_forbidden"),
+        ] {
+            let sent = cli_token::Sent::Refused(api_error(403), refusal);
+            let (error, sent) = unusable(cli_attempt("report", sent));
+            assert_eq!(error.code, code, "{refusal:?}");
+            assert_eq!(error.request_id.as_deref(), Some("req-1"), "{refusal:?}");
+            assert!(sent, "{refusal:?}: the request went out");
+        }
+    }
+
+    #[test]
+    fn without_a_token_of_their_own_the_user_is_told_to_log_in_unless_it_is_a_dry_run() {
+        let error = || CliError::new("cli_token_forbidden", "refused");
+        let failed = without_cli_token(error(), "why", false, false).expect_err("no token");
+        assert_eq!(failed.code, "cli_token_forbidden");
+        assert_eq!(failed.fix, no_own_token_remedy().fix);
+        assert!(matches!(
+            without_cli_token(error(), "why", true, false),
+            Ok(None)
+        ));
+        let note = without_cli_token(error(), "Why.", false, true).expect("own token");
+        assert_eq!(note.as_deref(), Some("Why. Using your own token instead."));
+    }
+
+    #[test]
+    fn a_rate_limit_lets_the_users_token_stand_in() {
+        let sent = cli_token::Sent::Answered(api_error(429));
+        let (error, sent) = unusable(cli_attempt("report", sent));
+        assert_eq!(error.status, Some(429));
+        assert!(sent);
+    }
+
+    #[test]
+    fn any_other_answer_is_the_commands() {
+        for result in [Ok(()), api_error(500)] {
+            let expected = format!("{result:?}");
+            match cli_attempt("report", cli_token::Sent::Answered(result)) {
+                CliAttempt::Done(result) => assert_eq!(format!("{result:?}"), expected),
+                CliAttempt::Unusable { .. } => panic!("{expected}: unusable"),
+            }
+        }
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "mapbox-cli"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2021"
 description = "A command-line interface for Mapbox APIs, with commands generated at build time from OpenAPI specs."
 repository = "https://github.com/mapbox/mapbox-cli"
@@ -65,6 +65,9 @@ clap = { version = "4", features = ["derive", "env", "string", "wrap_help"] }
 # top-level help, which src/help_layout.rs renders itself and so has to wrap
 # to the terminal itself.
 terminal_size = "0.4"
+# Typo tolerance for `mapbox commands search`. Already in the graph through
+# clap's own "did you mean" suggestions; the same version.
+strsim = "0.11"
 # Renders `mapbox completion <shell>` from the same `Command` tree everything
 # else here is built from. Kept to the default features on purpose: the
 # dynamic-completion half is `unstable-dynamic`, and value completion is out

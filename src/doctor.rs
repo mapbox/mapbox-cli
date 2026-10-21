@@ -107,13 +107,15 @@ const PROXY_VARS: &[(&str, &str)] = &[
 
 pub fn command() -> Command {
     Command::new(COMMAND)
-        .about("Show the environment the next command would run in")
+        .about("Show the token, proxy and settings the next command would use")
         .long_about(
             "A read-only snapshot of what the next command would see: which token wins \
              and its state, which proxy variables are in effect, and where the \
              update-check and telemetry switches currently stand. `--verify` additionally \
              checks that api.mapbox.com is reachable — the one part of this that makes a \
-             request.",
+             request.\n\n\
+             Start here when requests fail for no obvious reason: a missing or unexpected \
+             token, or a network, proxy or firewall in the way.",
         )
         .arg(
             Arg::new("verify")

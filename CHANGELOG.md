@@ -22,7 +22,7 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
-## 1.0.0 - 2026-10-21
+## 1.0.0 - 2026-10-22
 
 - New `mapbox report "<message>"` sends feedback about the CLI itself to
   the Mapbox CLI team, with the CLI's version and OS appended. It is filed

@@ -22,6 +22,8 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+## 1.0.0 - 2026-10-21
+
 - New `mapbox report "<message>"` sends feedback about the CLI itself to
   the Mapbox CLI team, with the CLI's version and OS appended. It is filed
   under Mapbox's account, not yours. It is sent with the CLI's own token,

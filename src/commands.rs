@@ -686,6 +686,7 @@ mod tests {
 
         let (mut rows, mut first, mut top3) = (0, 0, 0);
         let (mut misses, mut invalid) = (vec![], vec![]);
+        let mut seen = BTreeSet::new();
         // The scores below which the test fails, not the recorded ones.
         let mut report = format!(
             "# floors\t{}\t{}\n",
@@ -701,6 +702,12 @@ mod tests {
                 invalid.push(format!("no expected column: {line:?}"));
                 continue;
             };
+            // Scored twice, it would count twice here but once in CI's
+            // summary, which keys its rows by query.
+            if !seen.insert(query) {
+                invalid.push(format!("\"{query}\" is in the set more than once"));
+                continue;
+            }
             let expected: Vec<&str> = match expected {
                 "-" => vec![],
                 answers => answers.split('|').collect(),

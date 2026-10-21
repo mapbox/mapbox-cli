@@ -155,9 +155,12 @@ jobs:
           echo "status=$status" >>"$GITHUB_OUTPUT"
 
       # In a worktree sharing this target directory, so only the crate itself
-      # rebuilds. A base from before the eval existed matches no test, passes
-      # and writes no reports; one that fails to build or check out exits
-      # non-zero. The summary tells the two apart by the status.
+      # rebuilds. It rebuilds only because the worktree is added after the
+      # head build: cargo goes by mtime, and base sources older than that
+      # build would reuse its binary. Keep this step after the head run.
+      # A base from before the eval or its reports passes and writes none;
+      # one that fails to build or check out exits non-zero. The summary
+      # tells the two apart by the status.
       - name: Run the eval on the base
         id: base
         if: github.event_name == 'pull_request'

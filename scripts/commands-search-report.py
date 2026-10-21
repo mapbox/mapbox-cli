@@ -11,8 +11,8 @@ MAPBOX_SEARCH_EVAL_REPORT names it; each status is the exit code of the
 (not a pull request). `--sets` is the fixture directory, so a set whose
 report is missing is named rather than left out.
 
-The status is what tells apart a base that predates the eval (the run passed
-and wrote nothing) from one whose run failed: the reports alone look the
+The status is what tells apart a base whose run passed and wrote nothing
+(one that predates the eval or its reports) from one whose run failed: the reports alone look the
 same for both.
 
 Reports, never gates: the floors in `cargo test` are the gate. So this never
@@ -144,7 +144,7 @@ def base_note(base_given, base, base_status):
     if not base:
         if base_status == 0:
             return (
-                "The base predates the eval (its run had no eval tests), "
+                "The base run wrote no reports, "
                 "so only this branch's scores are shown."
             )
         return (

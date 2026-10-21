@@ -119,7 +119,7 @@ if summarize --head "$HEAD" --head-status 0 --sets "$SETS"; then
 fi
 
 if summarize --head "$HEAD" --head-status 0 --base "$WORK/none" --base-status 0 --sets "$SETS"; then
-    expect "a base from before the eval" "The base predates the eval"
+    expect "a base that wrote no reports" "The base run wrote no reports"
 fi
 
 if summarize --head "$HEAD" --head-status 0 --base "$WORK/none" --base-status 101 --sets "$SETS"; then

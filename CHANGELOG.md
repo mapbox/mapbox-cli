@@ -14,6 +14,8 @@ own response bodies, and commands marked beta, are not.
 
 Cutting a release adds a `## <version> - <date>` heading below
 `## Unreleased`, which stays in place so the next change has somewhere to go.
+`tests/changelog.rs` fails while `Cargo.toml` names a version with no such
+heading.
 
 Dev-channel builds (`v0.1.3-dev.<sha>`) are published straight from a branch
 that may never merge. They are not releases and are not listed here.

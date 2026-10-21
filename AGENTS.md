@@ -210,8 +210,8 @@ same for the completion scripts.
 ## Compatibility and the changelog
 
 Command names, flags, the two output modes and the exit codes are promises;
-the Mapbox APIs' own response bodies are not. The rules are in
-[CONTRIBUTING.md](CONTRIBUTING.md#compatibility).
+the Mapbox APIs' own response bodies, and commands marked beta, are not. The
+rules are in [CONTRIBUTING.md](CONTRIBUTING.md#compatibility).
 
 [CHANGELOG.md](CHANGELOG.md) is written by hand, newest first, because the
 commit subject rarely explains why a change matters. A user-visible change

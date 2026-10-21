@@ -4,20 +4,25 @@ What changed, and what it means for scripts that already use this tool.
 Newest first, written by hand — the commit subject rarely explains why a
 change matters.
 
-Versions follow [semantic versioning](https://semver.org/). Pre-1.0 rule:
-while the version starts with `0.`, a breaking change raises the minor
-number (`0.1.0` → `0.2.0`); everything else raises the patch. What counts as
-breaking is [written down in CONTRIBUTING.md](CONTRIBUTING.md#compatibility) — briefly,
-command names, flags, the two output modes and the exit codes are promises;
-the Mapbox APIs' own response bodies are not.
+Versions follow [semantic versioning](https://semver.org/): a breaking
+change raises the major number (`1.0.0` → `2.0.0`), a new feature the minor,
+and a fix the patch. Before 1.0, a breaking change raised the minor number
+instead. What counts as breaking is [written down in
+CONTRIBUTING.md](CONTRIBUTING.md#compatibility) — briefly, command names,
+flags, the two output modes and the exit codes are promises; the Mapbox APIs'
+own response bodies, and commands marked beta, are not.
 
 Cutting a release adds a `## <version> - <date>` heading below
 `## Unreleased`, which stays in place so the next change has somewhere to go.
+`tests/changelog.rs` fails while `Cargo.toml` names a version with no such
+heading.
 
 Dev-channel builds (`v0.1.3-dev.<sha>`) are published straight from a branch
 that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
+
+## 1.0.0 - 2026-10-22
 
 - New `mapbox report "<message>"` sends feedback about the CLI itself to
   the Mapbox CLI team, with the CLI's version and OS appended. It is filed
@@ -346,13 +351,12 @@ that may never merge. They are not releases and are not listed here.
   only part of this that makes a request — the same precedent
   `auth whoami --verify` sets.
 
-- A native `aarch64-pc-windows-msvc` build. Windows on Arm ran the x64 build
-  under emulation before this — including inside a VM on Apple Silicon, the
-  larger of the two populations this serves — which `install.ps1` already
-  said out loud and now no longer has reason to. `install.ps1` already asked
-  the manifest for this target before falling back to the x64 one, and
-  `.cargo/config.toml` already named it, so publishing the artifact was the
-  whole client-side change.
+- A native `aarch64-pc-windows-msvc` build. Windows on Arm, including in a
+  VM on Apple Silicon, ran the x64 build under emulation before this, which
+  `install.ps1` already said out loud and now no longer has reason to.
+  `install.ps1` already asked the manifest for this target before falling
+  back to the x64 one, and `.cargo/config.toml` already named it, so
+  publishing the artifact was the whole client-side change.
 
 - `install.sh`/`install.ps1` now document a convention for `MAPBOX_CLI_INSTALL_SOURCE`
   when a coding agent invokes the installer on someone's behalf: `agent-<name>`
@@ -361,6 +365,15 @@ that may never merge. They are not releases and are not listed here.
   earlier proposal used — `/` is stripped by the installers' own sanitizer,
   which would have collapsed `agent/claude-code` into `agentclaude-code` and
   lost the separator. Comment-only: neither installer's behavior changed.
+
+- `rustls-webpki` moved to 0.103.16 and `webpki-roots` to 1.0.10, fixing
+  [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382) and
+  [RUSTSEC-2026-0381](https://rustsec.org/advisories/RUSTSEC-2026-0381)
+  (CVE-2026-111943): certificate verification could accept a path through
+  distrusted emSign intermediates, whose private keys are now public. Both
+  are reached through `reqwest`, so every HTTPS request this CLI makes used
+  the affected versions; nothing in the crate itself had to change. Fixed in
+  [mapbox/mapbox-cli#106](https://github.com/mapbox/mapbox-cli/pull/106).
 
 ## 0.3.0 - 2026-09-22
 

@@ -31,19 +31,25 @@ that may never merge. They are not releases and are not listed here.
   `cli_token_unavailable` and `cli_token_forbidden` (see
   [Errors](docs/commands.md#errors)).
 
-- The CLI's own token, used for telemetry when you have no token of your
-  own, is now fetched from `https://cli.mapbox.com/config/token.json` and
-  kept in `~/.mapbox/cli-token.json` instead of being built into the binary,
+- The CLI's own token, used for telemetry, is now fetched from
+  `https://cli.mapbox.com/config/token.json` and kept in
+  `~/.mapbox/cli-token.json` instead of being built into the binary,
   so it can be rotated without a release. What changes for an existing
   setup:
   - `MAPBOX_CLI_BUNDLED_TOKEN` is no longer read at build time. A build
     from source fetches the token like a release does.
   - Keeping the token creates `~/.mapbox` if it is missing, even on a run
     whose only network use is telemetry.
-  - When an API refuses the token, the Tokens API is asked why. Only a
-    revoked, invalid, expired or malformed token is replaced, at once.
-    Three fetches in a row that find no usable token, or three refusals
-    in a row of a valid one, pause that for an hour.
+  - When an API refuses the token, the Tokens API is asked why and the
+    endpoint asked for a new token at once. A revoked, invalid, expired or
+    malformed token is replaced; a different token served is used from the
+    next run on.
+  - Three failures in a row, each a fetch that finds no usable token or a
+    refusal with no different token served, stop telemetry sending and
+    fetching for an hour. The count is telemetry's own: it never holds
+    `mapbox report` or `MAPBOX_CLI_TOKEN`, and the waits an earlier dev
+    build kept in `cli-token.json` are ignored. A new token ends it, even
+    one `mapbox report` fetched.
 
 - `tilesets query` renders as a numbered list under `-o text` again, as
   documented. It had printed pretty JSON since 0.2.0, when the command moved
@@ -305,13 +311,14 @@ that may never merge. They are not releases and are not listed here.
   file, so with two installs, set it again after using the older one.
 
 - Each run sends one `cli.command` telemetry event to Mapbox, from a
-  background process the command doesn't wait for, with your own token
-  (`--token`, `MAPBOX_ACCESS_TOKEN` or your login) or, when you have none,
-  one built into the CLI. A build from source has no built-in token, so with
-  no token of your own the event is dropped. It never touches stdout, the
-  exit code or how long a command takes, so a script sees no difference; a
-  machine that already has `~/.mapbox` finds a `.telemetry` directory in it.
-  `MAPBOX_CLI_NO_TELEMETRY=1` turns it off.
+  background process the command doesn't wait for. It is only ever sent
+  with the CLI's own public token, never yours (`--token`,
+  `MAPBOX_ACCESS_TOKEN` or your login), since Mapbox Events keeps the token
+  an event was sent with. When the CLI's token can't be used, or the send
+  fails, the event is dropped; it is never sent twice. It never touches
+  stdout, the exit code or how long a command takes, so a script sees no
+  difference; a machine that already has `~/.mapbox` finds a `.telemetry`
+  directory in it. `MAPBOX_CLI_NO_TELEMETRY=1` turns it off.
 
 - `MAPBOX_CLI_EXTRA_QUERY` appends raw query parameters to every request, in
   the same `k1=v1&k2=v2` shape as a URL's own query string — for an API

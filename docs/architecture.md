@@ -191,7 +191,7 @@ flowchart LR
         events["Mapbox Events<br/>POST /events/v2"]
     end
 
-    bin -- "① spawn detached, event + token<br/>on stdin (never argv or env)" --> child
+    bin -- "① spawn detached, event<br/>on stdin (never argv or env)" --> child
     child -- "② 🔒 HTTPS POST" --> events
 ```
 
@@ -203,15 +203,18 @@ entirely, same as Diagram 2.
 
 Step ① is detached and non-blocking: the parent spawns a copy of itself in
 this special mode and exits without waiting on it, so a dead network or a
-slow endpoint never adds to a command's run time. The event and the token it
-travels with go over the child's stdin rather than its argv or environment,
-for the same `ps`-visibility reason Diagram 3 gives.
+slow endpoint never adds to a command's run time. The event goes over the
+child's stdin rather than its argv or environment, for the same
+`ps`-visibility reason Diagram 3 gives. The child is not handed the user's
+token at all.
 
-Step ②'s token follows `src/cli_token.rs`'s fallback order: the user's own
-token first (flag, environment, or stored login), and only when none of
-those exist, the CLI's `pk.` token as a last resort so usage from a user who
-has never logged in is still counted. Every build fetches that token from
-`https://cli.mapbox.com/config/token.json` and keeps it in
+Step ② is sent with the CLI's own `pk.` token only, never the user's
+(`src/cli_token.rs`): `MAPBOX_CLI_TOKEN` when set to a `pk.` token,
+otherwise the one every build fetches from
+`https://cli.mapbox.com/config/token.json` and keeps in
 `~/.mapbox/cli-token.json` until the Tokens API says it is dead
-(`src/cli_token/fetch.rs`). With no login and no way to fetch it, the event
-is simply dropped.
+(`src/cli_token/fetch.rs`). With no usable CLI token the event is dropped,
+and a send that fails is not tried again. Three failures in a row (a fetch
+with no usable token, or a refusal with no different token served) quiet
+telemetry for an hour, a count kept per caller in that same file. A new
+token saved by any caller ends every caller's count.

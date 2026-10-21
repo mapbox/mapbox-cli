@@ -949,6 +949,11 @@ fn cli() -> u8 {
         },
     };
 
+    if let Err(e) = commands::check_query(&matches) {
+        run_record::set_unparsed(&app, &raw_argv, e.kind());
+        return report_parse_result(e, &raw_argv);
+    }
+
     // Before anything resolves a token: describing a command makes no
     // request, and asking for a login first would be a poor way to answer a
     // question about what a login is for.

@@ -1340,6 +1340,17 @@ fn commands_search_refuses_a_query_with_no_words() {
     }
 }
 
+/// The check is on the whole query: an empty variable beside real words
+/// still leaves something to search for.
+#[test]
+fn commands_search_accepts_an_empty_part_beside_words() {
+    let out = run(&[
+        "-o", "json", "commands", "search", "upload", "a", "font", "", "?",
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(json(&stdout(&out))[0]["command"], "mapbox fonts upload");
+}
+
 /// A person gets a table on stdout and the next step on stderr, so
 /// `> file` keeps the table alone.
 #[test]

@@ -4765,10 +4765,11 @@ Mapbox". Matches far below the best one are left out. A task no command
 does usually still comes back with a few weak guesses, so check the
 summaries before running one.
 
-Under `json`, each match has a `score` from 0 to 1 that reads the same for
-any query: 1 means the command's name and summary use every word of it, a
-few tenths is a guess on a word found elsewhere, and under 0.1 is barely a
-match.
+Under `json`, each match has a `score` from 0 to 1: how much of the query
+the command's own text covers. 1 means its name and summary use every word
+of the query, a few tenths is a word found elsewhere, and under 0.1 is
+barely a match. It is not a confidence, so don't use it as a cutoff: the
+right command can score lower than a wrong one on another query.
 
 The query can be quoted or not. One with no words at all, such as an
 empty string, is a usage error (exit 2). No match is not an error: `text`

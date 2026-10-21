@@ -72,10 +72,12 @@ const TYPO: f64 = 0.4;
 
 /// What each word of the query scores when both the command's name and its
 /// summary use it. The score a caller sees is the total against this, capped
-/// at 1, so it reads the same for a query of any length: 1 is a command that
-/// says every word in its name and summary, a few tenths is a guess on a
-/// word found elsewhere ("create a token" finds `feedback create` at 0.35),
-/// and under 0.1 is barely a match at all.
+/// at 1, so it measures how much of the query a command's own text covers,
+/// for a query of any length: 1 is a command that says every word in its
+/// name and summary, a few tenths is a word found elsewhere, and under 0.1 is
+/// barely a match at all. It is not a confidence: "make a map image" puts the
+/// right `static get-image` at 0.27, "create a token" the wrong `feedback
+/// create` at 0.35.
 const STRONG_TERM: f64 = NAME_WEIGHT + SUMMARY_WEIGHT;
 
 /// A match this far below the best one is noise beside it.
@@ -145,15 +147,6 @@ pub fn command() -> Command {
                     Arg::new("query")
                         .required(true)
                         .num_args(1..)
-                        // Catches a script passing an empty variable, which
-                        // would otherwise look like a query that found nothing.
-                        .value_parser(|value: &str| {
-                            if value.chars().any(char::is_alphanumeric) {
-                                Ok(value.to_string())
-                            } else {
-                                Err("has no words to search for")
-                            }
-                        })
                         .help("What you want to do, in a few words: \"upload a font\""),
                 )
                 .arg(
@@ -165,6 +158,31 @@ pub fn command() -> Command {
                 ),
         )
         .subcommand(Command::new("list").about("List every command with its summary"))
+}
+
+/// Refuses a query with no words in it as a usage error, so a script
+/// passing an empty variable fails rather than looking like a query that
+/// found nothing. Checked on the joined query, not per argument:
+/// `search font "$EMPTY"` still has a word to search for.
+pub fn check_query(matches: &ArgMatches) -> std::result::Result<(), clap::Error> {
+    let Some(("search", search)) = matches
+        .subcommand_matches(COMMAND)
+        .and_then(ArgMatches::subcommand)
+    else {
+        return Ok(());
+    };
+    let has_words = search
+        .get_many::<String>("query")
+        .expect("required")
+        .any(|part| part.chars().any(char::is_alphanumeric));
+    if has_words {
+        Ok(())
+    } else {
+        Err(clap::Error::raw(
+            clap::error::ErrorKind::InvalidValue,
+            "the query has no words to search for\n",
+        ))
+    }
 }
 
 pub fn search(

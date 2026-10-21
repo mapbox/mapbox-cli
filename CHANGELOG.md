@@ -58,6 +58,7 @@ that may never merge. They are not releases and are not listed here.
   only. Top-level help now points to `commands search` (agents see it in
   their hint), and an unknown command with no near spelling suggests it in
   the error's `fix`. No existing command or output changes.
+
 - `mapbox usage` reads as a chart: one row per product with no blank
   lines between, every sparkline as wide as the period, bars scaled from
   zero so their height is proportional to the value, and the tallest

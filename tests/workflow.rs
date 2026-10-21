@@ -170,7 +170,7 @@ fn a_run_carries_values_between_steps_and_prints_only_the_result() {
         "{stderr}"
     );
     assert!(stderr.contains("shouting"), "{stderr}");
-    assert!(stderr.contains("not recommended for use"), "{stderr}");
+    assert!(stderr.contains("may change or be removed"), "{stderr}");
 }
 
 /// A `.py` script with no `interpreter` runs under `python3` from `PATH`,

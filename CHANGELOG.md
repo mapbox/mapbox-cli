@@ -22,8 +22,8 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
-- `mapbox workflow`, beta and in development, not recommended for use:
-  install and run workflows, which are named, multi-step recipes of
+- `mapbox workflow` (beta): install and run workflows, which are named,
+  multi-step recipes of
   `mapbox` commands and scripts defined in a `workflow.yaml`. `install` copies one from a local directory or from a
   GitHub repository's `workflow/<name>/` (by default `mapbox/mapbox-cli`;
   `GH_TOKEN`/`GITHUB_TOKEN` for a private one) into `~/.mapbox/workflows/`,
@@ -59,7 +59,7 @@ that may never merge. They are not releases and are not listed here.
   `copy-style`, which copies a style between accounts with its custom fonts
   and icons, and on a partial failure lists what it created and the
   commands that remove it. The command, the `schema: 1` format and the published
-  workflows may change or be removed without notice, and every `workflow`
+  workflows may change or be removed in any release, and every `workflow`
   subcommand says so on stderr. Nothing changes for a script that does not
   use them.
 

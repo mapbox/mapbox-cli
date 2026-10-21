@@ -1,6 +1,6 @@
 //! `mapbox workflow` — install and run workflows: named, multi-step recipes
-//! of `mapbox` commands and scripts. Beta, in development, and not
-//! recommended for use: every subcommand says so on stderr.
+//! of `mapbox` commands and scripts. Beta: every subcommand says so on
+//! stderr.
 //!
 //! A workflow is a directory holding a `workflow.yaml` and the scripts it
 //! runs (see [`definition`] for the schema and the layout rules). None ships
@@ -38,7 +38,7 @@ pub const COMMAND: &str = "workflow";
 /// Printed by every subcommand. Nothing here is a promise yet, and a
 /// person who found the command in `--help` should not build on it. One
 /// line on purpose: `--help` and the docs carry the rest.
-const NOTICE: &str = "`mapbox workflow` is in development and not recommended for use.";
+const NOTICE: &str = "`mapbox workflow` may change or be removed in any release.";
 
 const NAME_ARG: &str = "name";
 const SOURCE_ARG: &str = "source";
@@ -53,7 +53,7 @@ fn beta(about: &str) -> String {
     format!("{about} (beta)")
 }
 
-const BETA_NOTE: &str = "Beta and in development, and not recommended for use.";
+const BETA_NOTE: &str = "Beta: it may change or be removed in any release.";
 
 pub fn command() -> Command {
     let name = || {
@@ -63,18 +63,14 @@ pub fn command() -> Command {
             .help("Name of an installed workflow")
     };
     Command::new(COMMAND)
-        .about(
-            "Install and run multi-step workflows of mapbox commands and scripts \
-             (beta, in development, not recommended for use)",
-        )
+        .about("Install and run multi-step workflows of mapbox commands and scripts (beta)")
         .long_about(
             "Install and run workflows: named, multi-step recipes of mapbox commands and \
              scripts, defined in a workflow.yaml.\n\n\
              A workflow runs only once it is installed, from a local directory or from a \
              GitHub repository's workflow/<name>/ directory.\n\n\
-             Beta and in development, and not recommended for use: the commands, the \
-             workflow format and the published workflows may change or be removed \
-             without notice.",
+             Beta: the commands, the workflow format and the published workflows may \
+             change or be removed in any release.",
         )
         .subcommand_required(true)
         .subcommand(Command::new("list").about(beta("List installed workflows")))

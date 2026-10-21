@@ -397,7 +397,7 @@ mapbox workflow run copy-style --style-id <STYLE_ID> --from-profile source --to-
 ```
 
 A workflow is a named, multi-step recipe of `mapbox` commands and scripts.
-`mapbox workflow` is in development and not recommended for use yet. See
+`mapbox workflow` is beta and may change or be removed in any release. See
 [Workflows](./docs/commands.md#workflows).
 
 ## For AI agents

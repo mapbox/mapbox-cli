@@ -137,7 +137,7 @@ pub fn command() -> Command {
 
 /// `--schema`'s walk, without the commands a skill must not teach.
 ///
-/// `workflow` is beta, in development and not recommended for use, and an
+/// `workflow` is beta and may change or be removed in any release, and an
 /// agent that reads about a command in its skill takes it as one to reach
 /// for. `--schema` still lists it, with the notice in its description.
 fn skill_schema(app: &Command, specs: &[ServiceSpec]) -> schema::Schema {
@@ -1597,7 +1597,7 @@ mod tests {
         assert_eq!(described, runnable);
         assert!(
             !described.iter().any(|command| command.contains("workflow")),
-            "the skill teaches `workflow`, which is not recommended for use"
+            "the skill teaches `workflow`, which is beta"
         );
 
         let mut unique = described.clone();

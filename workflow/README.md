@@ -2,7 +2,7 @@
 
 A workflow is a named, multi-step recipe of `mapbox` commands and scripts. None ships inside the binary: `mapbox workflow install` copies one in, and `mapbox workflow run` runs only what is installed. See [docs/commands.md](../docs/commands.md#workflows) for the commands.
 
-> **Beta and in development. Not recommended for use.** The `workflow` command, the format below (`schema: 1`) and the published workflows may change or be removed without notice. Every `mapbox workflow` subcommand says so on stderr.
+> **Beta.** The `workflow` command, the format below (`schema: 1`) and the published workflows may change or be removed in any release. Every `mapbox workflow` subcommand says so on stderr.
 
 **Only install a workflow you trust.** Its steps run as you, with your credentials and every stored profile; a script step runs whatever its interpreter does, in a `--dry-run` too when it is marked `dry_run`. `install` lists a workflow's scripts, and asks before installing one from a repository other than this one, or from a `--ref` that is not on this repository's `main`, such as a pull request. Only a typed `--yes` answers that question; `MAPBOX_YES` does not.
 

@@ -5113,13 +5113,12 @@ A workflow is a named, multi-step recipe of `mapbox` commands and scripts,
 defined in a `workflow.yaml`. The format and the rules a workflow directory
 follows are in [workflow/README.md](../workflow/README.md).
 
-**Beta and in development. Not recommended for use.** The commands, the
-`schema: 1` format and the published workflows may change or be removed
-without notice. Every `mapbox workflow` subcommand opens with this line on
+**Beta.** The commands, the `schema: 1` format and the published workflows
+may change or be removed in any release. Every `mapbox workflow` subcommand opens with this line on
 stderr:
 
 ```
-Beta: `mapbox workflow` is in development and not recommended for use.
+Beta: `mapbox workflow` may change or be removed in any release.
 ```
 
 In text mode, `list`, `show` and `install` end with tips on stderr, naming
@@ -5391,7 +5390,7 @@ $ mapbox workflow run copy-style --style-id cmums8rlh000301s96498hnju \
     --from-profile default --to-profile default --dry-run
 🗺️  mapbox · v0.3.0
 ────────────────────────────────────────
-Beta: `mapbox workflow` is in development and not recommended for use.
+Beta: `mapbox workflow` may change or be removed in any release.
 
 ▸ Check the source login  mapbox auth status
   ✓ 0.0s

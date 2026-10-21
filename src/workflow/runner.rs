@@ -21,7 +21,7 @@ use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command as Process, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use anyhow::{anyhow, Context as _, Result};
 use clap::{Arg, ArgAction, Command};
@@ -50,6 +50,10 @@ const RESERVED: &[(&str, &str)] = &[
     (
         "token",
         "a token written into a workflow is a secret in a file; use `profile`",
+    ),
+    (
+        "yes",
+        "only the person running it can skip a confirmation, with `mapbox workflow run --yes`",
     ),
 ];
 
@@ -330,8 +334,22 @@ fn run_steps(
         }
 
         let is_script = matches!(step.action, Action::Script { .. });
+        // A command step hands its error document back through a file, so
+        // the run can carry its code rather than print it raw.
+        let error_file =
+            (!is_script).then(|| workdir.path().join(format!(".error-{}.json", step.id)));
+        if let Some(path) = &error_file {
+            process.env(output::STEP_ERROR_ENV, path);
+        }
         let view = display.start(index, title, &step.label(), is_script);
-        let result = execute(&mut process, stdin.as_ref(), step, &view, workdir.path());
+        let result = execute(
+            &mut process,
+            stdin.as_ref(),
+            step,
+            &view,
+            workdir.path(),
+            error_file.as_deref(),
+        );
         let interrupted = interrupted(result.is_err());
         view.finish(result.is_ok() && !interrupted);
         if interrupted {
@@ -346,16 +364,46 @@ fn run_steps(
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
+/// The running step's process id, or 0 between steps.
+static CURRENT_CHILD: AtomicU32 = AtomicU32::new(0);
+
+/// How long a step gets to stop on its own before the signal is passed on.
+#[cfg(unix)]
+const FORWARD_AFTER: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Ctrl-C reaches the running step's child as well as this process, and so
-/// does the SIGHUP of a closed terminal; a SIGTERM reaches only this one,
-/// which then stops once the current step ends. The
-/// child stops; this process only notes it and fails once the child has
+/// does the SIGHUP of a closed terminal; a SIGTERM reaches only this one.
+/// The child stops; this process only notes it and fails once the child has
 /// gone, so the run's [`Workdir`] is dropped rather than left in place by a
 /// process that died holding it.
+///
+/// For the SIGTERM a CI timeout sends, a step still running after
+/// [`FORWARD_AFTER`] is sent a SIGINT. `ctrlc` does not say which signal
+/// arrived, so the wait is what keeps a Ctrl-C from reaching the child
+/// twice; and SIGINT rather than SIGTERM so a script can still report what
+/// it did, as `copy-style` does on a `KeyboardInterrupt`.
 fn catch_interrupt() {
     // On failure Ctrl-C keeps its default, which stops the run as before
     // but leaves the directory behind; not worth failing the run over.
-    let _ = ctrlc::set_handler(|| INTERRUPTED.store(true, Ordering::SeqCst));
+    let _ = ctrlc::set_handler(|| {
+        INTERRUPTED.store(true, Ordering::SeqCst);
+        #[cfg(unix)]
+        {
+            std::thread::sleep(FORWARD_AFTER);
+            // A process id can be reused once its process is reaped. The
+            // window is the moment between the reap and the store of 0
+            // after it, which is as narrow as this gets without `unsafe`.
+            let pid = CURRENT_CHILD.load(Ordering::SeqCst);
+            if let Ok(pid) = i32::try_from(pid) {
+                if pid > 0 {
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(pid),
+                        nix::sys::signal::Signal::SIGINT,
+                    );
+                }
+            }
+        }
+    });
 }
 
 fn cancelled(when: &str) -> anyhow::Error {
@@ -404,6 +452,45 @@ fn step_failure(step: &Step, err: anyhow::Error) -> anyhow::Error {
     .into()
 }
 
+/// A command step's failure, built from the error document the child wrote.
+/// Still `workflow_failed`, so a caller knows the run stopped; the child's
+/// own document is its `cause`, so a caller can branch on its `code`, and its
+/// status and advice are lifted onto this one for a person to read.
+fn command_failure(step: &Step, cause: Value) -> anyhow::Error {
+    let text = |key: &str| cause.get(key).and_then(Value::as_str).map(String::from);
+    let list = |key: &str| -> Vec<String> {
+        cause
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut error = CliError::new(
+        "workflow_failed",
+        format!(
+            "Step `{}` ({}): {}",
+            step.id,
+            step.label(),
+            text("message").unwrap_or_else(|| "failed".to_string())
+        ),
+    );
+    error.status = cause
+        .get("status")
+        .and_then(Value::as_u64)
+        .and_then(|status| u16::try_from(status).ok());
+    error.fix = text("fix");
+    error.next_actions = list("next_actions");
+    error.docs = list("docs");
+    error.request_id = text("request_id");
+    error.cause = Some(cause);
+    error.into()
+}
+
 /// Spawns one step and reads its stdout as its output: JSON when it parses,
 /// the text otherwise, nothing when there is none.
 fn execute(
@@ -412,6 +499,7 @@ fn execute(
     step: &Step,
     view: &StepView,
     workdir: &Path,
+    error_file: Option<&Path>,
 ) -> Result<Value> {
     // A script with nothing to read gets nothing, rather than a terminal it
     // might block on. A command keeps the terminal, which is where a
@@ -463,9 +551,11 @@ fn execute(
             }
         })
     });
-    let finished = child
-        .wait_with_output()
-        .map_err(|e| step_failure(step, anyhow!("could not wait for it: {e}")))?;
+    CURRENT_CHILD.store(child.id(), Ordering::SeqCst);
+    let finished = child.wait_with_output();
+    CURRENT_CHILD.store(0, Ordering::SeqCst);
+    let finished =
+        finished.map_err(|e| step_failure(step, anyhow!("could not wait for it: {e}")))?;
     if let Some(writer) = writer {
         let _ = writer.join();
     }
@@ -475,6 +565,13 @@ fn execute(
     }
 
     if !finished.status.success() {
+        let cause = error_file
+            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .filter(|cause| cause.get("code").is_some_and(Value::is_string));
+        if let Some(cause) = cause {
+            return Err(command_failure(step, cause));
+        }
         let how = match finished.status.code() {
             Some(code) => format!("exited with {code}"),
             None => "was stopped by a signal".to_string(),
@@ -566,10 +663,33 @@ fn find_arg<'a>(
     Ok((arg, shape))
 }
 
+/// Whether a CLI at `current` satisfies `requires`, comparing numbers only:
+/// a dev build of 0.4.0 is taken as 0.4.0, since a workflow requiring it was
+/// most likely written against that build.
+fn too_old(requires: &str, current: &str) -> Option<String> {
+    let parse = crate::update_check::parse_version;
+    let (Some(needed), Some(this)) = (parse(requires), parse(current)) else {
+        return None;
+    };
+    ((this.0, this.1, this.2) < (needed.0, needed.1, needed.2)).then(|| {
+        format!("it needs mapbox {requires} or later, and this is {current}; update the CLI")
+    })
+}
+
 /// Every `command` step's problems against this binary's command tree —
 /// checked at install and again before a run, since the CLI may have been
 /// upgraded underneath an installed workflow.
 pub fn command_problems(app: &Command, workflow: &Workflow) -> Vec<String> {
+    // Alone when it fails: an older CLI's other complaints are symptoms of
+    // the same thing, and a script step's needs show up nowhere else.
+    if let Some(problem) = workflow
+        .requires
+        .as_deref()
+        .and_then(|requires| too_old(requires, env!("CARGO_PKG_VERSION")))
+    {
+        return vec![problem];
+    }
+
     let mut problems = vec![];
     let read_only = OnceCell::new();
 
@@ -758,7 +878,7 @@ mod tests {
 
     fn workflow(steps: &str) -> Workflow {
         let yaml = format!(
-            "version: 1\nname: t\nsummary: t\ninputs:\n  n: {{ type: number, default: 2 }}\n  flag: {{ type: boolean, default: false }}\nsteps:\n{steps}"
+            "schema: 1\nname: t\nsummary: t\ninputs:\n  n: {{ type: number, default: 2 }}\n  flag: {{ type: boolean, default: false }}\nsteps:\n{steps}"
         );
         let files: Files = [(PathBuf::from(DEFINITION_FILE), yaml.into_bytes())].into();
         parse("t", &files).expect("valid")
@@ -812,10 +932,15 @@ mod tests {
                 "  - id: a\n    command: styles nope\n\
                  \x20 - id: b\n    command: styles\n\
                  \x20 - id: c\n    command: styles get\n    args: { bogus: 1, token: x }\n\
-                 \x20 - id: d\n    command: workflow list\n",
+                 \x20 - id: d\n    command: workflow list\n\
+                 \x20 - id: e\n    command: styles delete\n    args: { style-id: x, yes: true }\n",
             ),
         );
         let joined = found.join("\n");
+        assert!(
+            joined.contains("step `e`") && joined.contains("only the person running it"),
+            "{joined}"
+        );
         assert!(
             joined.contains("`mapbox styles nope` is not a command"),
             "{joined}"
@@ -886,10 +1011,32 @@ mod tests {
 
     #[test]
     fn an_input_cannot_take_a_global_flag() {
-        let yaml = "version: 1\nname: t\nsummary: t\ninputs:\n  profile: { type: string }\n  dry_run: { type: boolean }\nsteps:\n  - id: a\n    command: styles list\n";
+        let yaml = "schema: 1\nname: t\nsummary: t\ninputs:\n  profile: { type: string }\n  dry_run: { type: boolean }\nsteps:\n  - id: a\n    command: styles list\n";
         let files: Files = [(PathBuf::from(DEFINITION_FILE), yaml.as_bytes().to_vec())].into();
         let found = command_problems(&app(), &parse("t", &files).unwrap()).join("\n");
         assert!(found.contains("`--profile`"), "{found}");
         assert!(found.contains("`--dry-run`"), "{found}");
+    }
+
+    #[test]
+    fn requires_compares_release_numbers() {
+        assert!(too_old("0.4.0", "0.3.9").is_some());
+        assert!(too_old("0.4.0", "0.4.0").is_none());
+        assert!(too_old("0.4.0", "0.4.0-dev.abc1234").is_none());
+        assert!(too_old("0.4.0", "1.0.0").is_none());
+    }
+
+    /// A workflow for a newer CLI is refused with that reason alone, even
+    /// though its unknown command would be refused too.
+    #[test]
+    fn a_newer_cli_requirement_is_the_only_problem_reported() {
+        let yaml = "schema: 1\nname: t\nrequires: '>=999.0.0'\nsummary: t\nsteps:\n  - id: a\n    command: no such\n";
+        let files: Files = [(PathBuf::from(DEFINITION_FILE), yaml.as_bytes().to_vec())].into();
+        let found = command_problems(&app(), &parse("t", &files).unwrap());
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].contains("needs mapbox 999.0.0 or later"),
+            "{found:?}"
+        );
     }
 }

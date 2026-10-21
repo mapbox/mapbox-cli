@@ -53,7 +53,17 @@ pub struct CliError {
     /// to support — a 404 on a mistyped style id is theirs to fix, and an id
     /// under it would be noise on the common case.
     pub request_id: Option<String>,
+    /// The failure this one wraps, as the error document it was printed as:
+    /// a workflow step's own error, so that a caller can still branch on its
+    /// `code`. JSON only; the text rendering already says it in `message`.
+    pub cause: Option<Value>,
 }
+
+/// Set on a child this binary runs as a workflow step: the file its error
+/// document goes to instead of stderr, for the run to report as the step's
+/// cause. Its text form on the terminal would only repeat what the run is
+/// about to say, and its JSON form would be a second, stray document.
+pub const STEP_ERROR_ENV: &str = "MAPBOX_INTERNAL_STEP_ERROR_FILE";
 
 impl CliError {
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
@@ -67,6 +77,7 @@ impl CliError {
             next_actions: Vec::new(),
             docs: Vec::new(),
             request_id: None,
+            cause: None,
         }
     }
 
@@ -141,6 +152,7 @@ impl CliError {
             next_actions: Vec::new(),
             docs: Vec::new(),
             request_id: None,
+            cause: None,
         }
     }
 
@@ -229,7 +241,20 @@ fn error_payload(e: &CliError) -> Value {
     if let Some(request_id) = &e.request_id {
         obj["request_id"] = json!(request_id);
     }
+    if let Some(cause) = &e.cause {
+        obj["cause"] = cause.clone();
+    }
     obj
+}
+
+/// The error document `err` renders as under `json`.
+fn payload(err: &anyhow::Error) -> Value {
+    match err.downcast_ref::<CliError>() {
+        Some(e) => error_payload(e),
+        // `{:#}` flattens anyhow's context chain into one line, so a
+        // wrapped error keeps the context that explains it.
+        None => json!({ "code": GENERIC_CODE, "message": format!("{err:#}") }),
+    }
 }
 
 /// Renders a failure to stderr.
@@ -244,13 +269,16 @@ pub fn emit_error(mode: Mode, err: &anyhow::Error) {
     let code = cli.map_or(GENERIC_CODE, |e| e.code.as_str());
     crate::run_record::set_error(code, &format!("{err:#}"));
 
+    // Printed as usual if the file cannot be written, so the failure is
+    // never lost.
+    if let Some(path) = std::env::var_os(STEP_ERROR_ENV) {
+        if std::fs::write(path, payload(err).to_string()).is_ok() {
+            return;
+        }
+    }
+
     if mode.is_json() {
-        let payload = match cli {
-            Some(e) => error_payload(e),
-            // `{:#}` flattens anyhow's context chain into one line, so a
-            // wrapped error keeps the context that explains it.
-            None => json!({ "code": GENERIC_CODE, "message": format!("{err:#}") }),
-        };
+        let payload = payload(err);
         // Serializing a `json!` object cannot fail; fall back rather than
         // panic while already on the error path.
         let pretty = matches!(mode, Mode::Json { pretty: true });

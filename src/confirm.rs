@@ -12,6 +12,10 @@
 //! `--yes` says the answer is yes before it is asked, which is the only way a
 //! caller *at* a terminal can get the non-interactive behavior on purpose.
 //!
+//! One question is the exception, and refuses rather than proceeds when nobody
+//! can answer it: installing a workflow from a repository the CLI does not
+//! vouch for. See [`untrusted_install`].
+//!
 //! The question is deliberately not `--output`-aware. It goes to stderr as
 //! prose in both modes, because the only way to see it is to be a person at a
 //! terminal, and a person reads prose. stdout still carries nothing but the
@@ -89,12 +93,12 @@ fn is_yes(answer: &str) -> bool {
 /// EOF part-way through the question, which is what a piped stdout at a
 /// terminal produces when nothing answers. The code is stable so a caller can
 /// branch on it instead of matching the prose.
-fn cancelled() -> anyhow::Error {
+fn cancelled(outcome: &str) -> anyhow::Error {
     // No `next_actions`, deliberately. The only command that would answer
     // this is the delete that was just declined, with `--yes` bolted on —
     // handing that back to whoever typed `n` is the one suggestion this CLI
     // must not make. The flag is named in the prose, where a person decides.
-    CliError::new("cancelled", "Cancelled — nothing was sent.")
+    CliError::new("cancelled", format!("Cancelled — {outcome}."))
         .with_remedy(
             Remedy::default().with_fix("Pass --yes (or set MAPBOX_YES=1) to skip this question."),
         )
@@ -119,14 +123,14 @@ pub fn destructive_request(method: &str, url: &str, assume_yes: bool) -> Result<
     // No "this cannot be undone": it is not true of every delete here, and a
     // warning the reader can catch out is worse than none. The method and the
     // resource are the part that lets them catch out the *command*.
-    ask(&format!("About to {method} {url}"))
+    ask(&format!("About to {method} {url}"), "nothing was sent")
 }
 
 /// Asks a yes/no question on stderr/stdin, for a destructive local action
 /// that (unlike `destructive_request`) is not an HTTP request — `uninstall`,
 /// so far. The caller has already decided the question is worth asking
 /// (typically via [`decide`]); this is just the I/O.
-fn ask(question: &str) -> Result<()> {
+fn ask(question: &str, outcome: &str) -> Result<()> {
     let mut stderr = std::io::stderr();
     // Ignored deliberately: a broken stderr cannot be reported *on* stderr,
     // and the read below will fail too, which is where the refusal comes from.
@@ -139,7 +143,7 @@ fn ask(question: &str) -> Result<()> {
         // Ok(0) is EOF — the terminal went away mid-question. Treated as a
         // no, like every other answer that is not a yes.
         Ok(_) if is_yes(&answer) => Ok(()),
-        _ => Err(cancelled()),
+        _ => Err(cancelled(outcome)),
     }
 }
 
@@ -153,12 +157,57 @@ pub fn destructive_local_action(question: &str, assume_yes: bool) -> Result<()> 
     if assume_yes || !(std::io::stdin().is_terminal() && std::io::stderr().is_terminal()) {
         return Ok(());
     }
-    ask(question)
+    ask(question, "nothing was sent")
+}
+
+/// Asks before installing a workflow from a source the CLI does not vouch
+/// for, and refuses when there is nobody to ask.
+///
+/// Everywhere else no terminal means go ahead. Here that would install code
+/// that later runs as the caller, with their credentials, on nobody's
+/// say-so — a mistyped `--repo` in CI would be enough. So without a terminal
+/// it takes `--yes`.
+pub fn untrusted_install(question: &str, assume_yes: bool) -> Result<()> {
+    let at_terminal = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    match untrusted_decision(assume_yes, at_terminal) {
+        Some(Decision::Proceed) => Ok(()),
+        Some(Decision::Ask) => ask(question, "nothing was installed"),
+        None => Err(CliError::new(
+            "confirmation_required",
+            format!("{question}\nNothing was installed: there is no terminal to confirm it on."),
+        )
+        .with_remedy(
+            Remedy::default()
+                .with_fix("Pass --yes (or set MAPBOX_YES=1) once you trust what it runs."),
+        )
+        .into()),
+    }
+}
+
+/// [`untrusted_install`]'s choice, with no I/O in it: `None` is a refusal.
+fn untrusted_decision(assume_yes: bool, at_terminal: bool) -> Option<Decision> {
+    if assume_yes {
+        Some(Decision::Proceed)
+    } else if at_terminal {
+        Some(Decision::Ask)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{decide, destructive_local_action, is_yes, Decision};
+    use super::{decide, destructive_local_action, is_yes, untrusted_decision, Decision};
+
+    /// Unlike a delete, no terminal is a refusal: code from an unvetted
+    /// repository is not installed on nobody's say-so.
+    #[test]
+    fn an_untrusted_install_needs_yes_or_someone_to_ask() {
+        assert_eq!(untrusted_decision(true, false), Some(Decision::Proceed));
+        assert_eq!(untrusted_decision(true, true), Some(Decision::Proceed));
+        assert_eq!(untrusted_decision(false, true), Some(Decision::Ask));
+        assert_eq!(untrusted_decision(false, false), None);
+    }
 
     /// The whole point of the flag: it makes a terminal behave like CI.
     #[test]

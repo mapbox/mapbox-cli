@@ -117,6 +117,13 @@ terminal-colorsaurus = "1"
 # that command only; every other command keeps the default.
 ctrlc = { version = "3", features = ["termination"] }
 
+[target.'cfg(unix)'.dependencies]
+# For `workflow run`: passing a SIGTERM on to the running step, which a
+# terminal's Ctrl-C reaches by itself and a `kill` does not. Sending a signal
+# takes `unsafe` this crate does not have. Already in the graph through
+# `ctrlc`; the same version.
+nix = { version = "0.31", default-features = false, features = ["signal"] }
+
 [target.'cfg(windows)'.dependencies]
 # For `src/detach.rs`: keeping the parent's standard handles out of a detached
 # child. Already in the graph through tokio and others; the same version.

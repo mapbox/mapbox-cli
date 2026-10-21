@@ -52,6 +52,28 @@ pub const REPO_PREFIX: &str = "workflow";
 /// allocate without bound.
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 
+fn too_large(what: &str, limit: u64) -> anyhow::Error {
+    anyhow!(
+        "{what} is larger than {} MiB, more than a workflow should be",
+        limit / (1024 * 1024)
+    )
+}
+
+/// All of `reader`, or an error once it passes `limit`. One byte more than
+/// the limit is read, so an oversized source is said to be one rather than
+/// cut short into something that reads as corrupt.
+fn read_capped(reader: impl Read, limit: u64, what: &str) -> Result<Vec<u8>> {
+    let mut bytes = vec![];
+    reader
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("Could not read {what}"))?;
+    if bytes.len() as u64 > limit {
+        return Err(too_large(what, limit));
+    }
+    Ok(bytes)
+}
+
 /// The files `read_local` passes over rather than refusing. Finder writes
 /// `.DS_Store` into any directory it opens.
 const IGNORED: &[&str] = &[".DS_Store"];
@@ -130,9 +152,10 @@ fn now() -> u64 {
 ///
 /// A symlink is refused rather than followed: it is a way to install
 /// something from outside the directory that was named.
-fn read_tree(dir: &Path, skip: &[&str]) -> Result<Files> {
+fn read_tree(dir: &Path, skip: &[&str], limit: u64) -> Result<Files> {
     let mut files = Files::new();
     let mut total: u64 = 0;
+    let what = dir.display().to_string();
     let mut pending = vec![dir.to_path_buf()];
     while let Some(current) = pending.pop() {
         let entries = std::fs::read_dir(&current)
@@ -154,14 +177,15 @@ fn read_tree(dir: &Path, skip: &[&str]) -> Result<Files> {
             if kind.is_dir() {
                 pending.push(path);
             } else if kind.is_file() {
-                let bytes = std::fs::read(&path)
+                // Capped at what is left, so one huge file is refused
+                // without being read whole first.
+                let mut bytes = vec![];
+                std::fs::File::open(&path)
+                    .and_then(|file| file.take(limit - total + 1).read_to_end(&mut bytes))
                     .with_context(|| format!("Could not read {}", path.display()))?;
                 total += bytes.len() as u64;
-                if total > MAX_BYTES {
-                    return Err(anyhow!(
-                        "{} holds more than a workflow should",
-                        dir.display()
-                    ));
+                if total > limit {
+                    return Err(too_large(&what, limit));
                 }
                 files.insert(relative.to_path_buf(), bytes);
             } else {
@@ -201,7 +225,7 @@ pub fn read_local(dir: &Path) -> Result<Package> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let files = read_tree(&dir, &[])?;
+    let files = read_tree(&dir, &[], MAX_BYTES)?;
     package(
         &name,
         files,
@@ -303,12 +327,8 @@ fn fetch_github_from(
         debug,
     )?;
 
-    let mut bytes = vec![];
-    response
-        .take(MAX_BYTES)
-        .read_to_end(&mut bytes)
-        .map_err(|e| anyhow!("Could not read the archive from GitHub: {e}"))?;
-    let files = extract(&bytes, name, repo)?;
+    let bytes = read_capped(response, MAX_BYTES, "the archive from GitHub")?;
+    let files = extract(&bytes, name, repo, MAX_BYTES)?;
     package(
         name,
         files,
@@ -387,9 +407,15 @@ fn unsafe_entry(path: &Path) -> anyhow::Error {
 }
 
 /// The files of `workflow/<name>/` in a repository tarball.
-fn extract(archive: &[u8], name: &str, repo: &str) -> Result<Files> {
-    let decoder = flate2::read::GzDecoder::new(archive);
-    let mut tar = tar::Archive::new(decoder.take(MAX_BYTES));
+fn extract(archive: &[u8], name: &str, repo: &str, limit: u64) -> Result<Files> {
+    // Unpacked whole first: a small archive can inflate to far more than it
+    // is, and the cap has to apply to what it inflates to.
+    let unpacked = read_capped(
+        flate2::read::GzDecoder::new(archive),
+        limit,
+        "the archive from GitHub, unpacked,",
+    )?;
+    let mut tar = tar::Archive::new(unpacked.as_slice());
 
     let mut files = Files::new();
     let mut available: std::collections::BTreeSet<String> = Default::default();
@@ -613,7 +639,7 @@ fn load_dir(name: &str, root: PathBuf) -> Result<Installed> {
             .with_context(|| format!("Could not read {}", root.join(META_FILE).display()))?,
     )
     .with_context(|| format!("{} is not readable", root.join(META_FILE).display()))?;
-    let files = read_tree(&root, &[META_FILE])?;
+    let files = read_tree(&root, &[META_FILE], MAX_BYTES)?;
     let workflow = definition::parse(name, &files).map_err(|p| invalid_workflow(name, &p))?;
     Ok(Installed {
         root,
@@ -808,7 +834,7 @@ mod tests {
         let commit = "0123456789abcdef0123456789abcdef01234567";
         let tarball = archive(&[(
             "mapbox-mapbox-cli-0123456/workflow/demo/workflow.yaml",
-            b"version: 1\nname: demo\nsummary: d\nsteps:\n  - id: a\n    command: config list\n",
+            b"schema: 1\nname: demo\nsummary: d\nsteps:\n  - id: a\n    command: config list\n",
         )]);
         let (server, base) = serve(vec![
             (
@@ -858,7 +884,7 @@ mod tests {
             ("mapbox-cli-abc/workflow/copy-style/scripts/p.py", b"b"),
             ("mapbox-cli-abc/workflow/other/workflow.yaml", b"c"),
         ]);
-        let files = extract(&bytes, "copy-style", "mapbox/cli").unwrap();
+        let files = extract(&bytes, "copy-style", "mapbox/cli", MAX_BYTES).unwrap();
         assert_eq!(
             files.keys().cloned().collect::<Vec<_>>(),
             [
@@ -871,14 +897,14 @@ mod tests {
     #[test]
     fn a_missing_workflow_lists_what_is_there() {
         let bytes = archive(&[("r-abc/workflow/other/workflow.yaml", b"c")]);
-        let err = extract(&bytes, "copy-style", "mapbox/cli").unwrap_err();
+        let err = extract(&bytes, "copy-style", "mapbox/cli", MAX_BYTES).unwrap_err();
         assert!(err.to_string().contains("It publishes: other."), "{err}");
     }
 
     #[test]
     fn a_file_directly_under_workflow_is_not_a_workflow() {
         let bytes = archive(&[("r-abc/workflow/README.md", b"c")]);
-        assert!(extract(&bytes, "copy-style", "mapbox/cli").is_err());
+        assert!(extract(&bytes, "copy-style", "mapbox/cli", MAX_BYTES).is_err());
     }
 
     #[test]
@@ -901,5 +927,114 @@ mod tests {
         for bad in ["", "a?b", "a#b", "../main", "a//b", "a b", "a%2e"] {
             assert!(check_ref(bad).is_err(), "{bad}");
         }
+    }
+
+    /// An archive entry written as-is. `tar::Builder` refuses a `..` or an
+    /// absolute path, which is exactly what a hostile archive holds.
+    fn raw_entry(
+        builder: &mut tar::Builder<flate2::write::GzEncoder<Vec<u8>>>,
+        path: &str,
+        kind: tar::EntryType,
+        bytes: &[u8],
+    ) {
+        let mut header = tar::Header::new_gnu();
+        header.as_gnu_mut().unwrap().name[..path.len()].copy_from_slice(path.as_bytes());
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_entry_type(kind);
+        if kind == tar::EntryType::Symlink {
+            header.set_link_name("/etc/passwd").unwrap();
+        }
+        header.set_cksum();
+        builder.append(&header, bytes).unwrap();
+    }
+
+    fn raw_archive(entries: &[(&str, tar::EntryType)]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+            vec![],
+            flate2::Compression::fast(),
+        ));
+        for (path, kind) in entries {
+            let bytes: &[u8] = if *kind == tar::EntryType::Regular {
+                b"x"
+            } else {
+                b""
+            };
+            raw_entry(&mut builder, path, *kind, bytes);
+        }
+        builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    fn code(err: &anyhow::Error) -> &str {
+        err.downcast_ref::<CliError>()
+            .map_or("", |e| e.code.as_str())
+    }
+
+    #[test]
+    fn an_entry_that_leaves_its_directory_stops_the_read() {
+        use tar::EntryType::Regular;
+        for bad in [
+            "r-abc/../workflow/copy-style/workflow.yaml",
+            "r-abc/workflow/copy-style/../../../x",
+            "/workflow/copy-style/workflow.yaml",
+        ] {
+            let bytes = raw_archive(&[
+                ("r-abc/workflow/copy-style/workflow.yaml", Regular),
+                (bad, Regular),
+            ]);
+            let err = extract(&bytes, "copy-style", "mapbox/cli", MAX_BYTES).unwrap_err();
+            assert_eq!(code(&err), "unsafe_archive", "{bad}: {err:#}");
+        }
+    }
+
+    #[test]
+    fn links_in_an_archive_are_passed_over() {
+        let bytes = raw_archive(&[
+            (
+                "r-abc/workflow/copy-style/workflow.yaml",
+                tar::EntryType::Regular,
+            ),
+            (
+                "r-abc/workflow/copy-style/scripts/x.py",
+                tar::EntryType::Symlink,
+            ),
+            (
+                "r-abc/workflow/copy-style/scripts/y.py",
+                tar::EntryType::Link,
+            ),
+        ]);
+        let files = extract(&bytes, "copy-style", "mapbox/cli", MAX_BYTES).unwrap();
+        assert_eq!(
+            files.keys().cloned().collect::<Vec<_>>(),
+            [PathBuf::from("workflow.yaml")]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_in_a_local_directory_is_refused() {
+        let dir = holding(&scratch_dir("symlink").join("demo"), "x");
+        std::fs::create_dir_all(dir.join("scripts")).unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", dir.join("scripts/x.py")).unwrap();
+        let err = read_tree(&dir, &[], MAX_BYTES).unwrap_err();
+        assert!(err.to_string().contains("not a regular file"), "{err:#}");
+    }
+
+    /// Past the cap is an error saying so, not a read cut short into
+    /// something that then fails as corrupt.
+    #[test]
+    fn past_the_size_cap_is_refused_as_too_large() {
+        assert_eq!(read_capped(&[0u8; 8][..], 8, "x").unwrap().len(), 8);
+        let err = read_capped(&[0u8; 9][..], 8, "x").unwrap_err();
+        assert!(err.to_string().contains("larger than"), "{err:#}");
+
+        let bytes = archive(&[("r-abc/workflow/copy-style/workflow.yaml", &[b'x'; 4096])]);
+        let err = extract(&bytes, "copy-style", "mapbox/cli", 2048).unwrap_err();
+        assert!(err.to_string().contains("larger than"), "{err:#}");
+
+        let dir = holding(&scratch_dir("large").join("demo"), &"x".repeat(4096));
+        let err = read_tree(&dir, &[], 2048).unwrap_err();
+        assert!(err.to_string().contains("larger than"), "{err:#}");
+        assert!(read_tree(&dir, &[], MAX_BYTES).is_ok());
     }
 }

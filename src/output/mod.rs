@@ -26,7 +26,7 @@ mod render;
 pub mod style;
 pub mod theme;
 
-pub use error::{emit_error, CliError};
+pub use error::{emit_error, CliError, STEP_ERROR_ENV};
 pub use render::field_lines;
 pub(crate) use render::LINE;
 

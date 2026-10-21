@@ -962,7 +962,17 @@ fn cli() -> u8 {
         Ok(()) => 0,
         Err(e) => {
             output::emit_error(mode, &e);
-            1
+            // A command line only the command itself can judge, such as two
+            // flags that conflict for one kind of value, is a usage error
+            // like any clap rejects.
+            let usage = e
+                .downcast_ref::<output::CliError>()
+                .is_some_and(|e| e.code == "usage");
+            if usage {
+                2
+            } else {
+                1
+            }
         }
     }
 }

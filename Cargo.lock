@@ -826,6 +826,7 @@ dependencies = [
  "dirs",
  "flate2",
  "jsonc-parser",
+ "nix",
  "open",
  "rand",
  "reqwest",

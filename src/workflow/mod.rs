@@ -144,8 +144,12 @@ pub fn command() -> Command {
                     "Run an installed workflow, giving each of its inputs as a flag: \
                      `mapbox workflow run copy-style --style-id <id> --from-profile source \
                      --to-profile target`.\n\n\
-                     `mapbox workflow run <name> --help` lists that workflow's flags, and \
-                     `--dry-run` prints its plan without running a step.\n\n{BETA_NOTE}",
+                     `mapbox workflow run <name> --help` lists that workflow's flags.\n\n\
+                     `--dry-run` runs only the steps the workflow marks `dry_run` and prints \
+                     the plan for the rest. Those steps really run, scripts included, as \
+                     you and with your credentials; the workflow promises they write \
+                     nothing, and the CLI holds a command step to that but cannot check \
+                     a script.\n\n{BETA_NOTE}",
                 ))
                 .subcommand_value_name("NAME")
                 .subcommand_help_heading("Workflows")
@@ -164,8 +168,8 @@ fn run_command(workflow: &definition::Workflow) -> Command {
     let mut command = Command::new(workflow.name.clone())
         .about(beta(&workflow.summary))
         .arg(executor::dry_run_arg(
-            "Check the workflow and its inputs and print the plan, then exit without \
-             running a step",
+            "Run only the steps marked dry_run, which promise to write nothing, and print \
+             the plan for the rest. A marked script still runs, as you",
         ));
     if let Some(description) = &workflow.description {
         command = command.long_about(format!(
@@ -271,7 +275,7 @@ pub fn run(app: &Command, matches: &ArgMatches, flags: RunFlags, mode: Mode) -> 
     match matches.subcommand() {
         Some(("list", _)) => list(mode),
         Some(("show", m)) => show(app, name(m), mode),
-        Some(("install", m)) => install(app, m, flags.debug, mode),
+        Some(("install", m)) => install(app, m, flags.debug, flags.assume_yes, mode),
         Some(("uninstall", m)) => {
             uninstall(name(m), executor::wants_dry_run(m), flags.assume_yes, mode)
         }
@@ -391,12 +395,22 @@ fn tips(mode: Mode, tips: &[String]) {
     }
 }
 
+/// `-` for a workflow with no version of its own, so the column stays
+/// aligned.
+fn version_cell(workflow: &definition::Workflow) -> (String, Tone) {
+    match &workflow.version {
+        Some(version) => (version.clone(), Tone::Plain),
+        None => ("-".to_string(), Tone::Muted),
+    }
+}
+
 fn list(mode: Mode) -> Result<()> {
     let installed = store::list()?;
     let color = output::result_in_color();
     let mut rows = vec![];
     let mut table = vec![vec![
         ("NAME".to_string(), Tone::Bold),
+        ("VERSION".to_string(), Tone::Bold),
         ("SUMMARY".to_string(), Tone::Bold),
     ]];
     for (name, loaded) in &installed {
@@ -404,6 +418,7 @@ fn list(mode: Mode) -> Result<()> {
             Ok(found) => {
                 rows.push(json!({
                     "name": name,
+                    "version": found.workflow.version,
                     "summary": found.workflow.summary,
                     "source": source_label(&found.meta),
                     "commit": found.meta.commit,
@@ -411,6 +426,7 @@ fn list(mode: Mode) -> Result<()> {
                 }));
                 table.push(vec![
                     (name.clone(), Tone::Plain),
+                    version_cell(&found.workflow),
                     (found.workflow.summary.clone(), Tone::Plain),
                 ]);
             }
@@ -418,6 +434,7 @@ fn list(mode: Mode) -> Result<()> {
                 rows.push(json!({ "name": name, "error": format!("{e:#}") }));
                 table.push(vec![
                     (name.clone(), Tone::Plain),
+                    ("-".to_string(), Tone::Muted),
                     (format!("cannot load: {e:#}"), Tone::Muted),
                 ]);
             }
@@ -463,7 +480,13 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
     let steps: Vec<Value> = workflow
         .steps
         .iter()
-        .map(|step| json!({ "id": step.id, "name": step.name, "run": step.label() }))
+        .map(|step| {
+            let kind = match step.action {
+                definition::Action::Command { .. } => "command",
+                definition::Action::Script { .. } => "script",
+            };
+            json!({ "id": step.id, "name": step.name, "kind": kind, "run": step.label() })
+        })
         .collect();
 
     // Fixed order for every workflow: what it is, what it needs, what it
@@ -525,6 +548,16 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
         })
         .collect();
     text.push_str(&columns(&rows, color));
+    if !scripts(workflow).is_empty() {
+        text.push_str(&format!(
+            "\n  {}",
+            style::paint(
+                "Its scripts run as you, with your credentials.",
+                &style::muted(),
+                color
+            )
+        ));
+    }
 
     if !problems.is_empty() {
         text.push_str(&format!("\n\n{}", heading("This CLI cannot run it", color)));
@@ -534,25 +567,36 @@ fn show(app: &Command, name: &str, mode: Mode) -> Result<()> {
     }
 
     text.push_str(&format!("\n\n{}\n", heading("Installed", color)));
-    text.push_str(&columns(
-        &[
-            vec![
-                ("  Source".to_string(), Tone::Plain),
-                (source_text(&found.meta), Tone::Muted),
-            ],
-            vec![
-                ("  Path".to_string(), Tone::Plain),
-                (tilde(&found.root), Tone::Muted),
-            ],
-        ],
-        color,
-    ));
+    let mut installed = vec![];
+    if let Some(version) = &workflow.version {
+        installed.push(vec![
+            ("  Version".to_string(), Tone::Plain),
+            (version.clone(), Tone::Muted),
+        ]);
+    }
+    if let Some(requires) = &workflow.requires {
+        installed.push(vec![
+            ("  Requires".to_string(), Tone::Plain),
+            (format!("mapbox {requires} or later"), Tone::Muted),
+        ]);
+    }
+    installed.push(vec![
+        ("  Source".to_string(), Tone::Plain),
+        (source_text(&found.meta), Tone::Muted),
+    ]);
+    installed.push(vec![
+        ("  Path".to_string(), Tone::Plain),
+        (tilde(&found.root), Tone::Muted),
+    ]);
+    text.push_str(&columns(&installed, color));
 
     output::emit(
         mode,
         &text,
         json!({
             "name": workflow.name,
+            "version": workflow.version,
+            "requires": workflow.requires,
             "summary": workflow.summary,
             "description": workflow.description,
             "source": source_label(&found.meta),
@@ -576,7 +620,34 @@ fn is_local_source(source: &str) -> bool {
     source.starts_with('.') || source.contains('/') || source.contains('\\')
 }
 
-fn install(app: &Command, matches: &ArgMatches, debug: bool, mode: Mode) -> Result<()> {
+/// What a workflow's script steps run, once each, as `python3 scripts/x.py`.
+fn scripts(workflow: &definition::Workflow) -> Vec<String> {
+    let mut found: Vec<String> = vec![];
+    for step in &workflow.steps {
+        let label = step.label();
+        if matches!(step.action, definition::Action::Script { .. }) && !found.contains(&label) {
+            found.push(label);
+        }
+    }
+    found
+}
+
+/// Whether an install needs no question: this repository's workflows, which
+/// are reviewed here, and a directory on this machine, which the person
+/// already has. Anything else is code from somewhere the CLI cannot vouch
+/// for, and runs as the person with their credentials.
+fn is_vouched_for(source: &str, repo: Option<&String>) -> bool {
+    is_local_source(source)
+        || repo.is_none_or(|repo| repo.eq_ignore_ascii_case(store::DEFAULT_REPO))
+}
+
+fn install(
+    app: &Command,
+    matches: &ArgMatches,
+    debug: bool,
+    assume_yes: bool,
+    mode: Mode,
+) -> Result<()> {
     let source = matches.get_one::<String>(SOURCE_ARG).expect("required");
     let repo = matches.get_one::<String>(REPO_ARG);
     let git_ref = matches.get_one::<String>(REF_ARG);
@@ -586,7 +657,7 @@ fn install(app: &Command, matches: &ArgMatches, debug: bool, mode: Mode) -> Resu
     let package = if is_local_source(source) {
         if repo.is_some() || git_ref.is_some() {
             return Err(output::CliError::new(
-                "invalid_arguments",
+                "usage",
                 "`--repo` and `--ref` name a GitHub source; this one is a local directory.",
             )
             .into());
@@ -611,26 +682,34 @@ fn install(app: &Command, matches: &ArgMatches, debug: bool, mode: Mode) -> Resu
         .keys()
         .map(|path| definition::slash_path(path))
         .collect();
+    let scripts = scripts(workflow);
     store::recover_name(&workflow.name)?;
     let target = store::root_path()?.join(&workflow.name);
     let summary = json!({
         "name": workflow.name,
+        "version": workflow.version,
         "source": source_label(&package.meta),
         "commit": package.meta.commit,
         "path": target,
         "files": files,
+        "scripts": scripts,
         "dry_run": dry_run,
     });
 
     let color = output::result_in_color();
-    let fields = field_lines(
-        &[
-            ("Source", source_text(&package.meta)),
-            ("Path", tilde(&target)),
-            ("Files", files.join(", ")),
-        ],
-        color,
-    );
+    let mut field_rows = vec![];
+    if let Some(version) = &workflow.version {
+        field_rows.push(("Version", version.clone()));
+    }
+    field_rows.extend([
+        ("Source", source_text(&package.meta)),
+        ("Path", tilde(&target)),
+        ("Files", files.join(", ")),
+    ]);
+    if !scripts.is_empty() {
+        field_rows.push(("Scripts", scripts.join(", ")));
+    }
+    let fields = field_lines(&field_rows, color);
 
     // Checked here as well as in `store::install`, so the error can name
     // the line to retry with; the store's own check covers a race.
@@ -649,6 +728,24 @@ fn install(app: &Command, matches: &ArgMatches, debug: bool, mode: Mode) -> Resu
             heading(&workflow.name, color)
         );
         return output::emit(mode, &text, summary);
+    }
+
+    if !is_vouched_for(source, repo) {
+        let runs = if scripts.is_empty() {
+            String::new()
+        } else {
+            format!(", including {}", scripts.join(", "))
+        };
+        confirm::untrusted_install(
+            &format!(
+                "`{}` comes from {}, which this CLI does not vouch for. Its steps will run \
+                 as you, with your credentials{runs}. Install it only if you trust that \
+                 repository.",
+                workflow.name,
+                source_label(&package.meta)
+            ),
+            assume_yes,
+        )?;
     }
 
     store::install(&package, force)?;
@@ -732,7 +829,7 @@ fn run_workflow(
     if !attached {
         // Only when argv was spelled in a way `run_target` does not read.
         return Err(output::CliError::new(
-            "invalid_arguments",
+            "usage",
             format!(
                 "Could not read `{name}`'s inputs from this command line. Write it as \
                  `{}`.",
@@ -787,10 +884,12 @@ fn run_workflow(
                         Tone::Plain,
                     ),
                     (
-                        if step.dry_run {
-                            format!("{} (ran in this dry run)", step.label())
-                        } else {
-                            step.label()
+                        match (step.dry_run, &step.action) {
+                            (true, definition::Action::Script { .. }) => {
+                                format!("{} (ran its script in this dry run)", step.label())
+                            }
+                            (true, _) => format!("{} (ran in this dry run)", step.label()),
+                            (false, _) => step.label(),
                         },
                         Tone::Muted,
                     ),
@@ -798,9 +897,10 @@ fn run_workflow(
             })
             .collect();
         let mut text = if rehearsed {
+            // Not "they wrote nothing": that is the workflow's promise, which
+            // the CLI holds a command step to but cannot check of a script.
             format!(
-                "Dry run — only the steps that support it ran, and they wrote nothing. \
-                 Would run {}:",
+                "Dry run — only the steps marked dry_run ran. Would run {}:",
                 heading(&workflow.name, color)
             )
         } else {
@@ -887,6 +987,32 @@ mod tests {
             "~/.mapbox/workflows/x"
         );
         assert_eq!(tilde(Path::new("/opt/x")), "/opt/x");
+    }
+
+    #[test]
+    fn only_another_repository_needs_a_yes() {
+        let other = "someone/workflows".to_string();
+        let ours = "Mapbox/Mapbox-CLI".to_string();
+        assert!(is_vouched_for("copy-style", None));
+        assert!(is_vouched_for("copy-style", Some(&ours)));
+        assert!(is_vouched_for("./workflow/copy-style", None));
+        assert!(!is_vouched_for("copy-style", Some(&other)));
+    }
+
+    #[test]
+    fn scripts_are_listed_once_each() {
+        let files: definition::Files = [
+            (
+                std::path::PathBuf::from(definition::DEFINITION_FILE),
+                b"schema: 1\nname: t\nsummary: t\nsteps:\n  - id: a\n    script: x.py\n  \
+                  - id: b\n    command: config list\n  - id: c\n    script: x.py\n"
+                    .to_vec(),
+            ),
+            (std::path::PathBuf::from("scripts/x.py"), vec![]),
+        ]
+        .into();
+        let workflow = definition::parse("t", &files).unwrap();
+        assert_eq!(scripts(&workflow), ["python3 scripts/x.py"]);
     }
 
     #[test]

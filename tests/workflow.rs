@@ -81,7 +81,7 @@ fn write_workflow(home: &Path, name: &str, yaml: &str, scripts: &[(&str, &str)])
     dir
 }
 
-const DEMO: &str = r#"version: 1
+const DEMO: &str = r#"schema: 1
 name: demo
 summary: Pass values from a command to a script and back
 inputs:
@@ -179,7 +179,7 @@ fn a_run_carries_values_between_steps_and_prints_only_the_result() {
 #[test]
 fn a_python_step_runs_under_python3_by_default() {
     let home = scratch("python");
-    let yaml = "version: 1\nname: py\nsummary: Runs Python\nsteps:\n\
+    let yaml = "schema: 1\nname: py\nsummary: Runs Python\nsteps:\n\
                 \x20 - id: hello\n    script: hello.py\n";
     let script = "import json, sys\nprint(json.dumps({\"major\": sys.version_info[0]}))\n";
     let dir = write_workflow(&home, "py", yaml, &[("hello.py", script)]);
@@ -199,7 +199,7 @@ fn a_python_step_runs_under_python3_by_default() {
 #[test]
 fn a_failing_step_stops_the_run() {
     let home = scratch("fail");
-    let yaml = "version: 1\nname: broken\nsummary: Fails in the middle\nsteps:\n\
+    let yaml = "schema: 1\nname: broken\nsummary: Fails in the middle\nsteps:\n\
                 \x20 - id: first\n    script: fail.sh\n\
                 \x20 - id: second\n    command: config list\n";
     let dir = write_workflow(&home, "broken", yaml, &[("fail.sh", "exit 3\n")]);
@@ -219,6 +219,64 @@ fn a_failing_step_stops_the_run() {
     assert!(!stderr.contains("[2/2]"), "the second step ran: {stderr}");
 }
 
+/// `--repo` and `--ref` mean nothing for a local directory. Like any flag
+/// combination a command refuses, that is a usage error: exit 2.
+#[test]
+fn github_flags_with_a_local_directory_are_a_usage_error() {
+    let home = scratch("usage");
+    let yaml =
+        "schema: 1\nname: local\nsummary: Local\nsteps:\n  - id: a\n    command: config list\n";
+    let dir = write_workflow(&home, "local", yaml, &[]);
+    let out = run(
+        &home,
+        &[
+            "workflow",
+            "install",
+            dir.to_str().unwrap(),
+            "--ref",
+            "main",
+            "-o",
+            "json",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("\"code\":\"usage\""), "{stderr}");
+}
+
+/// A failed command step keeps the child's own error: its code under
+/// `cause` for a caller to branch on, its advice lifted onto the run's
+/// error, and in text mode its message rather than a raw JSON document.
+#[test]
+fn a_failed_command_step_carries_its_own_error() {
+    let home = scratch("step-error");
+    // No username anywhere, so the child fails before any request.
+    let yaml = "schema: 1\nname: listing\nsummary: Lists styles\nsteps:\n\
+                \x20 - id: list\n    command: styles list\n";
+    let dir = write_workflow(&home, "listing", yaml, &[]);
+    assert!(run(&home, &["workflow", "install", dir.to_str().unwrap()])
+        .status
+        .success());
+
+    let out = run(&home, &["workflow", "run", "listing", "-o", "json"]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let documents: Vec<&str> = stderr.lines().filter(|l| l.starts_with('{')).collect();
+    assert_eq!(documents.len(), 1, "one error document only: {stderr}");
+    let error: Value = serde_json::from_str(documents[0]).unwrap();
+    assert_eq!(error["code"], "workflow_failed");
+    assert_eq!(error["cause"]["code"], "missing_path_parameters");
+    assert_eq!(error["next_actions"], json!(["mapbox auth whoami"]));
+
+    let out = run(&home, &["workflow", "run", "listing", "-o", "text"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Error: Step `list` (mapbox styles list): Missing required path"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("{\"code\""), "{stderr}");
+}
+
 /// Ctrl-C at a terminal reaches the whole foreground process group: the
 /// step's child and `mapbox` alike. The run must still remove its working
 /// directory, which a process that simply died would leave behind.
@@ -230,7 +288,7 @@ fn ctrl_c_stops_the_run_and_removes_its_directory() {
 
     let home = scratch("interrupt");
     let marker = home.join("workdir");
-    let yaml = "version: 1\nname: slow\nsummary: Waits to be interrupted\n\
+    let yaml = "schema: 1\nname: slow\nsummary: Waits to be interrupted\n\
                 inputs:\n  marker: { type: string, required: true }\nsteps:\n\
                 \x20 - id: wait\n    script: wait.sh\n    args: ['${{ inputs.marker }}']\n\
                 \x20 - id: after\n    command: config list\n";
@@ -295,11 +353,80 @@ fn ctrl_c_stops_the_run_and_removes_its_directory() {
     assert!(!stderr.contains("[2/2]"), "the next step ran: {stderr}");
 }
 
+/// A SIGTERM, as a CI timeout sends, reaches `mapbox` alone. It is passed on
+/// to the running step, which would otherwise keep the run alive until it
+/// finished by itself.
+#[cfg(unix)]
+#[test]
+fn sigterm_is_passed_on_to_the_running_step() {
+    use std::os::unix::process::CommandExt as _;
+    use std::time::{Duration, Instant};
+
+    let home = scratch("sigterm");
+    let marker = home.join("started");
+    let yaml = "schema: 1\nname: hang\nsummary: Hangs until stopped\n\
+                inputs:\n  marker: { type: string, required: true }\nsteps:\n\
+                \x20 - id: hang\n    script: hang.sh\n    args: ['${{ inputs.marker }}']\n";
+    // `exec`, so the signal reaches `sleep` itself rather than a shell
+    // waiting on it.
+    let script = "touch \"$1\"\nexec sleep 60\n";
+    let dir = write_workflow(&home, "hang", yaml, &[("hang.sh", script)]);
+    assert!(run(&home, &["workflow", "install", dir.to_str().unwrap()])
+        .status
+        .success());
+
+    let marker_arg = marker.display().to_string();
+    let child = command(
+        &home,
+        &[
+            "workflow",
+            "run",
+            "hang",
+            "--marker",
+            &marker_arg,
+            "-o",
+            "json",
+        ],
+        &[],
+    )
+    .process_group(0)
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped())
+    .spawn()
+    .expect("start mapbox");
+
+    let started = Instant::now();
+    while !marker.exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the step never started"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("run kill")
+        .success());
+    let out = child.wait_with_output().expect("wait for mapbox");
+
+    assert!(
+        started.elapsed() < Duration::from_secs(30),
+        "the step ran on after SIGTERM"
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Interrupted during step `hang`"),
+        "{stderr}"
+    );
+}
+
 #[test]
 fn dry_run_runs_nothing() {
     let home = scratch("dry-run");
     let marker = home.join("ran");
-    let yaml = "version: 1\nname: touch\nsummary: Leaves a file behind\n\
+    let yaml = "schema: 1\nname: touch\nsummary: Leaves a file behind\n\
                 inputs:\n  path: { type: string, required: true }\nsteps:\n\
                 \x20 - id: touch\n    script: touch.sh\n    args: ['${{ inputs.path }}']\n";
     let dir = write_workflow(&home, "touch", yaml, &[("touch.sh", "touch \"$1\"\n")]);
@@ -344,7 +471,7 @@ fn dry_run_runs_nothing() {
 fn a_dry_run_runs_only_the_steps_that_support_it() {
     let home = scratch("dry-run-steps");
     let marker = home.join("wrote");
-    let yaml = "version: 1\nname: rehearse\nsummary: Plans, writes, reports\n\
+    let yaml = "schema: 1\nname: rehearse\nsummary: Plans, writes, reports\n\
                 inputs:\n  path: { type: string, required: true }\nsteps:\n\
                 \x20 - id: plan\n    script: env.sh\n    dry_run: true\n\
                 \x20 - id: write\n    script: touch.sh\n    args: ['${{ inputs.path }}']\n\
@@ -409,7 +536,7 @@ fn a_dry_run_runs_only_the_steps_that_support_it() {
     assert!(marker.exists(), "the real run did not run every step");
 }
 
-const REPORTING: &str = "version: 1\nname: report\nsummary: Reports as it goes\n\
+const REPORTING: &str = "schema: 1\nname: report\nsummary: Reports as it goes\n\
     inputs:\n  who: { type: string, default: world }\nsteps:\n\
     \x20 - id: work\n    script: work.sh\n\
     outputs:\n  said: ${{ steps.work.output.said }}\n\
@@ -516,7 +643,7 @@ fn save_keeps_a_command_output_as_a_file_for_the_run() {
     // The path reaches the result through `outputs`, not through the script:
     // on Windows it is full of backslashes, which a script writing its own
     // JSON would leave unescaped.
-    let yaml = "version: 1\nname: keep\nsummary: Saves then reads\nsteps:\n\
+    let yaml = "schema: 1\nname: keep\nsummary: Saves then reads\nsteps:\n\
                 \x20 - id: settings\n    command: config list\n    save: settings.json\n\
                 \x20 - id: read\n    script: read.sh\n    stdin: ${{ steps.settings.output.path }}\n\
                 outputs:\n  path: ${{ steps.settings.output.path }}\n  saved: ${{ steps.read.output }}\n";
@@ -550,7 +677,7 @@ fn save_keeps_a_command_output_as_a_file_for_the_run() {
 #[test]
 fn install_refuses_an_invalid_workflow_and_writes_nothing() {
     let home = scratch("invalid");
-    let yaml = "version: 1\nname: bad\nsummary: Names a command that is not one\nsteps:\n\
+    let yaml = "schema: 1\nname: bad\nsummary: Names a command that is not one\nsteps:\n\
                 \x20 - id: a\n    command: styles nope\n";
     let dir = write_workflow(&home, "bad", yaml, &[("unused.sh", "")]);
 
@@ -706,7 +833,7 @@ fn inputs_are_flags_like_any_other_command() {
 #[test]
 fn a_missing_required_input_names_its_flag() {
     let home = scratch("required");
-    let yaml = "version: 1\nname: needs\nsummary: Needs an input\n\
+    let yaml = "schema: 1\nname: needs\nsummary: Needs an input\n\
                 inputs:\n  style_id: { type: string, required: true }\nsteps:\n\
                 \x20 - id: a\n    command: config list\n";
     let dir = write_workflow(&home, "needs", yaml, &[]);

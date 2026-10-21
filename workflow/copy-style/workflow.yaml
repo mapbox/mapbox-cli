@@ -1,5 +1,6 @@
-version: 1
+schema: 1
 name: copy-style
+version: 0.1.0
 summary: Copy a style, with its fonts and icons, from one account to another
 description: |
   Downloads a style with one credential profile and recreates it with

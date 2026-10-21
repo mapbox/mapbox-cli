@@ -282,7 +282,7 @@ fn should_notify<'a>(cache: Option<&'a Cache>, current: &str, now: u64) -> Optio
 /// pre-release flag is carried at all, since a dev-channel version is
 /// spelled exactly that way. Ordering two *different* pre-releases is not
 /// attempted, because nothing publishes two.
-fn parse_version(text: &str) -> Option<(u64, u64, u64, bool)> {
+pub(crate) fn parse_version(text: &str) -> Option<(u64, u64, u64, bool)> {
     let text = text.trim().trim_start_matches('v');
     // Build metadata never affects precedence, so it goes before anything
     // else is read.

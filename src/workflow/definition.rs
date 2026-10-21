@@ -31,6 +31,14 @@ pub type Files = BTreeMap<PathBuf, Vec<u8>>;
 #[derive(Debug, Clone)]
 pub struct Workflow {
     pub name: String,
+    /// The workflow's own version, independent of the CLI's: workflows are
+    /// released on their own, and may move to a repository of their own.
+    /// Optional, so a workflow that has never been released still installs.
+    pub version: Option<String>,
+    /// The oldest CLI that can run it, from `requires: ">=X.Y.Z"`. Checked by
+    /// [`super::runner::command_problems`], since it is the only check that
+    /// covers what a script step asks of `$MAPBOX_CLI`.
+    pub requires: Option<String>,
     pub summary: String,
     pub description: Option<String>,
     pub inputs: BTreeMap<String, Input>,
@@ -135,7 +143,14 @@ impl Step {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Raw {
-    version: u64,
+    #[serde(default)]
+    schema: Option<u64>,
+    /// A string `0.1.0` alongside `schema`; on its own, the integer that
+    /// named the schema before `schema` existed. See [`schema_and_version`].
+    #[serde(default)]
+    version: Option<Value>,
+    #[serde(default)]
+    requires: Option<String>,
     name: String,
     summary: String,
     #[serde(default)]
@@ -188,6 +203,65 @@ fn is_identifier(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// `major.minor.patch`, with an optional pre-release. A release is meant to
+/// be tagged `workflow-<name>-<version>`, so only what a ref may hold, and no
+/// leading `v` or `+build`, which would give one version two spellings.
+fn is_workflow_version(version: &str) -> bool {
+    version.starts_with(|c: char| c.is_ascii_digit())
+        && !version.ends_with('-')
+        && version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        && crate::update_check::parse_version(version).is_some()
+}
+
+/// The version in `requires: ">=X.Y.Z"`. A lower bound only: which future
+/// CLI breaks a workflow is not knowable when it is written.
+fn minimum_cli(requires: &str) -> Option<&str> {
+    let version = requires.trim().strip_prefix(">=")?.trim();
+    is_workflow_version(version).then_some(version)
+}
+
+/// The workflow's own version, once `schema` is checked. Before `schema`
+/// existed, `version: 1` named the schema; that spelling still reads, as an
+/// unversioned workflow, so a commit from then still installs.
+fn schema_and_version(
+    schema: Option<u64>,
+    version: Option<&Value>,
+    problems: &mut Vec<String>,
+) -> Option<String> {
+    match (schema, version) {
+        (Some(schema), version) => {
+            if schema != SCHEMA_VERSION {
+                problems.push(format!(
+                    "`schema: {schema}` is not one this CLI reads; it reads \
+                     `schema: {SCHEMA_VERSION}`"
+                ));
+            }
+            match version {
+                None => None,
+                Some(Value::String(version)) if is_workflow_version(version) => {
+                    Some(version.clone())
+                }
+                Some(other) => {
+                    let shown = other
+                        .as_str()
+                        .map_or_else(|| other.to_string(), String::from);
+                    problems.push(format!(
+                        "`version: {shown}` must be the workflow's own version, like `0.1.0`"
+                    ));
+                    None
+                }
+            }
+        }
+        (None, Some(Value::Number(legacy))) if legacy.as_u64() == Some(SCHEMA_VERSION) => None,
+        (None, _) => {
+            problems.push(format!("`schema: {SCHEMA_VERSION}` is missing"));
+            None
+        }
+    }
 }
 
 /// A path that stays inside the directory it is relative to.
@@ -248,12 +322,17 @@ pub fn parse(name: &str, files: &Files) -> Result<Workflow, Vec<String>> {
         }
     };
 
-    if raw.version != SCHEMA_VERSION {
-        problems.push(format!(
-            "`version: {}` is not one this CLI reads; it reads `version: {SCHEMA_VERSION}`",
-            raw.version
-        ));
-    }
+    let version = schema_and_version(raw.schema, raw.version.as_ref(), &mut problems);
+    let requires = raw.requires.as_deref().and_then(|requires| {
+        let minimum = minimum_cli(requires);
+        if minimum.is_none() {
+            problems.push(format!(
+                "`requires: {requires}` must be `\">=X.Y.Z\"`, quoted, naming the oldest \
+                 mapbox that can run it"
+            ));
+        }
+        minimum.map(String::from)
+    });
     if raw.name != name {
         problems.push(format!(
             "`name: {}` must match the directory it is in, `{name}`",
@@ -482,6 +561,8 @@ pub fn parse(name: &str, files: &Files) -> Result<Workflow, Vec<String>> {
     }
     Ok(Workflow {
         name: raw.name,
+        version,
+        requires,
         summary: raw.summary,
         description: raw.description,
         inputs: raw.inputs,
@@ -527,7 +608,7 @@ mod tests {
     use super::*;
 
     const MINIMAL: &str = "\
-version: 1
+schema: 1
 name: demo
 summary: A demo
 inputs:
@@ -716,6 +797,88 @@ outputs:
         }
         for bad in ["", "..", "a/b", "/tmp", "Copy", "-x", "a_b", "a.b"] {
             assert!(!is_workflow_name(bad), "{bad}");
+        }
+    }
+
+    fn parse_yaml(yaml: &str) -> Result<Workflow, Vec<String>> {
+        parse(
+            "demo",
+            &files(&[(DEFINITION_FILE, yaml), ("scripts/shape.py", "")]),
+        )
+    }
+
+    #[test]
+    fn version_and_requires_are_optional_and_read_when_given() {
+        let bare = parse_yaml(MINIMAL).unwrap();
+        assert_eq!((bare.version, bare.requires), (None, None));
+
+        let yaml = MINIMAL.replace(
+            "name: demo\n",
+            "name: demo\nversion: 0.2.0-beta.1\nrequires: \">= 0.4.0\"\n",
+        );
+        let given = parse_yaml(&yaml).unwrap();
+        assert_eq!(given.version.as_deref(), Some("0.2.0-beta.1"));
+        assert_eq!(given.requires.as_deref(), Some("0.4.0"));
+    }
+
+    /// Before `schema`, the schema was `version: 1`. A commit from then
+    /// still installs, with no version of its own.
+    #[test]
+    fn the_old_schema_spelling_still_reads() {
+        let yaml = MINIMAL.replace("schema: 1\n", "version: 1\n");
+        assert_eq!(parse_yaml(&yaml).unwrap().version, None);
+    }
+
+    #[test]
+    fn a_schema_is_required_and_must_be_known() {
+        for (yaml, expected) in [
+            (MINIMAL.replace("schema: 1\n", ""), "`schema: 1` is missing"),
+            (
+                MINIMAL.replace("schema: 1\n", "version: 0.1.0\n"),
+                "`schema: 1` is missing",
+            ),
+            (MINIMAL.replace("schema: 1\n", "schema: 2\n"), "`schema: 2`"),
+        ] {
+            let found = parse_yaml(&yaml).unwrap_err();
+            assert!(found.iter().any(|p| p.contains(expected)), "{found:?}");
+        }
+    }
+
+    #[test]
+    fn a_version_is_a_plain_semver() {
+        for bad in [
+            "1",
+            "1.0",
+            "v0.1.0",
+            "0.1.0+build",
+            "0.1",
+            "0.1.0-",
+            "0.1.0/x",
+        ] {
+            let yaml = MINIMAL.replace("name: demo\n", &format!("name: demo\nversion: '{bad}'\n"));
+            let found = parse_yaml(&yaml).unwrap_err();
+            assert!(
+                found
+                    .iter()
+                    .any(|p| p.contains("the workflow's own version")),
+                "{bad}: {found:?}"
+            );
+        }
+        // Unquoted, YAML reads `1` as a number, which is the old schema
+        // spelling's shape; beside `schema` it is refused all the same.
+        let yaml = MINIMAL.replace("name: demo\n", "name: demo\nversion: 1\n");
+        assert!(parse_yaml(&yaml).is_err());
+    }
+
+    #[test]
+    fn requires_is_a_quoted_lower_bound() {
+        for bad in ["0.4.0", "<=0.4.0", ">=0.4", ">=v0.4.0"] {
+            let yaml = MINIMAL.replace("name: demo\n", &format!("name: demo\nrequires: '{bad}'\n"));
+            let found = parse_yaml(&yaml).unwrap_err();
+            assert!(
+                found.iter().any(|p| p.contains("`requires:")),
+                "{bad}: {found:?}"
+            );
         }
     }
 }

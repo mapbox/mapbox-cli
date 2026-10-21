@@ -2,7 +2,9 @@
 
 A workflow is a named, multi-step recipe of `mapbox` commands and scripts. None ships inside the binary: `mapbox workflow install` copies one in, and `mapbox workflow run` runs only what is installed. See [docs/commands.md](../docs/commands.md#workflows) for the commands.
 
-> **Beta and in development. Not recommended for use.** The `workflow` command, the format below (`version: 1`) and the published workflows may change or be removed without notice. Every `mapbox workflow` subcommand says so on stderr.
+> **Beta and in development. Not recommended for use.** The `workflow` command, the format below (`schema: 1`) and the published workflows may change or be removed without notice. Every `mapbox workflow` subcommand says so on stderr.
+
+**Only install a workflow you trust.** Its steps run as you, with your credentials and every stored profile; a script step runs whatever its interpreter does, in a `--dry-run` too when it is marked `dry_run`. `install` lists a workflow's scripts, and asks before installing one from a repository other than this one.
 
 ## Layout
 
@@ -25,8 +27,10 @@ The same rules apply to any workflow `install` reads, from this repository, anot
 ## `workflow.yaml`
 
 ```yaml
-version: 1                        # required; the schema version
+schema: 1                         # required; the format's version
 name: copy-style                  # required; the directory's name
+version: 0.1.0                    # optional; the workflow's own version
+requires: ">=0.4.0"               # optional; the oldest mapbox that can run it
 summary: Copy a style from one account to another   # required; one line
 description: |                    # optional; shown by `workflow show`
   Longer text.
@@ -73,6 +77,14 @@ result: |                         # optional; what text mode prints instead of t
 ```
 
 A step is a `command` or a `script`, never both.
+
+### Versions
+
+A workflow's `version` is its own, not the CLI's: workflows are released on their own schedule. It is optional, and a workflow without one installs and runs the same. `list`, `show` and `install` report it. A release is tagged `workflow-<name>-<version>`, such as `workflow-copy-style-0.1.0`, and installed with `--ref` set to that tag.
+
+`requires` names the oldest CLI that can run the workflow, as `">=X.Y.Z"`, quoted, since YAML reads an unquoted `>` as the start of a block. An older CLI refuses it at `install`, and `show` and `run` say why. Set it when a step, or a script through `$MAPBOX_CLI`, needs a command or flag that older releases lack: install checks each command step against the CLI's commands, but cannot see what a script calls.
+
+Before `schema` existed, the format was named by `version: 1`. That spelling still reads, as a workflow with no version.
 
 ### Inputs as flags
 

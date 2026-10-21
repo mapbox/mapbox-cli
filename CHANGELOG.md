@@ -22,6 +22,8 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+## 1.1.0 - 2026-10-22
+
 - `mapbox workflow` (beta): install and run workflows, which are named,
   multi-step recipes of
   `mapbox` commands and scripts defined in a `workflow.yaml`. `install` copies one from a local directory or from a

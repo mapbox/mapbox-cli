@@ -275,7 +275,7 @@ pub fn run(app: &Command, matches: &ArgMatches, flags: RunFlags, mode: Mode) -> 
     match matches.subcommand() {
         Some(("list", _)) => list(mode),
         Some(("show", m)) => show(app, name(m), mode),
-        Some(("install", m)) => install(app, m, flags.debug, flags.assume_yes, mode),
+        Some(("install", m)) => install(app, m, flags.debug, mode),
         Some(("uninstall", m)) => {
             uninstall(name(m), executor::wants_dry_run(m), flags.assume_yes, mode)
         }
@@ -632,22 +632,28 @@ fn scripts(workflow: &definition::Workflow) -> Vec<String> {
     found
 }
 
-/// Whether an install needs no question: this repository's workflows, which
-/// are reviewed here, and a directory on this machine, which the person
+/// Whether an install needs no question: this repository's workflows as
+/// reviewed onto `main`, and a directory on this machine, which the person
 /// already has. Anything else is code from somewhere the CLI cannot vouch
 /// for, and runs as the person with their credentials.
-fn is_vouched_for(source: &str, repo: Option<&String>) -> bool {
-    is_local_source(source)
-        || repo.is_none_or(|repo| repo.eq_ignore_ascii_case(store::DEFAULT_REPO))
+///
+/// A `--ref` in this repository is not vouched for by the name alone:
+/// `pull/N/head` and a fork's commit resolve here too. `is_on_main` is asked
+/// only then, since it costs a request.
+fn is_vouched_for(
+    source: &str,
+    repo: Option<&String>,
+    git_ref: Option<&String>,
+    is_on_main: impl FnOnce() -> bool,
+) -> bool {
+    if is_local_source(source) {
+        return true;
+    }
+    let ours = repo.is_none_or(|repo| repo.eq_ignore_ascii_case(store::DEFAULT_REPO));
+    ours && (git_ref.is_none() || is_on_main())
 }
 
-fn install(
-    app: &Command,
-    matches: &ArgMatches,
-    debug: bool,
-    assume_yes: bool,
-    mode: Mode,
-) -> Result<()> {
+fn install(app: &Command, matches: &ArgMatches, debug: bool, mode: Mode) -> Result<()> {
     let source = matches.get_one::<String>(SOURCE_ARG).expect("required");
     let repo = matches.get_one::<String>(REPO_ARG);
     let git_ref = matches.get_one::<String>(REF_ARG);
@@ -730,7 +736,14 @@ fn install(
         return output::emit(mode, &text, summary);
     }
 
-    if !is_vouched_for(source, repo) {
+    let vouched = is_vouched_for(source, repo, git_ref, || {
+        package
+            .meta
+            .commit
+            .as_deref()
+            .is_some_and(|commit| store::is_on_main(store::DEFAULT_REPO, commit, debug))
+    });
+    if !vouched {
         let runs = if scripts.is_empty() {
             String::new()
         } else {
@@ -739,12 +752,12 @@ fn install(
         confirm::untrusted_install(
             &format!(
                 "`{}` comes from {}, which this CLI does not vouch for. Its steps will run \
-                 as you, with your credentials{runs}. Install it only if you trust that \
-                 repository.",
+                 as you, with your credentials{runs}. Install it only if you trust where \
+                 it comes from.",
                 workflow.name,
                 source_label(&package.meta)
             ),
-            assume_yes,
+            confirm::typed_yes(matches),
         )?;
     }
 
@@ -990,13 +1003,53 @@ mod tests {
     }
 
     #[test]
-    fn only_another_repository_needs_a_yes() {
+    fn only_another_repository_or_a_ref_off_main_needs_a_yes() {
         let other = "someone/workflows".to_string();
         let ours = "Mapbox/Mapbox-CLI".to_string();
-        assert!(is_vouched_for("copy-style", None));
-        assert!(is_vouched_for("copy-style", Some(&ours)));
-        assert!(is_vouched_for("./workflow/copy-style", None));
-        assert!(!is_vouched_for("copy-style", Some(&other)));
+        let unasked = || -> bool { panic!("asked GitHub with no --ref") };
+        assert!(is_vouched_for("copy-style", None, None, unasked));
+        assert!(is_vouched_for("copy-style", Some(&ours), None, unasked));
+        assert!(is_vouched_for("./workflow/copy-style", None, None, unasked));
+        assert!(!is_vouched_for("copy-style", Some(&other), None, || true));
+
+        // Both resolve through this repository without being on its `main`.
+        for git_ref in ["pull/1/head", "0123456789abcdef0123456789abcdef01234567"] {
+            let git_ref = git_ref.to_string();
+            assert!(!is_vouched_for("copy-style", None, Some(&git_ref), || {
+                false
+            }));
+            assert!(!is_vouched_for(
+                "copy-style",
+                Some(&ours),
+                Some(&git_ref),
+                || false
+            ));
+            assert!(is_vouched_for("copy-style", None, Some(&git_ref), || true));
+            assert!(!is_vouched_for(
+                "copy-style",
+                Some(&other),
+                Some(&git_ref),
+                || true
+            ));
+        }
+    }
+
+    /// `MAPBOX_YES` answers a delete, not the trust question, so only the
+    /// typed flag counts, on either side of the subcommand.
+    #[test]
+    fn only_a_typed_yes_answers_the_trust_question() {
+        let install = |args: &[&str]| -> bool {
+            let matches = crate::build_app(&[])
+                .try_get_matches_from(args)
+                .expect("parses");
+            let (_, workflow) = matches.subcommand().expect("workflow");
+            let (_, install) = workflow.subcommand().expect("install");
+            confirm::typed_yes(install)
+        };
+        assert!(install(&["mapbox", "workflow", "install", "x", "--yes"]));
+        assert!(install(&["mapbox", "-y", "workflow", "install", "x"]));
+        // Whatever the environment holds while this runs, it is not typed.
+        assert!(!install(&["mapbox", "workflow", "install", "x"]));
     }
 
     #[test]

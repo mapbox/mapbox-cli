@@ -160,33 +160,41 @@ pub fn destructive_local_action(question: &str, assume_yes: bool) -> Result<()> 
     ask(question, "nothing was sent")
 }
 
+/// Whether `--yes` was typed, rather than set as [`ENV`].
+///
+/// [`untrusted_install`] takes only this. A CI job that exports
+/// `MAPBOX_YES=1` so its deletes go through has said nothing about which
+/// repositories' code it trusts.
+pub fn typed_yes(matches: &clap::ArgMatches) -> bool {
+    matches.value_source(ARG) == Some(clap::parser::ValueSource::CommandLine)
+}
+
 /// Asks before installing a workflow from a source the CLI does not vouch
 /// for, and refuses when there is nobody to ask.
 ///
 /// Everywhere else no terminal means go ahead. Here that would install code
 /// that later runs as the caller, with their credentials, on nobody's
 /// say-so — a mistyped `--repo` in CI would be enough. So without a terminal
-/// it takes `--yes`.
-pub fn untrusted_install(question: &str, assume_yes: bool) -> Result<()> {
+/// it takes `--yes`, typed: see [`typed_yes`].
+pub fn untrusted_install(question: &str, typed_yes: bool) -> Result<()> {
     let at_terminal = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
-    match untrusted_decision(assume_yes, at_terminal) {
+    match untrusted_decision(typed_yes, at_terminal) {
         Some(Decision::Proceed) => Ok(()),
         Some(Decision::Ask) => ask(question, "nothing was installed"),
         None => Err(CliError::new(
             "confirmation_required",
             format!("{question}\nNothing was installed: there is no terminal to confirm it on."),
         )
-        .with_remedy(
-            Remedy::default()
-                .with_fix("Pass --yes (or set MAPBOX_YES=1) once you trust what it runs."),
-        )
+        .with_remedy(Remedy::default().with_fix(
+            "Pass --yes once you trust what it runs. MAPBOX_YES does not answer this one.",
+        ))
         .into()),
     }
 }
 
 /// [`untrusted_install`]'s choice, with no I/O in it: `None` is a refusal.
-fn untrusted_decision(assume_yes: bool, at_terminal: bool) -> Option<Decision> {
-    if assume_yes {
+fn untrusted_decision(typed_yes: bool, at_terminal: bool) -> Option<Decision> {
+    if typed_yes {
         Some(Decision::Proceed)
     } else if at_terminal {
         Some(Decision::Ask)

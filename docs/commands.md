@@ -5102,9 +5102,12 @@ workflow's directory stops the read.
 **Only install a workflow you trust.** Its steps run as you, with your
 credentials and every stored profile, and a script step runs whatever its
 interpreter does. `install` lists the scripts a workflow runs. From
-`mapbox/mapbox-cli` or a local directory it installs without asking. From any
-other `--repo` it asks first, at a terminal; without one it refuses with
-`confirmation_required` unless `--yes` is given.
+`mapbox/mapbox-cli` or a local directory it installs without asking, and so
+does a `--ref` whose commit is on `mapbox/mapbox-cli`'s `main`. Anything else,
+including another `--repo`, a pull request's `pull/N/head` or a commit off
+`main`, asks first at a terminal; without one it refuses with
+`confirmation_required` unless `--yes` is given. `MAPBOX_YES` does not answer
+this question; only the typed flag does.
 
 #### Examples
 
@@ -5181,8 +5184,12 @@ Removes an installed workflow's directory. At a terminal it asks first, and
 Runs an installed workflow's steps in order. The first step that fails stops
 the run with `workflow_failed`, naming the step, and exit code 1. A failed
 command step's own error is under `cause`, and its message, status and advice
-are the run's. A SIGTERM to the run is passed on to the running step as an
-interrupt after two seconds, so a hung step does not outlive a CI timeout.
+are the run's. On Unix, a SIGTERM to the run is passed on to the running step
+as an interrupt after two seconds, so a hung step does not outlive a CI
+timeout. It reaches the step's own process only, so a shell step waiting on a
+long command of its own runs until that command ends. A run that is the
+terminal's foreground passes nothing on, since a Ctrl-C there reached the
+step already.
 
 #### Parameters
 
@@ -5502,7 +5509,7 @@ faults and are not:
 | `cli_token_unavailable` | A command that prefers the CLI's own token (`report`) could not use it — it could not be fetched, or it is revoked and no new one is published yet — and you have no token of your own to fall back to. |
 | `cli_token_forbidden` | This API refused the CLI's own token, even after fetching it afresh, and you have no token of your own to fall back to. |
 | `usage` | Anything else clap rejected, or flags a command refuses together, such as `workflow install --ref` with a local directory. Exit code 2, not 1. |
-| `confirmation_required` | `workflow install` from a repository other than `mapbox/mapbox-cli`, with no terminal to ask on and no `--yes`. Nothing was installed. |
+| `confirmation_required` | `workflow install` from a source the CLI does not vouch for (another repository, or a `--ref` not on `mapbox/mapbox-cli`'s `main`), with no terminal to ask on and no typed `--yes`. Nothing was installed. |
 | `invalid_workflow` | A workflow failed `install`'s checks, or no longer passes them at `show` or `run`: its layout, its `workflow.yaml`, a command step against this build's commands, or a `requires` naming a newer CLI. Every problem is listed. |
 | `workflow_failed` | A step of `workflow run` failed, and the steps after it did not run. When a command step failed, `cause` holds that command's own error document, so its `code` (an `http_<status>`, say) can still be branched on. |
 | `workflow_not_found` | The repository has no `workflow/<name>/`. The message lists the workflows it does have. |

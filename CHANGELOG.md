@@ -47,10 +47,11 @@ that may never merge. They are not releases and are not listed here.
   A workflow may name its own `version`, independent of the CLI's, and the
   oldest CLI it `requires`; `install` refuses one that needs a newer CLI.
   `install` lists the scripts a workflow runs, and from a repository other
-  than `mapbox/mapbox-cli` asks first, refusing with `confirmation_required`
-  where there is no terminal and no `--yes`. A failed command step's own
-  error is under `cause` in the run's `workflow_failed`, and a SIGTERM to the
-  run is passed on to the running step.
+  than `mapbox/mapbox-cli`, or a `--ref` not on its `main`, asks first,
+  refusing with `confirmation_required` where there is no terminal and no
+  typed `--yes` (`MAPBOX_YES` does not answer it). A failed command step's
+  own error is under `cause` in the run's `workflow_failed`, and on Unix a
+  SIGTERM to the run is passed on to the running step.
   The first one published is
   `copy-style`, which copies a style between accounts with its custom fonts
   and icons, and on a partial failure lists what it created and the

@@ -341,6 +341,43 @@ fn fetch_github_from(
     )
 }
 
+/// Whether `commit` is on `repo`'s `main`, so has been through its review.
+///
+/// What a ref names is not enough: GitHub resolves `pull/N/head`, and a
+/// commit that only exists in a fork, through the repository's own
+/// `commits/{ref}`. Any failure to tell counts as no, which means asking.
+pub fn is_on_main(repo: &str, commit: &str, debug: bool) -> bool {
+    is_on_main_from(GITHUB_API, repo, commit, debug)
+}
+
+fn is_on_main_from(base: &str, repo: &str, commit: &str, debug: bool) -> bool {
+    if !is_commit_id(commit) {
+        return false;
+    }
+    // Page 2 of one commit per page, because only the first page carries
+    // the changed files, which for an old commit can be megabytes of diff.
+    let url = format!("{base}/repos/{repo}/compare/{DEFAULT_REF}...{commit}?per_page=1&page=2");
+    let body = get(
+        &url,
+        "application/vnd.github+json",
+        github_token().as_deref(),
+        (repo, commit),
+        debug,
+    )
+    .and_then(|response| read_capped(response, MAX_BYTES, "the comparison from GitHub"))
+    .and_then(|body| Ok(serde_json::from_slice::<serde_json::Value>(&body)?));
+    match body {
+        // `behind` and `identical`: `commit` is an ancestor of `main`.
+        Ok(body) => matches!(body["status"].as_str(), Some("behind" | "identical")),
+        Err(e) => {
+            if debug {
+                eprintln!("[debug] could not tell whether {commit} is on {repo}'s main: {e:#}");
+            }
+            false
+        }
+    }
+}
+
 /// A full SHA-1 or SHA-256 commit id, as `application/vnd.github.sha`
 /// answers. Checked because it goes into the next URL and into
 /// `.install.json`.
@@ -855,6 +892,46 @@ mod tests {
                 format!("GET /repos/mapbox/mapbox-cli/tarball/{commit} HTTP/1.1"),
             ]
         );
+    }
+
+    /// A PR's head or a fork's commit resolves through this repository, so
+    /// only GitHub's own comparison against `main` vouches for it.
+    #[test]
+    fn only_a_commit_on_main_is_on_main() {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        for (status, expected) in [
+            ("behind", true),
+            ("identical", true),
+            ("ahead", false),
+            ("diverged", false),
+        ] {
+            let body = format!(r#"{{"status":"{status}"}}"#).into_bytes();
+            let (server, base) = serve(vec![("application/json", body)]);
+            assert_eq!(
+                is_on_main_from(&base, "mapbox/mapbox-cli", commit, false),
+                expected,
+                "{status}"
+            );
+            assert_eq!(
+                server.join().unwrap(),
+                [format!(
+                    "GET /repos/mapbox/mapbox-cli/compare/main...{commit}?per_page=1&page=2 HTTP/1.1"
+                )]
+            );
+        }
+
+        // Nothing listening: not knowing is a no.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", closed.local_addr().unwrap());
+        drop(closed);
+        assert!(!is_on_main_from(&base, "mapbox/mapbox-cli", commit, false));
+        // And a ref rather than a commit is never sent.
+        assert!(!is_on_main_from(
+            &base,
+            "mapbox/mapbox-cli",
+            "pull/1/head",
+            false
+        ));
     }
 
     #[test]

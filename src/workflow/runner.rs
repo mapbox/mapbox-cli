@@ -81,8 +81,14 @@ impl Inherited {
         for option in ["profile", "username", crate::http::TIMEOUT_ARG] {
             let typed =
                 matches.value_source(option) == Some(clap::parser::ValueSource::CommandLine);
-            if let (true, Some(value)) = (typed, matches.get_one::<String>(option)) {
-                inherited.options.push((option, value.clone()));
+            // Raw, as typed: `--timeout` is parsed into a `Duration`, and
+            // `get_one::<String>` on it panics.
+            let value = matches
+                .get_raw(option)
+                .and_then(|mut values| values.next())
+                .and_then(|value| value.to_str());
+            if let (true, Some(value)) = (typed, value) {
+                inherited.options.push((option, value.to_string()));
             }
         }
         for flag in ["use-login", "debug", crate::confirm::ARG] {
@@ -350,6 +356,10 @@ fn run_steps(
             workdir.path(),
             error_file.as_deref(),
         );
+        let result = match &inherited.typed_token {
+            Some(_) => result.map_err(auth::with_typed_token_fix),
+            None => result,
+        };
         let interrupted = interrupted(result.is_err());
         view.finish(result.is_ok() && !interrupted);
         if interrupted {
@@ -378,10 +388,13 @@ const FORWARD_AFTER: std::time::Duration = std::time::Duration::from_secs(2);
 /// process that died holding it.
 ///
 /// For the SIGTERM a CI timeout sends, a step still running after
-/// [`FORWARD_AFTER`] is sent a SIGINT. `ctrlc` does not say which signal
-/// arrived, so the wait is what keeps a Ctrl-C from reaching the child
-/// twice; and SIGINT rather than SIGTERM so a script can still report what
-/// it did, as `copy-style` does on a `KeyboardInterrupt`.
+/// [`FORWARD_AFTER`] is sent a SIGINT: SIGINT rather than SIGTERM so a
+/// script can still report what it did, as `copy-style` does on a
+/// `KeyboardInterrupt`. `ctrlc` does not say which signal arrived, so
+/// nothing is passed on while this process is the terminal's foreground: a
+/// Ctrl-C there reached the step already, and a second one could cut that
+/// report short. Only the step's own process is signaled, not anything it
+/// started.
 fn catch_interrupt() {
     // On failure Ctrl-C keeps its default, which stops the run as before
     // but leaves the directory behind; not worth failing the run over.
@@ -389,6 +402,9 @@ fn catch_interrupt() {
         INTERRUPTED.store(true, Ordering::SeqCst);
         #[cfg(unix)]
         {
+            if is_terminal_foreground() {
+                return;
+            }
             std::thread::sleep(FORWARD_AFTER);
             // A process id can be reused once its process is reaped. The
             // window is the moment between the reap and the store of 0
@@ -404,6 +420,15 @@ fn catch_interrupt() {
             }
         }
     });
+}
+
+/// Whether this process's group is its terminal's foreground, the one a
+/// Ctrl-C reaches. No terminal, as in CI, is a no.
+#[cfg(unix)]
+fn is_terminal_foreground() -> bool {
+    use nix::unistd::{getpgrp, tcgetpgrp};
+    let foreground = tcgetpgrp(std::io::stdin()).or_else(|_| tcgetpgrp(std::io::stderr()));
+    foreground == Ok(getpgrp())
 }
 
 fn cancelled(when: &str) -> anyhow::Error {
@@ -949,6 +974,77 @@ mod tests {
         assert!(joined.contains("`bogus` is not an argument"), "{joined}");
         assert!(joined.contains("a secret in a file"), "{joined}");
         assert!(joined.contains("cannot run another workflow"), "{joined}");
+    }
+
+    /// A step is handed a typed `--token` through the environment, so its
+    /// own advice for a 401 names the variable rather than the flag.
+    #[test]
+    fn a_typed_token_is_blamed_on_the_flag_not_the_environment() {
+        let step = &workflow("  - id: list\n    command: styles list\n").steps[0];
+        let cause = serde_json::json!({
+            "code": "http_401",
+            "message": "Not Authorized - Invalid Token",
+            "status": 401,
+            "fix": "The token came from MAPBOX_ACCESS_TOKEN. Run `mapbox auth login` to sign in with an account instead.",
+            "next_actions": ["mapbox auth login"],
+        });
+        let err = auth::with_typed_token_fix(command_failure(step, cause));
+        let err = err.downcast::<CliError>().expect("a CliError");
+        let fix = err.fix.as_deref().unwrap_or_default();
+        assert!(fix.contains("`--token`"), "{fix}");
+        assert!(!fix.contains("came from MAPBOX_ACCESS_TOKEN"), "{fix}");
+        assert_eq!(err.next_actions, ["mapbox auth whoami"]);
+        assert_eq!(err.cause.as_ref().unwrap()["code"], "http_401");
+
+        let cause = serde_json::json!({
+            "code": "http_403",
+            "message": "This API requires a token with styles:download scope.",
+            "status": 403,
+            "fix": "The token from MAPBOX_ACCESS_TOKEN lacks the `styles:download` scope.",
+        });
+        let err = auth::with_typed_token_fix(command_failure(step, cause));
+        let fix = err.downcast::<CliError>().unwrap().fix.unwrap_or_default();
+        assert!(
+            fix.contains("passed with `--token` lacks the `styles:download`"),
+            "{fix}"
+        );
+    }
+
+    /// Through the real parser, which is where `--timeout` stops being a
+    /// string.
+    #[test]
+    fn typed_globals_are_inherited_as_typed() {
+        for args in [
+            [
+                "mapbox",
+                "--timeout",
+                "30",
+                "--profile",
+                "work",
+                "workflow",
+                "list",
+            ],
+            [
+                "mapbox",
+                "workflow",
+                "list",
+                "--timeout",
+                "30",
+                "--profile",
+                "work",
+            ],
+        ] {
+            let matches = app().try_get_matches_from(args).expect("parses");
+            let inherited = Inherited::from_matches(&matches);
+            assert_eq!(
+                inherited.options,
+                [
+                    ("profile", "work".to_string()),
+                    ("timeout", "30".to_string())
+                ],
+                "{args:?}"
+            );
+        }
     }
 
     #[test]

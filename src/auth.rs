@@ -883,6 +883,28 @@ pub fn with_auth_fix(
     }
 }
 
+/// [`with_auth_fix`]'s advice for a workflow step whose run was given
+/// `--token`. The step is handed that token as [`CLAP_TOKEN_ENV`], so the
+/// advice it wrote blames the environment; this puts the flag back.
+pub fn with_typed_token_fix(err: anyhow::Error) -> anyhow::Error {
+    let mut cli = match err.downcast::<CliError>() {
+        Ok(cli) => cli,
+        Err(other) => return other,
+    };
+    let remedy = match cli.status {
+        Some(401) => remedy_for(Some(TokenSource::Flag), CLAP_TOKEN_ENV, false),
+        Some(403) => match remedy::missing_scope(&cli.message).map(str::to_owned) {
+            Some(scope) => scope_remedy_for(Some(TokenSource::Flag), CLAP_TOKEN_ENV, false, &scope),
+            None => return cli.into(),
+        },
+        _ => return cli.into(),
+    };
+    cli.fix = None;
+    cli.next_actions.clear();
+    cli.docs.clear();
+    cli.with_remedy(remedy).into()
+}
+
 /// The advice for a credential the API refused: the prose, one command to
 /// run, and where tokens are documented.
 ///

@@ -2310,6 +2310,13 @@ mod tests {
             assert!(assume_yes_with(yes), "MAPBOX_YES={yes:?} was read as a no");
         }
 
+        // A yes to deletes, but not to trusting a workflow's source.
+        let matches = build_app(&[])
+            .try_get_matches_from(["mapbox", "workflow", "install", "x"])
+            .expect("a hand-written command parses without the specs");
+        assert!(matches.get_flag(confirm::ARG));
+        assert!(!confirm::typed_yes(&matches));
+
         std::env::remove_var(confirm::ENV);
         let matches = build_app(&[])
             .try_get_matches_from(["mapbox", "auth", "logout"])

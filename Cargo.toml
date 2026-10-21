@@ -121,8 +121,9 @@ ctrlc = { version = "3", features = ["termination"] }
 # For `workflow run`: passing a SIGTERM on to the running step, which a
 # terminal's Ctrl-C reaches by itself and a `kill` does not. Sending a signal
 # takes `unsafe` this crate does not have. Already in the graph through
-# `ctrlc`; the same version.
-nix = { version = "0.31", default-features = false, features = ["signal"] }
+# `ctrlc`; the same version. `process` and `term` for telling a Ctrl-C at the
+# terminal, which reached the step already, from a `kill`.
+nix = { version = "0.31", default-features = false, features = ["process", "signal", "term"] }
 
 [target.'cfg(windows)'.dependencies]
 # For `src/detach.rs`: keeping the parent's standard handles out of a detached

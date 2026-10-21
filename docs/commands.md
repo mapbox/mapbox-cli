@@ -134,6 +134,9 @@ nests, and is typed `mapbox styles draft get`.
 **[History](#history)** — [history.list](#mapbox-history-list) ·
 [history.show](#mapbox-history-show)
 
+**[Commands](#commands)** — [commands.search](#mapbox-commands-search) ·
+[commands.list](#mapbox-commands-list)
+
 **[Doctor](#doctor)** — [doctor](#mapbox-doctor)
 
 **[Usage](#usage)** — [usage](#mapbox-usage)
@@ -4735,6 +4738,138 @@ Log       no longer available: it expired or was removed to keep diagnostic logs
 ```
 
 ---
+
+## Commands
+
+Finding a command by what it does. Both read the same command surface
+`mapbox --schema` describes, so they cover every command this build has,
+and both are local: no request and no token. `json` gives each command as
+`{command, summary}`, plus a `score` from `search`; `mapbox <command>
+--schema` has the rest.
+
+### `mapbox commands search`
+
+The commands that match a task, best first. It is keyword matching, not a
+model: each word of the query is matched against a command's name, summary
+and description, its group's description and its arguments' help, with a
+command's name counting most. A word can be a prefix (`geo`), a different
+ending of the same stem (`geocoding` for `geocoder`) or one typo away
+(`uplaod`), unless some command's text uses the word as it is: "match" is a
+word, not a typo for "batch". A plural matches its singular. A few common
+words stand in for the ones commands use ("remove" for "delete", "rename"
+for "update").
+Words like "how", "my", "to" and "mapbox" are ignored. It cannot find a
+command whose text uses none of the query's words, so a query names the
+action and the thing acted on: "upload a font", not "get my typeface onto
+Mapbox". Matches far below the best one are left out. A task no command
+does usually still comes back with a few weak guesses, so check the
+summaries before running one.
+
+Under `json`, each match has a `score` from 0 to 1: how much of the query
+the command's own text covers. 1 means its name and summary use every word
+of the query, a few tenths is a word found elsewhere, and under 0.1 is
+barely a match. It is not a confidence, so don't use it as a cutoff: the
+right command can score lower than a wrong one on another query.
+
+The query can be quoted or not. One with no words at all, such as an
+empty string, is a usage error (exit 2). No match is not an error: `text`
+prints nothing and says so on stderr, `json` prints `[]`, and both exit 0. The
+`commands` group itself is left out of the results. Telemetry records the
+query's length, never its text.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `<query>...` | What you want to do, in a few words. |
+| `--limit <n>` | How many matches to show. Defaults to `5`; `0` shows every match. |
+
+#### Examples
+
+```sh
+mapbox commands search upload a font
+
+mapbox commands search "snap a gps trace to roads"
+
+mapbox commands search tiles --limit 0
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+COMMAND              SUMMARY
+mapbox fonts upload  Upload a font
+mapbox fonts list    List fonts for an owner
+mapbox fonts delete  Delete a font
+```
+
+</td><td>
+
+```json
+[
+  {
+    "command": "mapbox fonts upload",
+    "score": 1.0,
+    "summary": "Upload a font"
+  },
+  {
+    "command": "mapbox fonts list",
+    "score": 0.65,
+    "summary": "List fonts for an owner"
+  },
+  ...
+]
+```
+
+</td></tr>
+</table>
+
+### `mapbox commands list`
+
+Every command with its summary, sorted by name.
+
+#### Examples
+
+```sh
+mapbox commands list
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+COMMAND                         SUMMARY
+mapbox accounts list-scopes     List scopes
+mapbox accounts list-tokens     List tokens
+mapbox accounts retrieve-token  Retrieve a token
+...
+```
+
+</td><td>
+
+```json
+[
+  {
+    "command": "mapbox accounts list-scopes",
+    "summary": "List scopes"
+  },
+  {
+    "command": "mapbox accounts list-tokens",
+    "summary": "List tokens"
+  },
+  ...
+]
+```
+
+</td></tr>
+</table>
 
 ## Doctor
 

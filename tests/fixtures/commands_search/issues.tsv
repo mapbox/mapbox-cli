@@ -1,0 +1,104 @@
+# Lightly rewritten titles of Mapbox GitHub issues and help-center pages. Used
+# to pick which kinds of fix to make, so partly tuned against. `symptom` rows
+# are bug reports rather than tasks; `none` rows are tasks this CLI cannot do.
+# Columns: query, expected first result, kind, source.
+save static api response to a png file	mapbox static get-image	human	https://github.com/mapbox/mapbox-sdk-js/issues/317
+static image request entity too large	mapbox static get-image	symptom	https://github.com/mapbox/mapbox-sdk-js/issues/324
+add text to a static map image	mapbox static get-image	human	https://docs.mapbox.com/help/tutorials/static-images-text
+put a static map in an email receipt	mapbox static get-image	human	https://docs.mapbox.com/help/tutorials/receipt-map
+geojson polygon overlay on a static image	mapbox static get-image	human	https://github.com/mapbox/mapbox-sdk-js/issues/283
+hide multiple layers in static images	mapbox static get-image	human	https://github.com/mapbox/mapbox-gl-js/issues/12607
+offset a custom marker in a static map	mapbox static get-image	human	https://github.com/mapbox/mapbox-sdk-js/issues/431
+static map with language and worldview	mapbox static get-image	human	https://github.com/mapbox/mapbox-gl-js/issues/11005
+mpaboxstatic coordinates auto requires zoom	mapbox static get-image	symptom	https://github.com/mapbox/mapbox-sdk-js/issues/268
+static tiles of a custom style look wrong	mapbox static get-tile|mapbox static get-image	symptom	https://github.com/mapbox/mapbox-gl-js/issues/13504
+serving raster tiles source	mapbox tilesets get-tile|mapbox static get-tile	human	https://github.com/mapbox/mapbox-gl-js/issues/9280
+create a style with a geojson source	mapbox styles create	human	https://github.com/mapbox/mapbox-sdk-js/issues/210
+create a custom basemap style	mapbox styles create	human	https://docs.mapbox.com/help/tutorials/create-a-custom-style
+list styles with fresh results not cached	mapbox styles list	symptom	https://github.com/mapbox/mapbox-sdk-js/issues/389
+transfer styles between accounts	mapbox styles download|mapbox styles create	human	https://docs.mapbox.com/help/dive-deeper/transfer-styles-between-accounts
+add a map style offline	mapbox styles download	human	https://github.com/mapbox/mapbox-gl-js/issues/9861
+creating a style and rendering it	mapbox styles create|mapbox static get-image	human	https://github.com/mapbox/mapbox-sdk-js/issues/322
+map does not show the latest styling changes	mapbox styles get|mapbox styles draft get	symptom	https://docs.mapbox.com/help/troubleshooting/stale-data
+sprite property in style adding custom images	mapbox sprites upload	human	https://github.com/mapbox/mapbox-gl-js/issues/9854
+deleting icons dont work right away	mapbox sprites delete	symptom	https://github.com/mapbox/mapbox-sdk-js/issues/388
+svg image errors when uploading an icon	mapbox sprites upload	symptom	https://docs.mapbox.com/help/troubleshooting/studio-svg-upload-errors
+custom sprite in a custom style does not work	mapbox sprites upload|mapbox sprites get-json	symptom	https://github.com/mapbox/mapbox-gl-js/issues/13268
+add a custom font to a map style	mapbox fonts upload	human	https://docs.mapbox.com/help/how-to-videos/add-custom-font-studio-video
+manage your fontstacks	mapbox fonts list	human	https://docs.mapbox.com/help/dive-deeper/manage-fontstacks
+custom font appears in preview but not in published style	mapbox fonts list|mapbox fonts upload	symptom	https://github.com/mapbox/mapbox-gl-js/issues/13577
+no geojson features processed make sure line delimited	mapbox tilesets-cli	symptom	https://github.com/mapbox/tilesets-cli/issues/155
+how do i deal with a tileset bigger than 50 gb	mapbox tilesets-cli	human	https://github.com/mapbox/tilesets-cli/issues/164
+cant re-publish a tileset after adding new sources	mapbox tilesets-cli	symptom	https://github.com/mapbox/tilesets-cli/issues/162
+delete a tileset source	mapbox tilesets-cli	human	https://github.com/mapbox/tilesets-cli/issues/171
+list only shows the last 100 tilesets	mapbox tilesets-cli	symptom	https://github.com/mapbox/tilesets-cli/issues/135
+estimate area returns 0 km2	mapbox tilesets-cli	symptom	https://github.com/mapbox/tilesets-cli/issues/161
+upload large source files to mapbox tiling service	mapbox tilesets-cli	human	https://docs.mapbox.com/help/troubleshooting/upload-large-source-files-mts
+keep a tileset updated with incremental updates	mapbox tilesets-cli	human	https://docs.mapbox.com/help/tutorials/mts-incremental-updates
+cluster point data with the tiling service	mapbox tilesets-cli	human	https://docs.mapbox.com/help/tutorials/cluster-point-data-with-mts
+view the recipe of a tileset	mapbox tilesets-cli	human	https://github.com/mapbox/tilesets-cli/issues/126
+status of an unpublished tileset	mapbox tilesets-cli	human	https://github.com/mapbox/tilesets-cli/issues/127
+adjust the zoom extent of my tileset	mapbox tilesets-cli	human	https://docs.mapbox.com/help/troubleshooting/adjust-tileset-zoom-extent
+csv file errors on upload	mapbox tilesets-cli	symptom	https://docs.mapbox.com/help/troubleshooting/csv-upload-errors
+how to remove an incomplete upload	mapbox tilesets-cli	human	https://github.com/mapbox/mapbox-cli-py/issues/90
+retreiving tilesets	mapbox tilesets-cli|mapbox tilesets get-mvt	symptom	https://github.com/mapbox/mapbox-cli-py/issues/130
+upload data to mapbox	mapbox tilesets-cli	human	https://docs.mapbox.com/help/troubleshooting/uploads
+feature ids in tilequery response	mapbox tilesets query	human	https://github.com/mapbox/mapbox-sdk-js/issues/265
+point in polygon query	mapbox tilesets query	human	https://docs.mapbox.com/help/tutorials/point-in-polygon-query-with-mapbox-boundaries
+get the city and street where my marker is	mapbox geocoder reverse|mapbox search reverse	human	https://github.com/mapbox/mapbox-gl-js/issues/12302
+unable to change location name to coordinates	mapbox geocoder forward|mapbox search forward	human	https://github.com/mapbox/mapbox-sdk-js/issues/424
+country code in reverse geocode response	mapbox geocoder reverse|mapbox search reverse	human	https://github.com/mapbox/mapbox-sdk-js/issues/423
+geocode with proximity set to ip	mapbox geocoder forward|mapbox search forward	human	https://github.com/mapbox/mapbox-sdk-js/issues/466
+geocoding bbox parameter	mapbox geocoder forward|mapbox search forward	human	https://github.com/mapbox/mapbox-cli-py/issues/70
+perform batch geocoding	mapbox geocoder batch	human	https://docs.mapbox.com/help/how-to-videos/alteryx-macro-search-for-batch-geocoding-video
+v6 geocoding batch api	mapbox geocoder batch	human	https://github.com/mapbox/mapbox-sdk-js/issues/485
+geocoding with structured input and secondary address	mapbox geocoder forward|mapbox search forward	human	https://github.com/mapbox/mapbox-sdk-js/issues/489
+temporary versus permanent geocoding	mapbox geocoder forward|mapbox geocoder batch	human	https://docs.mapbox.com/help/dive-deeper/understand-temporary-vs-permanent-geocoding
+specific address shows incorrect location wrong zipcode	mapbox feedback create|mapbox geocoder forward	symptom	https://github.com/mapbox/mapbox-gl-js/issues/10373
+address geocoding format guide	mapbox geocoder forward|mapbox search forward	human	https://docs.mapbox.com/help/troubleshooting/address-geocoding-format-guide
+add point of interest poi search to a map	mapbox search category|mapbox search forward	human	https://docs.mapbox.com/help/tutorials/poi-search-react
+retrieve api returning 404	mapbox places	symptom	https://github.com/mapbox/mapbox-gl-js/issues/13402
+filter by counties for us	mapbox geocoder forward|mapbox search forward	human	https://github.com/mapbox/mapbox-gl-js/issues/9950
+forward geocoding doesnt return bbox property	mapbox geocoder forward	symptom	https://github.com/mapbox/mapbox-gl-js/issues/10897
+403 forbidden for geocoding api request	mapbox auth whoami|mapbox accounts list-scopes	symptom	https://github.com/mapbox/mapbox-gl-js/issues/8155
+city name needs to be changed	mapbox feedback create	human	https://github.com/mapbox/mapbox-gl-js/issues/11593
+reporting data issues	mapbox feedback create	human	https://docs.mapbox.com/help/dive-deeper/reporting-data-issues
+report an error from a map search or route result	mapbox feedback create	human	https://docs.mapbox.com/help/troubleshooting/reporting-a-problem
+mapbox returns driving instead of walking directions	mapbox directions	symptom	https://github.com/mapbox/mapbox-cli-py/issues/71
+add directions route lines to a web map	mapbox directions	human	https://docs.mapbox.com/help/tutorials/getting-started-directions-api
+calculation of distances with different values	mapbox directions|mapbox matrix	human	https://github.com/mapbox/mapbox-gl-js/issues/10939
+generate an optimized route	mapbox directions|mapbox matrix	human	https://docs.mapbox.com/help/tutorials/optimization-api
+matrix returning null values	mapbox matrix	symptom	https://github.com/mapbox/mapbox-sdk-js/issues/312
+add travel time isochrones to a web map	mapbox isochrone	human	https://docs.mapbox.com/help/tutorials/get-started-isochrone-api
+isochrone api polygon	mapbox isochrone	human	https://traveltime.com/blog/mapbox-isochrone-api-polygon
+map matching api always returns an http error	mapbox map-match	symptom	https://github.com/mapbox/mapbox-sdk-js/issues/286
+need a matching full example	mapbox map-match	human	https://github.com/mapbox/mapbox-sdk-js/issues/284
+mapmatching for multi feature inputs	mapbox map-match	human	https://github.com/mapbox/mapbox-cli-py/issues/37
+get started with the map matching api	mapbox map-match	human	https://docs.mapbox.com/help/tutorials/get-started-map-matching-api
+what is token with styles:list scope	mapbox accounts list-scopes	human	https://github.com/mapbox/mapbox-sdk-js/issues/281
+create a temporary token	-	none	https://github.com/mapbox/mapbox-sdk-js/issues/291
+troubleshooting access tokens	mapbox accounts list-tokens|mapbox accounts retrieve-token|mapbox auth whoami	human	https://docs.mapbox.com/help/troubleshooting/token-errors
+receiving error 401 unauthorized	mapbox auth whoami|mapbox accounts retrieve-token	symptom	https://github.com/mapbox/mapbox-gl-js/issues/13325
+get token details by token id	mapbox accounts retrieve-token	human	https://github.com/mapbox/mapbox-sdk-js/issues/463
+access token missing command	mapbox accounts list-tokens|mapbox accounts retrieve-token	symptom	https://github.com/mapbox/mapbox-cli-py/issues/82
+trouble setting access token	mapbox auth login|mapbox auth whoami	human	https://github.com/mapbox/mapbox-cli-py/issues/69
+mapboxaccesstoken or mapbox_access_token	mapbox auth whoami|mapbox doctor	symptom	https://github.com/mapbox/mapbox-cli-py/issues/53
+token without the right permissions gives unhelpful error	mapbox accounts list-scopes|mapbox auth whoami	symptom	https://github.com/mapbox/tilesets-cli/issues/110
+add cli for analytics api	mapbox usage	human	https://github.com/mapbox/mapbox-cli-py/issues/93
+manage your web map costs	mapbox usage	human	https://docs.mapbox.com/help/troubleshooting/manage-web-map-costs
+disable event tracking	mapbox config set	human	https://github.com/mapbox/mapbox-gl-js/issues/13226
+give more guidance on config file location	mapbox config list|mapbox doctor	human	https://github.com/mapbox/mapbox-cli-py/issues/65
+getaddrinfo enotfound api.mapbox.com	mapbox doctor	symptom	https://github.com/mapbox/mapbox-sdk-js/issues/325
+working with firewalls	mapbox doctor	human	https://docs.mapbox.com/help/dive-deeper/firewalls
+ai assisted development with mapbox	mapbox mcp install|mapbox agent-skills install	human	https://docs.mapbox.com/help/getting-started/ai-assisted-development
+build your own agent with the mapbox mcp server	mapbox mcp install|mapbox mcp list	human	https://docs.mapbox.com/help/tutorials/build-your-own-agent
+how to regain access to your account	-	none	https://docs.mapbox.com/help/troubleshooting/account-lockout
+switch from google maps javascript api to mapbox gl js	-	none	https://docs.mapbox.com/help/tutorials/google-to-mapbox
+use mapbox gl js in a react app	-	none	https://docs.mapbox.com/help/tutorials/use-mapbox-gl-js-with-react
+add address autofill to a form on a website	-	none	https://docs.mapbox.com/help/tutorials/add-address-autofill-to-your-website
+add custom markers in mapbox gl js	-	none	https://docs.mapbox.com/help/tutorials/custom-markers-gl-js
+make a heatmap with mapbox gl js	-	none	https://docs.mapbox.com/help/tutorials/make-a-heatmap-with-mapbox-gl-js
+mapbox logo disappears on streets view	-	none	https://github.com/mapbox/mapbox-gl-js/issues/13561
+improve the performance of mapbox gl js maps	-	none	https://docs.mapbox.com/help/troubleshooting/mapbox-gl-js-performance
+build a store locator	-	none	https://docs.mapbox.com/help/tutorials/building-a-store-locator
+how to draw arrow on line layer	-	none	https://github.com/mapbox/mapbox-gl-js/issues/12891

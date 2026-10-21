@@ -36,7 +36,7 @@ pub fn command() -> Command {
         .subcommand_required(true)
         .subcommand(
             Command::new("list")
-                .about("List the most recent runs, newest first")
+                .about("List the commands you ran recently, newest first")
                 .arg(
                     Arg::new("limit")
                         .long("limit")
@@ -47,7 +47,7 @@ pub fn command() -> Command {
         )
         .subcommand(
             Command::new("show")
-                .about("Show everything recorded about one run")
+                .about("Show everything recorded about one run, the last one by default")
                 .arg(
                     Arg::new("id")
                         .help("The run's id, or a prefix of it; the newest run when left out"),

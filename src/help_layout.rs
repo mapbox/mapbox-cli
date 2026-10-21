@@ -45,6 +45,7 @@ const GROUPS: &[(&str, &[&str])] = &[
     (
         "CLI",
         &[
+            "commands",
             "config",
             "history",
             "doctor",
@@ -80,7 +81,10 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
         "places",
         "Full detail for a place, by its Search Box result id",
     ),
-    ("feedback", "Submit and list feedback about Mapbox data"),
+    (
+        "feedback",
+        "Report wrong or missing map data, and list what was reported",
+    ),
     ("directions", "Route between waypoints"),
     (
         "matrix",
@@ -416,7 +420,9 @@ fn render(sections: &[Section], width: usize, palette: &Palette) -> String {
     let lit = palette.literal;
     page.push_str(&format!(
         "{muted}Run{muted:#} {lit}mapbox <command> --help{lit:#} \
-         {muted}for a command's own options.{muted:#}",
+         {muted}for a command's own options.{muted:#}\n\
+         {muted}Run{muted:#} {lit}mapbox commands search \"<task>\"{lit:#} \
+         {muted}to find a command by what it does.{muted:#}",
         muted = palette.muted,
     ));
     page
@@ -634,7 +640,9 @@ fn grouped(rows: Vec<(String, String)>) -> Vec<(&'static str, Vec<(String, Strin
     groups
 }
 
-fn description(name: &str) -> Option<&'static str> {
+/// Also read by `commands search`, for which these are the plainest words
+/// a group has.
+pub(crate) fn description(name: &str) -> Option<&'static str> {
     DESCRIPTIONS
         .iter()
         .find(|(n, _)| *n == name)

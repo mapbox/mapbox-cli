@@ -126,6 +126,24 @@ One table outside that file works the same way: `GROUPS` in
 an entry outlives its command. A command it misses still shows, under
 "Other", but CI will not let that ship.
 
+## `commands search` and its query sets
+
+`mapbox commands search` ranks commands by the words in their names,
+summaries, descriptions, help-group lines and argument help, so **editing a
+command's `about`, an argument's `help` or a line in `DESCRIPTIONS` changes
+search results**, not only `--help`. The `eval_set_*` tests in
+`src/commands.rs` run the query sets in `tests/fixtures/commands_search/` and
+fail when a set ranks more than a few queries fewer right than its recorded
+score. Each file's header says where its queries came from and how much the
+search was tuned against them. `cargo test eval_set -- --nocapture` prints
+the scores and every miss, and that directory's README explains each set and
+how to read its score.
+
+When a change raises a score, record it in the same commit. Dropping past the
+slack is a decision to explain in the PR. Don't tune against the sets by
+special-casing a query; fix the kind of miss. New real queries go in a new
+file, so there is always one set the search has not been fitted to.
+
 ## What the tests can and cannot tell you
 
 `cargo test` answers to fake tokens and a fake server. It runs offline, on a

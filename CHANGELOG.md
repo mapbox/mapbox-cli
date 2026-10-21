@@ -56,6 +56,15 @@ that may never merge. They are not releases and are not listed here.
   from `tilequery get` and the renderer kept matching the old name.
   `-o json` is unchanged.
 
+- New `mapbox commands search "<task>"` finds the commands that match a
+  task, best first, and `mapbox commands list` lists every command with its
+  summary. Both are local keyword lookups: no request, no token. `json`
+  gives `[{command, summary, score}]`, where `score` (0 to 1) is how much
+  of the query the command's own text covers. The query is sent in telemetry as its length
+  only. Top-level help now points to `commands search` (agents see it in
+  their hint), and an unknown command with no near spelling suggests it in
+  the error's `fix`. No existing command or output changes.
+
 - `mapbox usage` reads as a chart: one row per product with no blank
   lines between, every sparkline as wide as the period, bars scaled from
   zero so their height is proportional to the value, and the tallest

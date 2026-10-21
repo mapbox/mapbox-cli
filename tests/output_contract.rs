@@ -443,12 +443,13 @@ fn help_names_env_variables_without_their_values() {
     assert!(!text.contains("=]"), "an env note still shows `=`: {text}");
 }
 
-const AGENT_HINT: &str = "Agents: `mapbox --schema`";
+const AGENT_HINT: &str = "Agents: `mapbox commands search";
 
-/// An agent reading top-level help is pointed at `--schema` rather than left
-/// to chain `--help` calls. Only there: subcommand help stays as it was.
+/// An agent reading top-level help is pointed at `commands search` and
+/// `--schema` rather than left to chain `--help` calls. Only there:
+/// subcommand help stays as it was.
 #[test]
-fn an_agent_is_pointed_at_the_schema() {
+fn an_agent_is_pointed_at_search_and_the_schema() {
     let out = command()
         .env("CLAUDECODE", "1")
         .arg("--help")
@@ -456,6 +457,11 @@ fn an_agent_is_pointed_at_the_schema() {
         .expect("run mapbox");
     assert!(out.status.success());
     assert!(stdout(&out).contains(AGENT_HINT), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("`mapbox --schema`"),
+        "{}",
+        stdout(&out)
+    );
 
     let sub = command()
         .env("CLAUDECODE", "1")
@@ -1292,5 +1298,218 @@ fn text_into_a_pipe_carries_no_color_and_no_banner() {
             assert!(!text.contains('\x1b'), "{args:?} {stream}: {text:?}");
             assert!(!text.contains("mapbox · v"), "{args:?} {stream}: {text:?}");
         }
+    }
+}
+
+/// `commands search` answers on stdout under `json`: the matches as
+/// `[{command, summary, score}]`, best first. A match leaves stderr empty;
+/// no match adds a hint there (below).
+#[test]
+fn commands_search_prints_its_matches_as_json() {
+    let out = run(&["-o", "json", "commands", "search", "upload", "a", "font"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stderr(&out), "");
+    let matches = json(&stdout(&out));
+    let matches = matches.as_array().expect("an array");
+    assert_eq!(matches[0]["command"], "mapbox fonts upload");
+    assert!(matches.len() <= 5, "{matches:?}");
+    for entry in matches {
+        let keys: Vec<&String> = entry.as_object().expect("an object").keys().collect();
+        assert_eq!(keys, ["command", "score", "summary"], "{entry}");
+    }
+    let scores: Vec<f64> = matches
+        .iter()
+        .map(|entry| entry["score"].as_f64().expect("a number"))
+        .collect();
+    assert_eq!(scores[0], 1.0, "{scores:?}");
+    assert!(
+        scores.windows(2).all(|pair| pair[0] >= pair[1]) && scores.iter().all(|s| *s > 0.0),
+        "{scores:?}"
+    );
+}
+
+/// An empty query is most likely a script's empty variable, so it fails as
+/// a usage error rather than answering like a query that found nothing.
+#[test]
+fn commands_search_refuses_a_query_with_no_words() {
+    for query in ["", "  ", "?!"] {
+        let out = run(&["-o", "json", "commands", "search", query]);
+        assert_eq!(out.status.code(), Some(2), "{query:?}: {}", stderr(&out));
+        assert_eq!(json(&stderr(&out))["code"], "usage", "{query:?}");
+        assert_eq!(stdout(&out), "", "{query:?}");
+    }
+}
+
+/// The check is on the whole query: an empty variable beside real words
+/// still leaves something to search for.
+#[test]
+fn commands_search_accepts_an_empty_part_beside_words() {
+    let out = run(&[
+        "-o", "json", "commands", "search", "upload", "a", "font", "", "?",
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(json(&stdout(&out))[0]["command"], "mapbox fonts upload");
+}
+
+/// A person gets a table on stdout and the next step on stderr, so
+/// `> file` keeps the table alone.
+#[test]
+fn commands_search_prints_a_table_and_a_tip_as_text() {
+    let out = run(&["-o", "text", "commands", "search", "upload a font"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.starts_with("COMMAND"), "{text}");
+    assert!(text.contains("mapbox fonts upload"), "{text}");
+    assert!(stderr(&out).contains("Tip:"), "{}", stderr(&out));
+}
+
+/// No match is an empty answer, not a failure: the query was fine, the CLI
+/// just has nothing for it.
+#[test]
+fn commands_search_with_no_match_is_an_empty_list() {
+    let out = run(&["-o", "json", "commands", "search", "xyzzy"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(json(&stdout(&out)), serde_json::json!([]));
+}
+
+/// Under `text` the empty answer is no output at all, not a blank line, so
+/// `> file` leaves an empty file. Where to look instead goes to stderr, and
+/// the `--help` tip, which is about a match, does not.
+#[test]
+fn commands_search_with_no_match_prints_nothing_as_text() {
+    let out = run(&["-o", "text", "commands", "search", "xyzzy"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert!(
+        stderr(&out).contains("mapbox commands list"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!stderr(&out).contains("Tip:"), "{}", stderr(&out));
+}
+
+/// `--limit` caps the matches at its value, five by default, and `0`
+/// lifts the cap. "style" matches more than five commands.
+#[test]
+fn commands_search_limit_caps_the_matches() {
+    let count = |extra: &[&str]| {
+        let mut args = vec!["-o", "json", "commands", "search", "style"];
+        args.extend_from_slice(extra);
+        let out = run(&args);
+        assert!(out.status.success(), "{}", stderr(&out));
+        json(&stdout(&out)).as_array().expect("an array").len()
+    };
+    assert_eq!(count(&[]), 5);
+    assert_eq!(count(&["--limit", "1"]), 1);
+    assert!(count(&["--limit", "0"]) > 5);
+}
+
+#[test]
+fn commands_list_names_every_command_once() {
+    let out = run(&["-o", "json", "commands", "list"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let listed = json(&stdout(&out));
+    let listed: Vec<&str> = listed
+        .as_array()
+        .expect("an array")
+        .iter()
+        .map(|entry| entry["command"].as_str().expect("a command"))
+        .collect();
+    let schema = json(&stdout(&run(&["--schema"])));
+    let mut described: Vec<&str> = schema["commands"]
+        .as_array()
+        .expect("commands")
+        .iter()
+        .map(|entry| entry["command"].as_str().expect("a command"))
+        .collect();
+    described.sort_unstable();
+    assert_eq!(listed, described);
+    let mut unique = listed.clone();
+    unique.dedup();
+    assert_eq!(unique, listed, "a command is listed twice");
+}
+
+/// A command name nothing resembles is pointed at `commands search`, in
+/// both modes. One clap has a near spelling for keeps clap's suggestion,
+/// which is the better answer.
+#[test]
+fn an_unknown_command_is_pointed_at_search() {
+    let out = run(&["-o", "json", "upload-font"]);
+    assert_eq!(out.status.code(), Some(2));
+    let error = json(&stderr(&out));
+    assert!(
+        error["fix"]
+            .as_str()
+            .is_some_and(|fix| fix.contains("mapbox commands search")),
+        "{error}"
+    );
+
+    let out = run(&["-o", "text", "upload-font"]);
+    assert!(
+        stderr(&out).contains("mapbox commands search"),
+        "{}",
+        stderr(&out)
+    );
+
+    let out = run(&["-o", "json", "styles", "lst"]);
+    let error = json(&stderr(&out));
+    assert!(
+        error["fix"]
+            .as_str()
+            .is_some_and(|fix| fix.contains("'list'")),
+        "{error}"
+    );
+    assert!(
+        !error["fix"]
+            .as_str()
+            .is_some_and(|fix| fix.contains("commands search")),
+        "{error}"
+    );
+
+    let out = run(&["-o", "text", "styles", "lst"]);
+    assert!(stderr(&out).contains("'list'"), "{}", stderr(&out));
+    assert!(
+        !stderr(&out).contains("commands search"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// The closing line of top-level help points a person at `commands search`
+/// too, not only an agent reading the hint above it.
+#[test]
+fn top_level_help_points_a_person_at_search() {
+    let out = run(&["--help"]);
+    assert!(out.status.success());
+    let text = stdout(&out);
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("Run mapbox commands search \"<task>\"")),
+        "{text}"
+    );
+}
+
+/// Each command's row in top-level help fits one line at 80 columns: a
+/// summary that wraps reads as two rows at a glance. The options may wrap,
+/// since their environment notes are long by nature.
+#[test]
+fn every_command_fits_one_help_line_at_80_columns() {
+    let out = command()
+        .env("COLUMNS", "80")
+        .env("CLAUDECODE", "1")
+        .arg("--help")
+        .output()
+        .expect("run mapbox");
+    let text = stdout(&out);
+    let (hint, page) = text.split_at(text.find("Usage:").expect("a usage line"));
+    for line in hint.lines() {
+        assert!(line.chars().count() <= 80, "over 80 columns: {line:?}");
+    }
+    let commands = &page[..page.find("Authentication:").expect("an options section")];
+    for line in commands.lines() {
+        assert!(
+            !line.starts_with("   "),
+            "a command's summary wraps: {line:?}\n{commands}"
+        );
     }
 }

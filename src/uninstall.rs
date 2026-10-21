@@ -31,7 +31,7 @@ const DRY_RUN_HELP: &str = "Describe what this would delete, then exit without d
 
 pub fn command() -> Command {
     Command::new(COMMAND)
-        .about("Remove the installed `mapbox` binary")
+        .about("Uninstall this CLI by removing the installed `mapbox` binary")
         .long_about(
             "Remove the `mapbox` binary this process is running from.\n\n\
              Deletes only the executable. Stored credentials, `auth logout`'s file, \

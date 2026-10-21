@@ -1026,7 +1026,9 @@ fn a_logged_in_run_sends_with_the_clis_token() {
         let _ = command(&home)
             .env("MAPBOX_INTERNAL_TELEMETRY_URL", &url)
             .env("MAPBOX_INTERNAL_CLI_TOKEN_URL", &token_url)
-            .env("MAPBOX_ACCESS_TOKEN", "sk.env")
+            // A `pk.` token passes the check a fetched token must, so it
+            // would get through a fallback that `sk.` and `tk.` would not.
+            .env("MAPBOX_ACCESS_TOKEN", "pk.env")
             .env("MapboxAccessToken", "sk.legacy")
             .args(args)
             .output()
@@ -1040,7 +1042,7 @@ fn a_logged_in_run_sends_with_the_clis_token() {
             request.head
         );
         let whole = format!("{}{}", request.head, request.body);
-        for user in ["sk.typed", "tk.login", "sk.env", "sk.legacy"] {
+        for user in ["sk.typed", "tk.login", "pk.env", "sk.legacy"] {
             assert!(!whole.contains(user), "{args:?}: `{user}` was sent");
         }
     }

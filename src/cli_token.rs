@@ -109,6 +109,9 @@ pub(crate) static TELEMETRY_CALLER: Caller = Caller {
 /// A command here must not read its body from stdin: a refused request is
 /// sent again, with a fresh token or the user's, and stdin can only be read
 /// once. `cli_token_commands_read_nothing_from_stdin` holds that.
+///
+/// Each has the [`COMMAND`] policy, since `main` falls back to the user's
+/// token for every one of them.
 const CLI_TOKEN_COMMANDS: &[(Caller, &str)] = &[(
     Caller {
         name: "report",
@@ -134,10 +137,6 @@ pub(crate) fn may_use(command: &str) -> bool {
 }
 
 impl Caller {
-    pub(crate) fn user_fallback(&self) -> bool {
-        self.policy.user_fallback
-    }
-
     /// The token this caller sends with, by its policy. `fetch` is false
     /// where nothing may be sent, as in a dry run, and only a token already
     /// on disk is returned then.
@@ -427,6 +426,15 @@ mod tests {
                 "`{name}` is in CLI_TOKEN_COMMANDS but is not a command"
             );
             assert!(!reason.trim().is_empty(), "`{name}` needs a reason");
+        }
+    }
+
+    /// `main` sends a command with the user's token when the CLI's can't be
+    /// used, and has no path for a command that must not.
+    #[test]
+    fn every_cli_token_command_has_the_command_policy() {
+        for (caller, _) in CLI_TOKEN_COMMANDS {
+            assert_eq!(caller.policy, COMMAND, "`{}`", caller.name);
         }
     }
 

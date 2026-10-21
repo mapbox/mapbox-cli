@@ -491,20 +491,23 @@ and `--dry-run` show it alongside everything else on the request.
 ### The CLI's own requests
 
 The CLI has a token of its own, for requests it makes for itself.
-Telemetry uses only that token, never yours: `MAPBOX_CLI_TOKEN` when it
-holds a public `pk.` token, or a public token fetched from `https://cli.mapbox.com/config/token.json` and
-kept in `~/.mapbox/cli-token.json`. With neither usable, the event is
-dropped, and an event that was refused is never sent again. A refusal is
-checked with the Tokens API and the endpoint asked for a new token at
-once: a token that is revoked, invalid, expired or malformed is replaced,
-and a different token served is used from the next run on. Three failures
-in a row, each a fetch that finds no usable token or a refusal the
-endpoint has no different token for, stop telemetry sending and fetching
-for an hour. That count is telemetry's own, and `MAPBOX_CLI_TOKEN` is sent
-whatever it says. A new token ends it, even one `mapbox report` fetched.
-The token is
-restricted to `https://cli.mapbox.com/`, so every request with it carries
-that as its `Referer`. The CLI's token is only used for what
+Telemetry uses only that token, never the one you run commands with
+(`--token`, `MAPBOX_ACCESS_TOKEN` or a login): it uses a public token
+fetched from `https://cli.mapbox.com/config/token.json` and kept in
+`~/.mapbox/cli-token.json`. `MAPBOX_CLI_TOKEN` is a developer override that
+replaces that token with another CLI token, such as one for staging, and
+is used only when it is a public `pk.` token. With neither usable, the
+event is dropped, and an event that was refused is never sent again. A
+refusal is checked with the Tokens API and the endpoint asked for a new
+token at once: a token that is revoked, invalid, expired or malformed is
+replaced, and a different token served is used from the next run on.
+Three failures in a row, each a fetch that finds no usable token or a
+refusal the endpoint has no different token for, stop telemetry sending
+and fetching for an hour. That count is telemetry's own, and
+`MAPBOX_CLI_TOKEN` is sent whatever it says. A new token ends it, even one
+`mapbox report` fetched. The token is restricted to
+`https://cli.mapbox.com/`, so every request with it carries that as its
+`Referer`. The CLI's token is only used for what
 `src/cli_token.rs` lists for it: telemetry, and `mapbox report`, which
 prefers the CLI's token and falls back to yours while the CLI's can't be
 used.

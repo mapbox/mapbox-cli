@@ -62,8 +62,9 @@ const URL_ENV: &str = "MAPBOX_INTERNAL_TELEMETRY_URL";
 const DELIVERY_LOG_ENV: &str = "MAPBOX_INTERNAL_TELEMETRY_LOG";
 const DELIVERY_DIR: &str = "deliveries";
 
-/// The child's time budget. Nobody waits for it, and besides the send it may
-/// check a refused token and fetch a new one.
+/// Bounds the POST only. The token fetch and the Tokens API check around it
+/// keep their own timeouts, so the child can run several times this; nobody
+/// waits for it.
 const SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Ample for one event; anything larger on stdin is not one of ours.

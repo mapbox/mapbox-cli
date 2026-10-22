@@ -22,6 +22,12 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `install.sh`/`install.ps1`: the MCP question no longer waits several
+  seconds before it appears. The installer now asks whenever a supported
+  coding agent's CLI is on `PATH`, and only checks what is already
+  registered after a yes. A reinstall therefore asks again even when every
+  server is registered; a yes then reports each one as already there.
+
 ## 1.1.0 - 2026-10-22
 
 - `mapbox workflow` (beta): install and run workflows, which are named,

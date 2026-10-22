@@ -1010,10 +1010,17 @@ fi
 #
 # A separate question from the skill above: this registers a hosted server in
 # the coding agent's own config, next to servers the user added, rather than
-# writing a directory this CLI owns. `mapbox mcp install` never replaces an
-# entry that is already there (src/mcp.rs), so on a reinstall it is only
-# offered when something is left to register. Same opt-out and same
-# no-terminal rule as the skill.
+# writing a directory this CLI owns. Same opt-out and same no-terminal rule as
+# the skill.
+#
+# Whether to ask is a PATH lookup and nothing more. Checking what is already
+# registered means running each client's own CLI, and Claude Code's takes over
+# a second per call, so the screen sat still for several seconds between the
+# two questions, and for anyone who answers no or has no terminal that wait
+# bought nothing. `mapbox mcp install` does that check itself once someone
+# says yes, and never replaces an entry that is already there (src/mcp.rs). A
+# reinstall therefore asks again even when everything is registered, and a
+# yes then reports each server as already there.
 
 # "status|server|client" per row of `mapbox mcp install -o json`, with the
 # labels src/mcp.rs prints in place of its ids.
@@ -1046,65 +1053,77 @@ mcp_grouped() { # mcp_grouped <json>
     } END { for (i = 1; i <= n; i++) print order[i] "|" who[order[i]] }'
 }
 
-# The clients a dry run would register anything with, comma-joined.
-mcp_clients_from() { # mcp_clients_from <json>
-    mcp_rows "$1" | awk -F'|' '$1 == "would_install" && !seen[$3]++ { print $3 }' |
-        paste -sd, - | sed 's/,/, /g'
+# The MCP clients whose CLI is on PATH, comma-joined. One row per client in
+# src/mcp.rs's CLIENTS, as "override variable|binary|label", honoring the same
+# override variable it does; `installers_know_every_mcp_client` there holds
+# this list to that table.
+mcp_clients_present() {
+    for mcp_client in \
+        'MAPBOX_CLAUDE_CLI|claude|Claude Code' \
+        'MAPBOX_CODEX_CLI|codex|Codex' \
+        'MAPBOX_CODE_CLI|code|VS Code' \
+        'MAPBOX_CURSOR_CLI|cursor|Cursor'; do
+        mcp_var="${mcp_client%%|*}"
+        mcp_rest="${mcp_client#*|}"
+        mcp_label="${mcp_rest#*|}"
+        mcp_bin="$(printenv "$mcp_var" || true)"
+        [ -n "$mcp_bin" ] || mcp_bin="${mcp_rest%%|*}"
+        if command -v "$mcp_bin" >/dev/null 2>&1; then
+            printf '%s\n' "$mcp_label"
+        fi
+    done | paste -sd, - | sed 's/,/, /g'
 }
 
 if agent_setup_allowed; then
-    # Fails with mcp_client_not_found when no supported client is installed,
-    # which is most machines: nothing to offer, so nothing is said.
-    if mcp_check=$(log_capture "${INSTALL_DIR}/mapbox" mcp install --global --dry-run -o json); then
-        mcp_clients="$(mcp_clients_from "$mcp_check")"
-        if [ -n "$mcp_clients" ]; then
-            do_mcp_setup=no
-            if have_tty; then
-                ask_title "Add the Mapbox MCP servers to ${mcp_clients}?"
-                ask_note "This runs $(ask_cmd 'mapbox mcp install --global'), now or any time later."
-                answer="$(ask "    Add them now? ${DIM}[y/N]${RESET} ")" || answer=''
-                is_yes "$answer" && do_mcp_setup=yes
-                STEP_INDENT='    '
-            fi
-            if [ "$do_mcp_setup" = yes ]; then
-                # Each client's own CLI does the registering, and Codex's can
-                # stop to print a sign-in URL, so its output is shown live.
-                if run_live "Adding the Mapbox MCP servers" "${WORK_DIR}/mcp-install.log" "${WORK_DIR}/mcp-install.json" \
-                    "${INSTALL_DIR}/mapbox" mcp install --global -o json; then
-                    mcp_ok=yes
-                else
-                    mcp_ok=no
-                fi
-                mcp_grouped "$(cat "${WORK_DIR}/mcp-install.json" 2>/dev/null)" >"${WORK_DIR}/mcp-rows"
-                # One line per server and outcome, so a server added just now
-                # reads differently from one that was already there.
-                mcp_trouble=no
-                while IFS='|' read -r status what who; do
-                    case "$status" in
-                        installed | already_installed) ;;
-                        *) mcp_trouble=yes ;;
-                    esac
-                    case "$status" in
-                        installed) step_ok "Added ${what} to ${who}" ;;
-                        already_installed) step_skip "${what} was already in ${who}" ;;
-                        installed_login_incomplete) step_warn "Added ${what} to ${who}, but sign-in did not finish" ;;
-                        client_not_found) step_warn "Skipped ${what} for ${who}: CLI not on PATH" ;;
-                        config_unreadable) step_warn "Skipped ${what} for ${who}: config could not be read" ;;
-                        *) step_warn "Could not add ${what} to ${who}" ;;
-                    esac
-                done <"${WORK_DIR}/mcp-rows"
-                if [ "$mcp_ok" = no ]; then
-                    # A failure no row above accounts for still gets a line of
-                    # its own, rather than a list of successes.
-                    [ "$mcp_trouble" = yes ] || step_warn "Not every Mapbox MCP server could be added."
-                    step_detail "Run 'mapbox mcp install --global' to see why and try again."
-                fi
-            else
-                step_skip "Mapbox MCP servers not added to ${mcp_clients}. Run this any time:"
-                step_detail "${DIM}mapbox mcp install --global${RESET}"
-            fi
-            STEP_INDENT='  '
+    # Most machines have none of these, so most never see this question.
+    mcp_clients="$(mcp_clients_present)"
+    if [ -n "$mcp_clients" ]; then
+        do_mcp_setup=no
+        if have_tty; then
+            ask_title "Add the Mapbox MCP servers to ${mcp_clients}?"
+            ask_note "This runs $(ask_cmd 'mapbox mcp install --global'), now or any time later."
+            answer="$(ask "    Add them now? ${DIM}[y/N]${RESET} ")" || answer=''
+            is_yes "$answer" && do_mcp_setup=yes
+            STEP_INDENT='    '
         fi
+        if [ "$do_mcp_setup" = yes ]; then
+            # Each client's own CLI does the registering, and Codex's can
+            # stop to print a sign-in URL, so its output is shown live.
+            if run_live "Adding the Mapbox MCP servers" "${WORK_DIR}/mcp-install.log" "${WORK_DIR}/mcp-install.json" \
+                "${INSTALL_DIR}/mapbox" mcp install --global -o json; then
+                mcp_ok=yes
+            else
+                mcp_ok=no
+            fi
+            mcp_grouped "$(cat "${WORK_DIR}/mcp-install.json" 2>/dev/null)" >"${WORK_DIR}/mcp-rows"
+            # One line per server and outcome, so a server added just now
+            # reads differently from one that was already there.
+            mcp_trouble=no
+            while IFS='|' read -r status what who; do
+                case "$status" in
+                    installed | already_installed) ;;
+                    *) mcp_trouble=yes ;;
+                esac
+                case "$status" in
+                    installed) step_ok "Added ${what} to ${who}" ;;
+                    already_installed) step_skip "${what} was already in ${who}" ;;
+                    installed_login_incomplete) step_warn "Added ${what} to ${who}, but sign-in did not finish" ;;
+                    client_not_found) step_warn "Skipped ${what} for ${who}: CLI not on PATH" ;;
+                    config_unreadable) step_warn "Skipped ${what} for ${who}: config could not be read" ;;
+                    *) step_warn "Could not add ${what} to ${who}" ;;
+                esac
+            done <"${WORK_DIR}/mcp-rows"
+            if [ "$mcp_ok" = no ]; then
+                # A failure no row above accounts for still gets a line of
+                # its own, rather than a list of successes.
+                [ "$mcp_trouble" = yes ] || step_warn "Not every Mapbox MCP server could be added."
+                step_detail "Run 'mapbox mcp install --global' to see why and try again."
+            fi
+        else
+            step_skip "Mapbox MCP servers not added to ${mcp_clients}. Run this any time:"
+            step_detail "${DIM}mapbox mcp install --global${RESET}"
+        fi
+        STEP_INDENT='  '
     fi
 fi
 

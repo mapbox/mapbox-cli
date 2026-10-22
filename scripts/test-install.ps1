@@ -201,7 +201,8 @@ esac
 # (ok | already_installed) and MAPBOX_TEST_UPDATE_MODE (clean | dirty, read
 # only once install reports already_installed) - the same two knobs
 # test-install.sh's agent-channel fixture uses. MAPBOX_TEST_MCP_MODE (none |
-# fresh) drives `mcp`; only its dry run is reachable from here, see below.
+# fresh) drives `mcp`, which no case here reaches: install.ps1 runs it only
+# after a yes at a console.
 function New-AgentFakeBinary([string]$Path, [string]$VersionText) {
     $ErrorActionPreference = 'Continue'
     if ($OnWindows) {
@@ -557,12 +558,36 @@ function New-CaseEnv([string]$Name) {
     Clear-Env 'MAPBOX_TEST_INSTALL_MODE'
     Clear-Env 'MAPBOX_TEST_UPDATE_MODE'
     Clear-Env 'MAPBOX_TEST_MCP_MODE'
+    # install.ps1 looks MCP clients up on PATH, honoring these, and the
+    # developer's own clients would otherwise answer. Set-McpClientsOnPath
+    # points two of them back at something.
+    $noClient = Join-Path $script:CaseDir 'no-such-client'
+    $env:MAPBOX_CLAUDE_CLI = $noClient
+    $env:MAPBOX_CODEX_CLI = $noClient
+    $env:MAPBOX_CODE_CLI = $noClient
+    $env:MAPBOX_CURSOR_CLI = $noClient
     # What install.ps1 reads to decide where it is running. Set explicitly so
     # the same case means the same thing on Windows and on the machine this is
     # written on.
     $env:OS = 'Windows_NT'
     $env:PROCESSOR_ARCHITECTURE = 'AMD64'
     Clear-Env 'PROCESSOR_ARCHITEW6432'
+}
+
+# Makes Claude Code and VS Code findable by install.ps1's lookup, through the
+# override variables src/mcp.rs also reads. Neither is ever run.
+function Set-McpClientsOnPath {
+    foreach ($pair in @(@('MAPBOX_CLAUDE_CLI', 'claude'), @('MAPBOX_CODE_CLI', 'code'))) {
+        if ($OnWindows) {
+            $file = Join-Path $script:CaseDir "$($pair[1]).cmd"
+            Set-Content -LiteralPath $file -Encoding ASCII -Value '@exit /b 0'
+        } else {
+            $file = Join-Path $script:CaseDir $pair[1]
+            Set-Content -LiteralPath $file -Value "#!/bin/sh`nexit 0"
+            & chmod 755 $file
+        }
+        Set-Item -Path "env:$($pair[0])" -Value $file
+    }
 }
 
 # Unset, never `$env:X = ''`. Windows PowerShell deletes a variable assigned
@@ -1071,6 +1096,7 @@ try {
     New-CaseEnv 'mcp-no-console'
     $env:MAPBOX_CLI_BASE_URL = "$($open.BaseUrl)/agent-channel"
     $env:MAPBOX_TEST_MCP_MODE = 'fresh'
+    Set-McpClientsOnPath
     Invoke-Installer
     Expect-Status 0 'exits 0'
     Expect-NoOut 'Add the Mapbox MCP servers' 'does not ask'
@@ -1081,12 +1107,21 @@ try {
     New-CaseEnv 'mcp-opt-out'
     $env:MAPBOX_CLI_BASE_URL = "$($open.BaseUrl)/agent-channel"
     $env:MAPBOX_TEST_MCP_MODE = 'fresh'
+    Set-McpClientsOnPath
     $env:MAPBOX_CLI_NO_AGENT_SETUP = '1'
     Invoke-Installer
     Expect-Status 0 'exits 0'
     # Not just 'MCP': -like ignores case, and this case's own directory,
     # printed in the PATH note above, is named mcp-opt-out.
     Expect-NoOut 'Mapbox MCP servers' 'says nothing about it'
+
+    Start-Case 'MCP, no client CLI on PATH: nothing said'
+    New-CaseEnv 'mcp-no-client'
+    $env:MAPBOX_CLI_BASE_URL = "$($open.BaseUrl)/agent-channel"
+    $env:MAPBOX_TEST_MCP_MODE = 'fresh'
+    Invoke-Installer
+    Expect-Status 0 'exits 0'
+    Expect-NoOut 'Mapbox MCP servers' 'says nothing when there is nothing to add to'
 } finally {
     if ($open) { Stop-ChannelServer $open }
     if ($gated) { Stop-ChannelServer $gated }

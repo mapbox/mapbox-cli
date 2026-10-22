@@ -838,84 +838,95 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
         #
         # A separate question from the skill above: this registers a hosted
         # server in the coding agent's own config, next to servers the user
-        # added, rather than writing a directory this CLI owns. `mapbox mcp
-        # install` never replaces an entry that is already there (src/mcp.rs),
-        # so on a reinstall it is only offered when something is left to
-        # register. Same opt-out and same no-console rule as the skill.
+        # added, rather than writing a directory this CLI owns. Same opt-out
+        # and same no-console rule as the skill.
+        #
+        # Whether to ask is a PATH lookup and nothing more, for the reason
+        # install.sh gives: checking what is already registered runs each
+        # client's own CLI, which took seconds with nothing on screen.
+        # `mapbox mcp install` does that check itself once someone says yes,
+        # so a reinstall asks again and a yes reports what was already there.
         if ($AgentSetupAllowed) {
             $previousErrorAction = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
             try {
-                # Fails with mcp_client_not_found when no supported client is
-                # installed, which is most machines: nothing to offer, so
-                # nothing is said.
-                $mcpCheck = (& $destination mcp install --global --dry-run -o json 2>$null) -join ''
-                if ($LASTEXITCODE -eq 0) {
-                    $clientLabels = @{
-                        'claude-code' = 'Claude Code'; 'codex' = 'Codex'
-                        'vscode' = 'VS Code'; 'cursor' = 'Cursor'
+                $clientLabels = @{
+                    'claude-code' = 'Claude Code'; 'codex' = 'Codex'
+                    'vscode' = 'VS Code'; 'cursor' = 'Cursor'
+                }
+                # One row per client in src/mcp.rs's CLIENTS, honoring the
+                # same override variable it does;
+                # `installers_know_every_mcp_client` there holds this list to
+                # that table. Most machines have none of these.
+                $mcpFound = @()
+                foreach ($client in @(
+                        @{ Id = 'claude-code'; Var = 'MAPBOX_CLAUDE_CLI'; Bin = 'claude' },
+                        @{ Id = 'codex'; Var = 'MAPBOX_CODEX_CLI'; Bin = 'codex' },
+                        @{ Id = 'vscode'; Var = 'MAPBOX_CODE_CLI'; Bin = 'code' },
+                        @{ Id = 'cursor'; Var = 'MAPBOX_CURSOR_CLI'; Bin = 'cursor' })) {
+                    $bin = [Environment]::GetEnvironmentVariable($client.Var)
+                    if (-not $bin) { $bin = $client.Bin }
+                    if (Get-Command $bin -CommandType Application -ErrorAction SilentlyContinue) {
+                        $mcpFound += $clientLabels[$client.Id]
                     }
-                    $mcpClients = @(($mcpCheck | ConvertFrom-Json).results |
-                            Where-Object { $_.status -eq 'would_install' } |
-                            ForEach-Object { $_.client } | Select-Object -Unique |
-                            ForEach-Object { if ($clientLabels.ContainsKey($_)) { $clientLabels[$_] } else { $_ } }) -join ', '
-                    if ($mcpClients) {
-                        $doMcpSetup = $false
-                        if (-not [Console]::IsInputRedirected) {
-                            Write-AskTitle "Add the Mapbox MCP servers to ${mcpClients}?"
-                            Write-AskNote @('This runs ', 'mapbox mcp install --global', ', now or any time later.')
-                            $answer = Read-AskAnswer 'Add them now?'
-                            $Layout.Indent = '    '
-                            if ($answer -match '^(?i:y|yes)$') { $doMcpSetup = $true }
-                        }
-                        if ($doMcpSetup) {
-                            # Each client's own CLI does the registering, and
-                            # Codex's can stop to print a sign-in URL, so
-                            # stderr - where mapbox forwards what they print -
-                            # is left on the console, live. No spinner: a
-                            # second writer to the console is not worth it
-                            # here without a terminal to test it on.
-                            Write-Part $Layout.Indent
-                            Write-Part '...' 'Cyan'
-                            Write-Host ' Adding the Mapbox MCP servers'
-                            $mcpOut = (& $destination mcp install --global -o json) -join ''
-                            $mcpOk = $LASTEXITCODE -eq 0
-                            # One line per server and outcome, clients joined,
-                            # so a server added just now reads differently from
-                            # one that was already there.
-                            $serverLabels = @{ 'mapbox' = 'Mapbox MCP'; 'mapbox-devkit' = 'Mapbox DevKit MCP' }
-                            $rows = @()
-                            try { $rows = @(($mcpOut | ConvertFrom-Json).results) } catch { $rows = @() }
-                            $groups = [ordered]@{}
-                            foreach ($row in $rows) {
-                                $what = if ($serverLabels.ContainsKey($row.server)) { $serverLabels[$row.server] } else { $row.server }
-                                $who = if ($clientLabels.ContainsKey($row.client)) { $clientLabels[$row.client] } else { $row.client }
-                                $key = "$($row.status)|$what"
-                                if (-not $groups.Contains($key)) { $groups[$key] = @() }
-                                $groups[$key] += $who
-                            }
-                            foreach ($key in $groups.Keys) {
-                                $status, $what = $key -split '\|', 2
-                                $who = $groups[$key] -join ', '
-                                switch ($status) {
-                                    'installed' { Write-Ok "Added $what to $who" }
-                                    'already_installed' { Write-Skip "$what was already in $who" }
-                                    'installed_login_incomplete' { Write-Warn "Added $what to $who, but sign-in did not finish" }
-                                    'client_not_found' { Write-Warn "Skipped $what for ${who}: CLI not on PATH" }
-                                    'config_unreadable' { Write-Warn "Skipped $what for ${who}: config could not be read" }
-                                    default { Write-Warn "Could not add $what to $who" }
-                                }
-                            }
-                            if (-not $mcpOk) {
-                                if ($rows.Count -eq 0) { Write-Warn 'Could not add the Mapbox MCP servers.' }
-                                Write-Detail "Run 'mapbox mcp install --global' to see why and try again."
-                            }
-                        } else {
-                            Write-Skip "Mapbox MCP servers not added to $mcpClients. Run this any time:"
-                            Write-Detail 'mapbox mcp install --global'
-                        }
-                        $Layout.Indent = '  '
+                }
+                $mcpClients = $mcpFound -join ', '
+                if ($mcpClients) {
+                    $doMcpSetup = $false
+                    if (-not [Console]::IsInputRedirected) {
+                        Write-AskTitle "Add the Mapbox MCP servers to ${mcpClients}?"
+                        Write-AskNote @('This runs ', 'mapbox mcp install --global', ', now or any time later.')
+                        $answer = Read-AskAnswer 'Add them now?'
+                        $Layout.Indent = '    '
+                        if ($answer -match '^(?i:y|yes)$') { $doMcpSetup = $true }
                     }
+                    if ($doMcpSetup) {
+                        # Each client's own CLI does the registering, and
+                        # Codex's can stop to print a sign-in URL, so
+                        # stderr - where mapbox forwards what they print -
+                        # is left on the console, live. No spinner: a
+                        # second writer to the console is not worth it
+                        # here without a terminal to test it on.
+                        Write-Part $Layout.Indent
+                        Write-Part '...' 'Cyan'
+                        Write-Host ' Adding the Mapbox MCP servers'
+                        $mcpOut = (& $destination mcp install --global -o json) -join ''
+                        $mcpOk = $LASTEXITCODE -eq 0
+                        # One line per server and outcome, clients joined,
+                        # so a server added just now reads differently from
+                        # one that was already there.
+                        $serverLabels = @{ 'mapbox' = 'Mapbox MCP'; 'mapbox-devkit' = 'Mapbox DevKit MCP' }
+                        $rows = @()
+                        try { $rows = @(($mcpOut | ConvertFrom-Json).results) } catch { $rows = @() }
+                        $groups = [ordered]@{}
+                        foreach ($row in $rows) {
+                            $what = if ($serverLabels.ContainsKey($row.server)) { $serverLabels[$row.server] } else { $row.server }
+                            $who = if ($clientLabels.ContainsKey($row.client)) { $clientLabels[$row.client] } else { $row.client }
+                            $key = "$($row.status)|$what"
+                            if (-not $groups.Contains($key)) { $groups[$key] = @() }
+                            $groups[$key] += $who
+                        }
+                        foreach ($key in $groups.Keys) {
+                            $status, $what = $key -split '\|', 2
+                            $who = $groups[$key] -join ', '
+                            switch ($status) {
+                                'installed' { Write-Ok "Added $what to $who" }
+                                'already_installed' { Write-Skip "$what was already in $who" }
+                                'installed_login_incomplete' { Write-Warn "Added $what to $who, but sign-in did not finish" }
+                                'client_not_found' { Write-Warn "Skipped $what for ${who}: CLI not on PATH" }
+                                'config_unreadable' { Write-Warn "Skipped $what for ${who}: config could not be read" }
+                                default { Write-Warn "Could not add $what to $who" }
+                            }
+                        }
+                        if (-not $mcpOk) {
+                            if ($rows.Count -eq 0) { Write-Warn 'Could not add the Mapbox MCP servers.' }
+                            Write-Detail "Run 'mapbox mcp install --global' to see why and try again."
+                        }
+                    } else {
+                        Write-Skip "Mapbox MCP servers not added to $mcpClients. Run this any time:"
+                        Write-Detail 'mapbox mcp install --global'
+                    }
+                    $Layout.Indent = '  '
                 }
             } finally {
                 $ErrorActionPreference = $previousErrorAction

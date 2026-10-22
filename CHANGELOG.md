@@ -24,6 +24,12 @@ that may never merge. They are not releases and are not listed here.
 
 ## 1.1.1 - 2026-10-22
 
+- The update check now runs in published builds. 0.3.0 through 1.1.0 were
+  built with it off, so they never said a newer version existed. At a
+  terminal, at most once a day, `mapbox` now prints a notice on stderr when
+  one does; `MAPBOX_NO_UPDATE_CHECK=1` or
+  `mapbox config set update-check off` turns it off. Nothing reaches stdout,
+  and piped or CI runs never check.
 - `install.sh`/`install.ps1`: the MCP question no longer waits several
   seconds before it appears. The installer asks whenever it found a coding
   agent or VS Code, and only after a yes does it look for Claude Code, Codex, VS Code

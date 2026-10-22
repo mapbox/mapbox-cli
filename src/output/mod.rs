@@ -26,7 +26,7 @@ mod render;
 pub mod style;
 pub mod theme;
 
-pub use error::{emit_error, CliError};
+pub use error::{emit_error, CliError, STEP_ERROR_ENV};
 pub use render::field_lines;
 pub(crate) use render::LINE;
 
@@ -253,6 +253,38 @@ pub fn emit_value(
     service: Option<&str>,
     page: Option<&str>,
 ) -> Result<()> {
+    emit_rendered(
+        mode,
+        value,
+        footer,
+        service,
+        page,
+        "`-o json` for the response as the API sent it.",
+    )
+}
+
+/// [`emit_value`] for a result this CLI put together rather than an API
+/// response, such as a workflow's outputs, so the tip does not claim the
+/// JSON is what an API sent.
+pub fn emit_result(mode: Mode, value: &Value) -> Result<()> {
+    emit_rendered(
+        mode,
+        value,
+        None,
+        None,
+        None,
+        "`-o json` prints it as JSON.",
+    )
+}
+
+fn emit_rendered(
+    mode: Mode,
+    value: &Value,
+    footer: Option<&str>,
+    service: Option<&str>,
+    page: Option<&str>,
+    json_tip: &str,
+) -> Result<()> {
     if let Mode::Json { pretty } = mode {
         write_stdout(&encode(value, pretty)?)?;
         // The only thing `json` prints to stderr on a success. A consumer
@@ -287,7 +319,7 @@ pub fn emit_value(
             let mut tips = vec![if rendered.shortened {
                 "Values are shortened to fit; `-o json` prints each row whole.".to_string()
             } else {
-                "`-o json` for the response as the API sent it.".to_string()
+                json_tip.to_string()
             }];
             tips.extend(next);
             // Last, because it is about the response as a whole rather than

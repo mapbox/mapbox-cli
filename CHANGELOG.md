@@ -22,6 +22,49 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+## 1.1.0 - 2026-10-22
+
+- `mapbox workflow` (beta): install and run workflows, which are named,
+  multi-step recipes of
+  `mapbox` commands and scripts defined in a `workflow.yaml`. `install` copies one from a local directory or from a
+  GitHub repository's `workflow/<name>/` (by default `mapbox/mapbox-cli`;
+  `GH_TOKEN`/`GITHUB_TOKEN` for a private one) into `~/.mapbox/workflows/`,
+  recording the commit a GitHub ref resolved to,
+  and `list`, `show`, `run` and `uninstall` work on what is installed.
+  `run` takes each of the workflow's inputs as a flag, as in
+  `mapbox workflow run copy-style --style-id <id> --from-profile source
+  --to-profile target`. `run --dry-run` runs only the steps a workflow
+  marks `dry_run`, which write nothing, so the plan can show real data. At a
+  terminal each step shows a spinner, the details its script reports on
+  stderr (a `::progress ` line updates the spinner's text, a `::warn ` line
+  is a warning, listed again at the end), and `✓` or `✗` with the time it
+  took; off a terminal, each step is a plain `[n/total]` line followed by
+  its details. `--quiet` drops the details but keeps warnings. A workflow's
+  optional `result` template is what text mode prints; `-o json` prints its
+  outputs. A command step's `save: <file>` keeps its stdout, such as a
+  style's ZIP, as a file for later steps, in an owner-only working directory
+  removed when the run ends, Ctrl-C included (the run then fails with
+  `cancelled`); a command step may be marked `dry_run` only when its command
+  is known to change nothing: an API `GET`, or a local read such as
+  `config list`. The
+  generated agent skill leaves `workflow` out. A script step needs its interpreter on `PATH`: on Windows,
+  `.py` needs a `python3`, which the python.org installer does not add.
+  A workflow may name its own `version`, independent of the CLI's, and the
+  oldest CLI it `requires`; `install` refuses one that needs a newer CLI.
+  `install` lists the scripts a workflow runs, and from a repository other
+  than `mapbox/mapbox-cli`, or a `--ref` not on its `main`, asks first,
+  refusing with `confirmation_required` where there is no terminal and no
+  typed `--yes` (`MAPBOX_YES` does not answer it). A failed command step's
+  own error is under `cause` in the run's `workflow_failed`, and on Unix a
+  SIGTERM to the run is passed on to the running step.
+  The first one published is
+  `copy-style`, which copies a style between accounts with its custom fonts
+  and icons, and on a partial failure lists what it created and the
+  commands that remove it. The command, the `schema: 1` format and the published
+  workflows may change or be removed in any release, and every `workflow`
+  subcommand says so on stderr. Nothing changes for a script that does not
+  use them.
+
 ## 1.0.0 - 2026-10-22
 
 - New `mapbox report "<message>"` sends feedback about the CLI itself to

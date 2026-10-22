@@ -55,6 +55,7 @@ mod telemetry_sink;
 mod tilesets_cli;
 mod uninstall;
 mod update_check;
+mod workflow;
 
 use output::{CliError, Mode};
 use remedy::Remedy;
@@ -598,7 +599,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .value_parser(FalseyValueParser::new())
                 .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help("Hide the version banner and download notes"),
+                .help("Hide the version banner, download notes and workflow step details"),
         )
         .arg(
             Arg::new(http::TIMEOUT_ARG)
@@ -799,6 +800,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
 
     app = app.subcommand(account_usage::command());
 
+    app = app.subcommand(workflow::command());
     app.subcommand(tilesets_cli::command())
 }
 
@@ -920,7 +922,9 @@ fn cli() -> u8 {
         output::banner::show_before_help(&raw_argv);
     }
 
-    let mut app = build_app(&specs);
+    // Before the parse, since a workflow's inputs are flags only once its
+    // definition has been read. Everything else sees the tree unchanged.
+    let mut app = workflow::with_run_target(build_app(&specs), &raw_argv);
     // Here rather than in `build_app`, which tests call directly and which
     // should not depend on who happens to be running them.
     if agent_detect::detect_agent().is_some() {
@@ -967,7 +971,17 @@ fn cli() -> u8 {
         Ok(()) => 0,
         Err(e) => {
             output::emit_error(mode, &e);
-            1
+            // A command line only the command itself can judge, such as two
+            // flags that conflict for one kind of value, is a usage error
+            // like any clap rejects.
+            let usage = e
+                .downcast_ref::<output::CliError>()
+                .is_some_and(|e| e.code == "usage");
+            if usage {
+                2
+            } else {
+                1
+            }
         }
     }
 }
@@ -1428,6 +1442,19 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             Some(("show", show_matches)) => history::show(show_matches, mode)?,
             _ => unreachable!("`history` sets subcommand_required(true)"),
         },
+        // Ahead of the generic service arm too. Its own requests go to
+        // GitHub, and each command step is a child `mapbox` that resolves
+        // its credentials itself — so nothing is loaded here.
+        Some((workflow::COMMAND, workflow_matches)) => workflow::run(
+            app,
+            workflow_matches,
+            workflow::RunFlags {
+                globals: matches,
+                debug,
+                assume_yes,
+            },
+            mode,
+        )?,
         // Also ahead of the generic service arm: read-only except for the
         // opt-in `--verify` request, and needs no credential load of its own
         // — it reports what one would resolve to, not what a fresh one
@@ -2338,6 +2365,13 @@ mod tests {
         for yes in ["1", "true", "yes", "on"] {
             assert!(assume_yes_with(yes), "MAPBOX_YES={yes:?} was read as a no");
         }
+
+        // A yes to deletes, but not to trusting a workflow's source.
+        let matches = build_app(&[])
+            .try_get_matches_from(["mapbox", "workflow", "install", "x"])
+            .expect("a hand-written command parses without the specs");
+        assert!(matches.get_flag(confirm::ARG));
+        assert!(!confirm::typed_yes(&matches));
 
         std::env::remove_var(confirm::ENV);
         let matches = build_app(&[])

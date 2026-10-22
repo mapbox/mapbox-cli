@@ -25,6 +25,7 @@ mapbox styles list
   - [Diagnostics and settings](#diagnostics-and-settings)
   - [Shell completion](#shell-completion)
   - [Tileset CLI](#tileset-cli)
+  - [Workflows (beta)](#workflows-beta)
 - [For AI agents](#for-ai-agents)
   - [Quick start: Mapbox agent setup](#quick-start-mapbox-agent-setup)
   - [Agent skills](#agent-skills)
@@ -81,11 +82,11 @@ taking the newest, with or without the leading `v`, so the version
 `mapbox --version` prints can be pasted straight in:
 
 ```sh
-curl -fsSL https://cli.mapbox.com/install.sh | MAPBOX_CLI_VERSION=1.0.0 sh
+curl -fsSL https://cli.mapbox.com/install.sh | MAPBOX_CLI_VERSION=1.1.0 sh
 ```
 
 ```powershell
-$env:MAPBOX_CLI_VERSION = '1.0.0'; irm https://cli.mapbox.com/install.ps1 | iex
+$env:MAPBOX_CLI_VERSION = '1.1.0'; irm https://cli.mapbox.com/install.ps1 | iex
 ```
 
 Both scripts put the install directory on your `PATH`: `install.sh` adds a
@@ -140,7 +141,7 @@ Six targets are published: `aarch64-apple-darwin`, `x86_64-apple-darwin`,
 then extract:
 
 ```sh
-version=v1.0.0
+version=v1.1.0
 file=mapbox-${version}-aarch64-apple-darwin.tar.gz
 
 curl -fsSLO "https://cli.mapbox.com/${version}/${file}"
@@ -155,7 +156,7 @@ On Windows the archive is a `.zip`, and PowerShell can read the manifest
 directly:
 
 ```powershell
-$version = 'v1.0.0'
+$version = 'v1.1.0'
 $target  = 'x86_64-pc-windows-msvc'
 
 $manifest = Invoke-RestMethod "https://cli.mapbox.com/$version/manifest.json"
@@ -387,6 +388,17 @@ It uses the same token as every other command. `--output` and `--yes` don't
 apply here; `tilesets` has its own flags, so use `--force`/`-f` for its
 prompts. If a tileset command answers for the wrong account,
 `mapbox auth whoami` shows which token is in play.
+
+### Workflows (beta)
+
+```sh
+mapbox workflow install copy-style
+mapbox workflow run copy-style --style-id <STYLE_ID> --from-profile source --to-profile target
+```
+
+A workflow is a named, multi-step recipe of `mapbox` commands and scripts.
+`mapbox workflow` is beta and may change or be removed in any release. See
+[Workflows](./docs/commands.md#workflows).
 
 ## For AI agents
 

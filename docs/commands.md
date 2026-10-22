@@ -141,6 +141,12 @@ nests, and is typed `mapbox styles draft get`.
 
 **[Usage](#usage)** — [usage](#mapbox-usage)
 
+**[Workflows](#workflows)** — [workflow.list](#mapbox-workflow-list) ·
+[workflow.show](#mapbox-workflow-show) ·
+[workflow.install](#mapbox-workflow-install) ·
+[workflow.uninstall](#mapbox-workflow-uninstall) ·
+[workflow.run](#mapbox-workflow-run)
+
 **[Tilesets CLI](#tilesets-cli)** — [tilesets-cli](#mapbox-tilesets-cli-args)
 
 Then [Errors](#errors) — the shape a failure takes in each mode.
@@ -561,7 +567,7 @@ either.
 | `--profile <name>` | Which stored credentials to use. |
 | `--output`, `-o` | `auto` \| `text` \| `json`. |
 | `--id <value>` | On a command that returns a list, print just the row with that `id` or `name`. |
-| `--quiet`, `-q` | Don't print the `mapbox · v<version>` banner, which goes to stderr and only when stderr is a terminal. Also `MAPBOX_QUIET`. |
+| `--quiet`, `-q` | Don't print the `mapbox · v<version>` banner, which goes to stderr and only when stderr is a terminal, the note after a download, or a workflow step's details. Also `MAPBOX_QUIET`. |
 | `--no-color` | Turn off color in help, errors and text output. Same as `NO_COLOR`; wins over `FORCE_COLOR`. |
 | `--timeout <seconds>` | How long one request may take, connection included. Defaults to 60 seconds, or 900 for a body read from `--file` or from a `--data @<path>`/`@-`. Also `MAPBOX_TIMEOUT`. |
 
@@ -5101,6 +5107,336 @@ list drops the `--daily` suggestion once it's already in effect.
 
 ---
 
+## Workflows
+
+A workflow is a named, multi-step recipe of `mapbox` commands and scripts,
+defined in a `workflow.yaml`. The format and the rules a workflow directory
+follows are in [workflow/README.md](../workflow/README.md).
+
+**Beta.** The commands, the `schema: 1` format and the published workflows
+may change or be removed in any release. Every `mapbox workflow` subcommand opens with this line on
+stderr:
+
+```
+Beta: `mapbox workflow` may change or be removed in any release.
+```
+
+In text mode, `list`, `show` and `install` end with tips on stderr, naming
+the command to run next. `mapbox generate-skills` leaves the `workflow`
+commands out of the skill it writes, so that an agent is not taught a command
+nobody should rely on yet.
+
+None ships inside the binary. `install` copies one into
+`~/.mapbox/workflows/<name>/`, and every other subcommand works on what is
+installed there.
+
+**On Windows**, CI runs workflows with command steps and `sh` script steps,
+but no published workflow has been run there. A script step runs the
+interpreter its extension names, and Windows ships none of them: `.sh` needs
+an `sh` on `PATH`, such as Git Bash's, and `.py` needs `python3`, which the
+python.org installer does not add (it adds `python` and `py`). So
+`copy-style` runs on Windows only where `python3` is on `PATH`. A missing
+interpreter fails the step with `` `python3` is not installed or not on
+PATH ``.
+
+---
+
+### `mapbox workflow list`
+
+Lists the installed workflows. One that no longer loads, because a file was
+edited by hand or this CLI no longer reads its format, is listed with its
+error instead of a summary.
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+NAME        VERSION  SUMMARY
+copy-style  0.1.0    Copy a style, with its fonts and icons, from one account to another
+```
+
+</td><td>
+
+```json
+[
+  {
+    "commit": "4c8dd090573afc073465ab66f105088156cf92cb",
+    "name": "copy-style",
+    "path": "/Users/me/.mapbox/workflows/copy-style",
+    "source": "github:mapbox/mapbox-cli@main",
+    "summary": "Copy a style, with its fonts and icons, from one account to another",
+    "version": "0.1.0"
+  }
+]
+```
+
+</td></tr>
+</table>
+
+---
+
+### `mapbox workflow show`
+
+Describes an installed workflow, in the same layout for every one: its name
+and summary, its description, its inputs with their types and defaults, its
+steps, and the installed copy's version, the CLI it requires, and where it
+came from. When a step names a command or
+an argument this build no longer has, the problems are listed after the steps
+and under `problems`. Script steps are marked as running as you, and each
+step's `kind` is `command` or `script`. How a description is written is in
+[workflow/README.md](../workflow/README.md#description).
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `NAME` | Name of an installed workflow. |
+
+---
+
+### `mapbox workflow install`
+
+Installs a workflow from GitHub or from a local directory. Everything is read
+and checked before anything is written: the layout, the `workflow.yaml`, and
+every command step against this build's commands. A workflow that fails any
+of these is `invalid_workflow`, with every problem listed at once. So is one
+whose `requires` names a newer CLI than this one, with that as the only
+problem.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `SOURCE` | A workflow name, looked up in the repository's `workflow/<name>/`, or a path to a local workflow directory: anything with a `/` or starting with `.`. |
+| `--repo` | GitHub repository to install from, as `OWNER/REPO`. Defaults to `mapbox/mapbox-cli`. |
+| `--ref` | Branch, tag or commit to install from. Defaults to `main`. |
+| `--force` | Replace a workflow that is already installed. |
+| `--dry-run` | Check the workflow and list the files it would write, then exit. |
+
+The ref is resolved to a commit first, and that commit is read as one tarball
+through the GitHub API, so a branch that moves in between cannot mix the two.
+The commit is recorded beside the workflow in `.install.json` and reported as
+`commit` by `install`, `list` and `show` (`null` for a local install).
+`mapbox/mapbox-cli` is public and needs no token. For a private repository
+named with `--repo`, set `GH_TOKEN` or `GITHUB_TOKEN`. It is sent only to
+`api.github.com`. Without one, a private repository answers 404,
+exactly as a ref that does not exist does, and the error says both.
+
+**An installed workflow stops the install** unless `--force` is given. The new
+copy is staged and renamed into place, and the old one is moved aside until
+then and moved back if that fails, so a failed install leaves the old copy.
+One interrupted between the two moves leaves the old copy aside, and the next
+`mapbox workflow` command puts it back. Only regular files are taken. A symlink in a local
+directory is refused, and an archive entry whose path would leave the
+workflow's directory stops the read.
+
+**Only install a workflow you trust.** Its steps run as you, with your
+credentials and every stored profile, and a script step runs whatever its
+interpreter does. `install` lists the scripts a workflow runs. From
+`mapbox/mapbox-cli` or a local directory it installs without asking, and so
+does a `--ref` whose commit is on `mapbox/mapbox-cli`'s `main`. Anything else,
+including another `--repo`, a pull request's `pull/N/head` or a commit off
+`main`, asks first at a terminal; without one it refuses with
+`confirmation_required` unless `--yes` is given. `MAPBOX_YES` does not answer
+this question; only the typed flag does.
+
+#### Examples
+
+```sh
+mapbox workflow install copy-style
+
+mapbox workflow install copy-style --ref workflow-copy-style-0.1.0
+
+export GITHUB_TOKEN="$(gh auth token)"
+mapbox workflow install sync-tilesets --repo my-org/private-workflows
+
+mapbox workflow install ./workflow/copy-style --force
+```
+
+#### Outputs
+
+<table>
+<tr><th width="50%"><code>text</code></th><th width="50%"><code>json</code></th></tr>
+<tr><td>
+
+```
+Installed copy-style
+
+Version  0.1.0
+Source   ~/dev/cli/workflow/copy-style
+Path     ~/.mapbox/workflows/copy-style
+Files    README.md, scripts/copy_style.py, workflow.yaml
+Scripts  python3 scripts/copy_style.py
+```
+
+</td><td>
+
+```json
+{
+  "commit": null,
+  "dry_run": false,
+  "files": [
+    "README.md",
+    "scripts/copy_style.py",
+    "workflow.yaml"
+  ],
+  "name": "copy-style",
+  "path": "/Users/me/.mapbox/workflows/copy-style",
+  "scripts": [
+    "python3 scripts/copy_style.py"
+  ],
+  "source": "/Users/me/dev/cli/workflow/copy-style",
+  "version": "0.1.0"
+}
+```
+
+</td></tr>
+</table>
+
+---
+
+### `mapbox workflow uninstall`
+
+Removes an installed workflow's directory. At a terminal it asks first, and
+`--yes` skips the question. Only a directory `install` wrote under
+`~/.mapbox/workflows/` is removed.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `NAME` | Name of an installed workflow, or the directory it was installed from, which names it by its directory name. The directory itself is not touched. |
+| `--dry-run` | Say what it would remove, then exit without removing it. |
+
+---
+
+### `mapbox workflow run`
+
+Runs an installed workflow's steps in order. The first step that fails stops
+the run with `workflow_failed`, naming the step, and exit code 1. A failed
+command step's own error is under `cause`, and its message, status and advice
+are the run's. On Unix, a SIGTERM to the run is passed on to the running step
+as an interrupt after two seconds, so a hung step does not outlive a CI
+timeout. It reaches the step's own process only, so a shell step waiting on a
+long command of its own runs until that command ends. A run that is the
+terminal's foreground passes nothing on, since a Ctrl-C there reached the
+step already.
+
+#### Parameters
+
+| Parameter | Effect |
+| --- | --- |
+| `NAME` | Name of an installed workflow. |
+| `--<input>` | One flag per input the workflow declares, spelled with dashes (`style_id` is `--style-id`). Required, typed and defaulted as its `workflow.yaml` says. `mapbox workflow run <name> --help` lists them. |
+| `--dry-run` | Check the workflow and its inputs and print the plan. Runs only the steps marked `dry_run`, and skips the rest. A marked script step really runs, as you and with your credentials. |
+
+The flags come from the installed workflow's definition, read before the
+command line is parsed, so a missing input, a misspelled flag or a value of the
+wrong type is a usage error (exit 2), as on any other command. They are not in
+`--schema` or in the shell completion, which describe the command tree without
+reading `~/.mapbox/workflows/`. `workflow show` lists them for any installed
+workflow.
+
+**stdout holds only the result**: the workflow's `outputs`, or the last
+step's output if it declares none, rendered like any other result. Each
+step's progress and anything a step writes to stderr go to stderr. At a
+terminal, each step shows its title, the details its script reports, and a
+spinner that becomes `✓` or `✗` with the time it took; anywhere else, each
+step is one `[n/total]` line followed by its details, with no escape codes.
+`--quiet` keeps each step's title, how it ended and its warnings, and drops
+its details. `workflow/README.md` describes how a script reports progress,
+details and warnings.
+
+A workflow that declares `result` prints it in text mode instead of the
+outputs as fields; `-o json` always prints the outputs.
+
+Each command step is this binary run again with `--output json`, so it
+resolves its token and applies its timeouts as the same command typed by
+hand would, and appears in `mapbox history` as its own run. The globals given
+to `workflow run` (`--profile`, `--username`, `--use-login`, `--timeout`,
+`--yes`, `--debug`, `--token`) reach every command step that does not set its
+own. A token typed as `--token` goes to the step's environment, not its
+command line.
+
+#### Examples
+
+```sh
+mapbox workflow run copy-style \
+  --style-id cmm28c5rm00bj01qz9hwp69qc \
+  --from-profile source \
+  --to-profile target
+
+mapbox workflow run copy-style --style-id cmm28c5rm00bj01qz9hwp69qc \
+  --from-profile source --to-profile target --dry-run
+```
+
+`--dry-run` prints the plan: the inputs as they were read, and each step with
+its arguments as written. A step marked `dry_run` in its `workflow.yaml` runs
+for real, so the plan can show what the rest would do with real data: a
+command step only if its command is known to change nothing (an API command
+that sends a `GET`, or a local read such as `config list`; never
+`tilesets-cli`), and a script step with
+`MAPBOX_WORKFLOW_DRY_RUN=1` in its environment and the promise to write
+nothing. The CLI cannot check that promise: a script step runs as you, with
+your credentials, in a dry run as in a real one. Their outputs are under `results` in `-o json`. Every other step is
+skipped. `copy-style` marks all of its steps, so its dry run downloads the
+style and lists what it would upload:
+
+```
+$ mapbox workflow run copy-style --style-id cmums8rlh000301s96498hnju \
+    --from-profile default --to-profile default --dry-run
+🗺️  mapbox · v0.3.0
+────────────────────────────────────────
+Beta: `mapbox workflow` may change or be removed in any release.
+
+▸ Check the source login  mapbox auth status
+  ✓ 0.0s
+
+▸ Check the target login  mapbox auth status
+  ✓ 0.0s
+
+▸ Download the style  mapbox styles download
+    Saved style.zip (965 KB)
+  ✓ 0.3s
+
+▸ List the target account's fonts  mapbox fonts list
+  ✓ 0.1s
+
+▸ Plan the copy
+    Found 561 icons and 1 custom font
+    Font Yellow Banana Regular is already in zhuwenlong; it will be skipped
+  ✓ 0.2s
+
+▸ Copy the fonts, the style and its icons
+    Would copy the style into zhuwenlong as "CLI copy test: Helsinki Evening · CLI Blog Demo":
+      skip font Yellow Banana Regular (already in zhuwenlong)
+      create the style
+      upload 561 icons in 23 batches
+      point its sprite and glyphs at zhuwenlong
+  ✓ 0.1s
+
+Dry run — only the steps marked dry_run ran. Would run copy-style:
+
+Inputs
+  from_profile  default
+  name          (none)
+  style_id      cmums8rlh000301s96498hnju
+  to_profile    default
+
+Steps
+  1. Check the source login                   mapbox auth status (ran in this dry run)
+  2. Check the target login                   mapbox auth status (ran in this dry run)
+  3. Download the style                       mapbox styles download (ran in this dry run)
+  4. List the target account's fonts          mapbox fonts list (ran in this dry run)
+  5. Plan the copy                            python3 scripts/copy_style.py (ran its script in this dry run)
+  6. Copy the fonts, the style and its icons  python3 scripts/copy_style.py (ran its script in this dry run)
+```
+
+---
+
 ## Tilesets CLI
 
 ### `mapbox tilesets-cli <args…>`
@@ -5303,10 +5639,21 @@ faults and are not:
 | `invalid_file` | A file could not be read: one named by `--file`, or one named by `--data @<path>`. Also a `@<path>` that is not valid UTF-8, which a JSON body has to be. |
 | `binary_response` | The response was bytes and stdout is a terminal. Redirect it to a file. |
 | `missing_subcommand` | A command group was named with no operation. |
-| `cancelled` | A delete was declined at the confirmation prompt. Nothing was sent. |
+| `cancelled` | A delete was declined at the confirmation prompt, and nothing was sent; or `workflow run` was interrupted (Ctrl-C, or on Unix SIGTERM or SIGHUP), and the steps after the current one did not run. |
 | `cli_token_unavailable` | A command that prefers the CLI's own token (`report`) could not use it — it could not be fetched, or it is revoked and no new one is published yet — and you have no token of your own to fall back to. |
 | `cli_token_forbidden` | This API refused the CLI's own token, even after fetching it afresh, and you have no token of your own to fall back to. |
-| `usage` | Anything else clap rejected. Exit code 2, not 1. |
+| `usage` | Anything else clap rejected, or flags a command refuses together, such as `workflow install --ref` with a local directory. Exit code 2, not 1. |
+| `confirmation_required` | `workflow install` from a source the CLI does not vouch for (another repository, or a `--ref` not on `mapbox/mapbox-cli`'s `main`), with no terminal to ask on and no typed `--yes`. Nothing was installed. |
+| `invalid_workflow` | A workflow failed `install`'s checks, or no longer passes them at `show` or `run`: its layout, its `workflow.yaml`, a command step against this build's commands, or a `requires` naming a newer CLI. Every problem is listed. |
+| `workflow_failed` | A step of `workflow run` failed, and the steps after it did not run. When a command step failed, `cause` holds that command's own error document, so its `code` (an `http_<status>`, say) can still be branched on. |
+| `workflow_not_found` | The repository has no `workflow/<name>/`. The message lists the workflows it does have. |
+| `already_installed` | `workflow install` or `agent-skills install` would replace what is already there. `--force` replaces a workflow. |
+| `workflow_not_installed` | `show`, `run` or `uninstall` named a workflow that is not installed. |
+| `invalid_name` | A workflow name that is not lower-case letters, digits and dashes. |
+| `invalid_repo` | `--repo` is not `OWNER/REPO`. |
+| `invalid_ref` | `--ref` holds characters a branch, tag or commit cannot. |
+| `invalid_input` | A workflow input's value does not fit its type. |
+| `unsafe_archive` | A path in the downloaded archive would leave the workflow's directory. Nothing was installed. |
 | `error` | Unclassified. |
 
 Exit codes: `0` success, `1` runtime failure, `2` usage error.

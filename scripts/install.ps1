@@ -845,7 +845,8 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
         # install.sh gives: checking what is already registered runs each
         # client's own CLI, which took seconds with nothing on screen.
         # `mapbox mcp install` does that check itself once someone says yes,
-        # so a reinstall asks again and a yes reports what was already there.
+        # so a reinstall asks again and a yes reports what was already there,
+        # and a no is reported as skipped rather than "not added".
         if ($AgentSetupAllowed) {
             $previousErrorAction = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
@@ -866,9 +867,16 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
                         @{ Id = 'cursor'; Var = 'MAPBOX_CURSOR_CLI'; Bin = 'cursor' })) {
                     $bin = [Environment]::GetEnvironmentVariable($client.Var)
                     if (-not $bin) { $bin = $client.Bin }
-                    if (Get-Command $bin -CommandType Application -ErrorAction SilentlyContinue) {
-                        $mcpFound += $clientLabels[$client.Id]
+                    if ($bin.Contains('\') -or $bin.Contains('/')) {
+                        # A path is taken literally, with the extensions
+                        # src/mcp.rs also tries on a name that has none.
+                        $hit = @('', '.cmd', '.bat', '.exe') |
+                            Where-Object { Test-Path -LiteralPath "$bin$_" -PathType Leaf } |
+                            Select-Object -First 1
+                    } else {
+                        $hit = Get-Command ([WildcardPattern]::Escape($bin)) -CommandType Application -ErrorAction SilentlyContinue
                     }
+                    if ($hit) { $mcpFound += $clientLabels[$client.Id] }
                 }
                 $mcpClients = $mcpFound -join ', '
                 if ($mcpClients) {
@@ -923,7 +931,7 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
                             Write-Detail "Run 'mapbox mcp install --global' to see why and try again."
                         }
                     } else {
-                        Write-Skip "Mapbox MCP servers not added to $mcpClients. Run this any time:"
+                        Write-Skip "Skipped the Mapbox MCP servers for $mcpClients. Run this any time:"
                         Write-Detail 'mapbox mcp install --global'
                     }
                     $Layout.Indent = '  '

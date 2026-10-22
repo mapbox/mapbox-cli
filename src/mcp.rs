@@ -908,8 +908,29 @@ mod tests {
             std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
                 .unwrap_or_else(|e| panic!("{path}: {e}"))
         };
-        let sh = read("scripts/install.sh");
-        let ps1 = read("scripts/install.ps1");
+        // Only the lookup itself, so a row left in a comment or a matching
+        // string elsewhere in the script can't stand in for it.
+        let between = |text: &str, path: &str, start: &str, end: &str| -> String {
+            let from = text
+                .find(start)
+                .unwrap_or_else(|| panic!("{path} has no {start}"));
+            let len = text[from..]
+                .find(end)
+                .unwrap_or_else(|| panic!("{path} has no {end}"));
+            text[from..from + len].to_string()
+        };
+        let sh = between(
+            &read("scripts/install.sh"),
+            "install.sh",
+            "mcp_clients_present() {",
+            "\n}\n",
+        );
+        let ps1 = between(
+            &read("scripts/install.ps1"),
+            "install.ps1",
+            "$clientLabels = @{",
+            "$mcpClients = $mcpFound -join",
+        );
         for c in CLIENTS {
             let row = format!("'{}|{}|{}'", c.binary_env, c.default_binary, c.label);
             assert!(sh.contains(&row), "install.sh has no {row}");

@@ -1426,8 +1426,8 @@ run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0 rather than blocking (124 would be a hang)'
 expect_no_out 'Add the Mapbox MCP servers' 'does not ask'
 expect_says "$(mcp_ran)" no 'and never runs mapbox mcp, which is the slow part'
-expect_out 'Mapbox MCP servers not added to Claude Code, VS Code.' 'names each client once'
-expect_says "$(grep -c '^  - Mapbox MCP servers not added' "$OUT")" 1 'top level when no question was asked'
+expect_out 'Skipped the Mapbox MCP servers for Claude Code, VS Code.' 'names each client once'
+expect_says "$(grep -c '^  - Skipped the Mapbox MCP servers' "$OUT")" 1 'top level when no question was asked'
 expect_out 'mapbox mcp install --global' 'gives the manual command'
 
 start 'MCP, a terminal, answered yes'
@@ -1482,7 +1482,7 @@ export MAPBOX_TEST_MCP_MODE=fresh
 mcp_clients_on_path
 run_interactive "$(printf 'n\nn')" && status=0 || status=$?
 expect_status 0 "$status" 'a declined setup is not an install failure'
-expect_out 'Mapbox MCP servers not added to Claude Code, VS Code.' 'says so'
+expect_out 'Skipped the Mapbox MCP servers for Claude Code, VS Code.' 'says so'
 expect_no_out 'Added the Mapbox MCP servers' 'adds nothing'
 expect_says "$(mcp_ran)" no 'and never runs mapbox mcp'
 
@@ -1506,7 +1506,7 @@ chmod 755 "${CASE_DIR}/my-cursor"
 MAPBOX_CURSOR_CLI="${CASE_DIR}/my-cursor"
 run_interactive "$(printf 'n\nn')" && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
-expect_out 'Mapbox MCP servers not added to Cursor.' 'finds it where the variable points, as src/mcp.rs does'
+expect_out 'Skipped the Mapbox MCP servers for Cursor.' 'finds it where the variable points, as src/mcp.rs does'
 
 start 'MCP, everything already registered: asked, and a yes says so'
 new_case_env mcp-registered
@@ -1519,6 +1519,18 @@ expect_status 0 "$status" 'exits 0'
 expect_out 'Add the Mapbox MCP servers to Claude Code, VS Code?' 'asks: only a yes runs the check'
 expect_out 'Mapbox MCP was already in Claude Code, VS Code' 'reports what was already there'
 expect_no_out 'Added Mapbox' 'claims to add nothing'
+
+start 'MCP, a client on PATH that mapbox cannot run: a yes reports the failure'
+new_case_env mcp-not-detected
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_TEST_MCP_MODE=none
+mcp_clients_on_path
+run_interactive "$(printf 'n\ny')" && status=0 || status=$?
+expect_status 0 "$status" 'mapbox itself is still installed'
+expect_out 'Could not add the Mapbox MCP servers.' 'says nothing was added'
+expect_no_out 'Not every Mapbox MCP server' 'rather than implying some were'
+expect_out "Run 'mapbox mcp install --global' to see why and try again." 'points at the command'
 
 start 'MCP, a failed registration is reported, not fatal'
 new_case_env mcp-fail

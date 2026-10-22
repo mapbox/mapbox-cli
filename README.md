@@ -106,8 +106,9 @@ it does neither, printing the two commands to run by hand instead.
 
 It then asks, separately, whether to add the [Mapbox MCP servers](#mcp-servers)
 to each coding agent it finds that can take one (Claude Code, Codex, VS Code,
-Cursor), the same thing `mapbox mcp install --global` does. It asks only when
-there is something left to add, with the same rules: no terminal means no.
+Cursor), the same thing `mapbox mcp install --global` does. It asks whenever
+one of their CLIs is on `PATH`, even if the servers are already there, with
+the same rules: no terminal means no.
 Set `MAPBOX_CLI_NO_AGENT_SETUP=1` to skip both questions.
 
 On macOS and Linux, `install.sh` also offers to install the

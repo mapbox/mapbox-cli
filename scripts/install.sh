@@ -1016,11 +1016,12 @@ fi
 # Whether to ask is a PATH lookup and nothing more. Checking what is already
 # registered means running each client's own CLI, and Claude Code's takes over
 # a second per call, so the screen sat still for several seconds between the
-# two questions, and for anyone who answers no or has no terminal that wait
-# bought nothing. `mapbox mcp install` does that check itself once someone
-# says yes, and never replaces an entry that is already there (src/mcp.rs). A
-# reinstall therefore asks again even when everything is registered, and a
-# yes then reports each server as already there.
+# two questions, even for anyone who answers no or has no terminal.
+# `mapbox mcp install` does that check itself once someone says yes, and never
+# replaces an entry that is already there (src/mcp.rs). A reinstall therefore
+# asks again even when everything is registered, and a yes then reports each
+# server as already there. Without that check nothing here knows whether a
+# server is missing, so a no is reported as skipped, not as "not added".
 
 # "status|server|client" per row of `mapbox mcp install -o json`, with the
 # labels src/mcp.rs prints in place of its ids.
@@ -1066,7 +1067,8 @@ mcp_clients_present() {
         mcp_var="${mcp_client%%|*}"
         mcp_rest="${mcp_client#*|}"
         mcp_label="${mcp_rest#*|}"
-        mcp_bin="$(printenv "$mcp_var" || true)"
+        mcp_bin=''
+        eval "mcp_bin=\${${mcp_var}:-}"
         [ -n "$mcp_bin" ] || mcp_bin="${mcp_rest%%|*}"
         if command -v "$mcp_bin" >/dev/null 2>&1; then
             printf '%s\n' "$mcp_label"
@@ -1116,11 +1118,17 @@ if agent_setup_allowed; then
             if [ "$mcp_ok" = no ]; then
                 # A failure no row above accounts for still gets a line of
                 # its own, rather than a list of successes.
-                [ "$mcp_trouble" = yes ] || step_warn "Not every Mapbox MCP server could be added."
+                # No rows at all is a failure before any client was tried,
+                # such as one found on PATH that mapbox could not run.
+                if [ ! -s "${WORK_DIR}/mcp-rows" ]; then
+                    step_warn "Could not add the Mapbox MCP servers."
+                elif [ "$mcp_trouble" = no ]; then
+                    step_warn "Not every Mapbox MCP server could be added."
+                fi
                 step_detail "Run 'mapbox mcp install --global' to see why and try again."
             fi
         else
-            step_skip "Mapbox MCP servers not added to ${mcp_clients}. Run this any time:"
+            step_skip "Skipped the Mapbox MCP servers for ${mcp_clients}. Run this any time:"
             step_detail "${DIM}mapbox mcp install --global${RESET}"
         fi
         STEP_INDENT='  '

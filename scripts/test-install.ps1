@@ -1089,6 +1089,7 @@ try {
     Invoke-Installer
     Expect-Status 0 'exits 0'
     Expect-NoOut 'Mapbox MCP servers' 'says nothing when there is nothing to add them to'
+    Expect-Equal 'False' "$(Test-Path -LiteralPath $env:MAPBOX_TEST_MCP_RAN)" 'and never runs mapbox mcp'
 } finally {
     if ($open) { Stop-ChannelServer $open }
     if ($gated) { Stop-ChannelServer $gated }

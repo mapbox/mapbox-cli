@@ -226,6 +226,7 @@ case "\${1:-}" in
         exit 1
         ;;
     mcp)
+        : >"\${HOME}/.mcp-ran"
         echo '{"code":"mcp_client_not_found"}' >&2
         exit 1
         ;;
@@ -1474,6 +1475,25 @@ expect_status 0 "$status" 'exits 0'
 expect_out 'Add the Mapbox MCP servers to your coding agents?' 'asks: only a yes runs the check'
 expect_out 'Mapbox MCP was already in Claude Code, VS Code' 'reports what was already there'
 expect_no_out 'Added Mapbox' 'claims to add nothing'
+
+start 'MCP, only VS Code, which takes no skill: still offered'
+new_case_env mcp-vscode-only
+export MAPBOX_INSTALL_TILESETS=no
+mkdir -p "${HOME}/.vscode"
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_no_out 'Coding agents found' 'the skill step found nothing'
+expect_out 'Skipped the Mapbox MCP servers.' 'but the MCP step still runs'
+expect_says "$(mcp_ran)" no 'without running mapbox mcp'
+
+start 'MCP, only VS Code, opted out: nothing said'
+new_case_env mcp-vscode-opt-out
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_CLI_NO_AGENT_SETUP=1
+mkdir -p "${HOME}/.vscode"
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_no_out 'MCP' 'the opt-out covers it too'
 
 start 'MCP, an agent found but no client mapbox can register with: a yes says so'
 new_case_env mcp-no-client

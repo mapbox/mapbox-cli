@@ -1013,7 +1013,9 @@ fi
 # A separate question from the skill above: this registers a hosted server in
 # the coding agent's own config, next to servers the user added, rather than
 # writing a directory this CLI owns. Asked only when the skill step above
-# found a coding agent, with the same opt-out and no-terminal rule.
+# found a coding agent, or VS Code is there, with the same opt-out and
+# no-terminal rule. VS Code takes an MCP server but no skill, so the skill
+# step can't find it; ~/.vscode is where it keeps extensions on every OS.
 #
 # Nothing here checks which clients are installed or what they already have.
 # That check runs each client's own CLI, and Claude Code's takes over a second
@@ -1055,7 +1057,7 @@ mcp_grouped() { # mcp_grouped <json>
     } END { for (i = 1; i <= n; i++) print order[i] "|" who[order[i]] }'
 }
 
-if [ "$agents_found" = yes ]; then
+if agent_setup_allowed && { [ "$agents_found" = yes ] || [ -d "${HOME}/.vscode" ]; }; then
     do_mcp_setup=no
     if have_tty; then
         ask_title "Add the Mapbox MCP servers to your coding agents?"
@@ -1092,7 +1094,7 @@ if [ "$agents_found" = yes ]; then
             esac
         done <"${WORK_DIR}/mcp-rows"
         if [ "$mcp_ok" = no ]; then
-            if grep -qs '"code":"mcp_client_not_found"' "${WORK_DIR}/mcp-install.log" "${WORK_DIR}/mcp-install.json"; then
+            if grep -Eqs '"code"[[:space:]]*:[[:space:]]*"mcp_client_not_found"' "${WORK_DIR}/mcp-install.log" "${WORK_DIR}/mcp-install.json"; then
                 # The agent found above takes skills but not an MCP
                 # server this CLI can register (Goose, Amp, ...).
                 step_skip "No Claude Code, Codex, VS Code or Cursor here to add them to."

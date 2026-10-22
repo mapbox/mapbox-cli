@@ -841,8 +841,10 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
         # A separate question from the skill above: this registers a hosted
         # server in the coding agent's own config, next to servers the user
         # added, rather than writing a directory this CLI owns. Asked only
-        # when the skill step above found a coding agent, with the same
-        # no-console rule.
+        # when the skill step above found a coding agent, or VS Code is
+        # there, with the same opt-out and no-console rule. VS Code takes an
+        # MCP server but no skill, so the skill step can't find it;
+        # ~/.vscode is where it keeps extensions on every OS.
         #
         # Nothing here checks which clients are installed or what they
         # already have, for the reason install.sh gives: that check runs each
@@ -850,7 +852,7 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
         # mcp install` tries each client itself once someone says yes, so a
         # reinstall asks again, a yes reports what was already there, and a
         # no is reported as skipped.
-        if ($agentsFound) {
+        if ($AgentSetupAllowed -and ($agentsFound -or (Test-Path -LiteralPath (Join-Path $HOME '.vscode') -PathType Container))) {
             $previousErrorAction = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
             try {
@@ -914,7 +916,7 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
                         }
                     }
                     if (-not $mcpOk) {
-                        if ($mcpErr -like '*"code":"mcp_client_not_found"*') {
+                        if ($mcpErr -match '"code"\s*:\s*"mcp_client_not_found"') {
                             # The agent found above takes skills but not
                             # an MCP server this CLI can register.
                             Write-Skip 'No Claude Code, Codex, VS Code or Cursor here to add them to.'

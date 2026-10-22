@@ -82,11 +82,11 @@ taking the newest, with or without the leading `v`, so the version
 `mapbox --version` prints can be pasted straight in:
 
 ```sh
-curl -fsSL https://cli.mapbox.com/install.sh | MAPBOX_CLI_VERSION=1.1.0 sh
+curl -fsSL https://cli.mapbox.com/install.sh | MAPBOX_CLI_VERSION=1.1.1 sh
 ```
 
 ```powershell
-$env:MAPBOX_CLI_VERSION = '1.1.0'; irm https://cli.mapbox.com/install.ps1 | iex
+$env:MAPBOX_CLI_VERSION = '1.1.1'; irm https://cli.mapbox.com/install.ps1 | iex
 ```
 
 Both scripts put the install directory on your `PATH`: `install.sh` adds a
@@ -105,9 +105,11 @@ or run the script somewhere with no terminal to ask on (CI, a container), and
 it does neither, printing the two commands to run by hand instead.
 
 It then asks, separately, whether to add the [Mapbox MCP servers](#mcp-servers)
-to each coding agent it finds that can take one (Claude Code, Codex, VS Code,
-Cursor), the same thing `mapbox mcp install --global` does. It asks only when
-there is something left to add, with the same rules: no terminal means no.
+to your coding agents, the same thing `mapbox mcp install --global` does: a
+yes adds them to whichever of Claude Code, Codex, VS Code and Cursor are
+installed, and skips any that already have them. It asks whenever it found a
+coding agent above or VS Code is installed, with the same rules: no terminal
+means no.
 Set `MAPBOX_CLI_NO_AGENT_SETUP=1` to skip both questions.
 
 On macOS and Linux, `install.sh` also offers to install the
@@ -141,7 +143,7 @@ Six targets are published: `aarch64-apple-darwin`, `x86_64-apple-darwin`,
 then extract:
 
 ```sh
-version=v1.1.0
+version=v1.1.1
 file=mapbox-${version}-aarch64-apple-darwin.tar.gz
 
 curl -fsSLO "https://cli.mapbox.com/${version}/${file}"
@@ -156,7 +158,7 @@ On Windows the archive is a `.zip`, and PowerShell can read the manifest
 directly:
 
 ```powershell
-$version = 'v1.1.0'
+$version = 'v1.1.1'
 $target  = 'x86_64-pc-windows-msvc'
 
 $manifest = Invoke-RestMethod "https://cli.mapbox.com/$version/manifest.json"

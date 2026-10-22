@@ -200,8 +200,9 @@ esac
 # variables so the same binary covers every branch: MAPBOX_TEST_INSTALL_MODE
 # (ok | already_installed) and MAPBOX_TEST_UPDATE_MODE (clean | dirty, read
 # only once install reports already_installed) - the same two knobs
-# test-install.sh's agent-channel fixture uses. MAPBOX_TEST_MCP_MODE (none |
-# fresh) drives `mcp`; only its dry run is reachable from here, see below.
+# test-install.sh's agent-channel fixture uses. `mcp` only marks that it ran,
+# in the file MAPBOX_TEST_MCP_RAN names: install.ps1 should run it only after
+# a yes at a console, which no case here can give.
 function New-AgentFakeBinary([string]$Path, [string]$VersionText) {
     $ErrorActionPreference = 'Continue'
     if ($OnWindows) {
@@ -252,12 +253,10 @@ class Program {
             }
         }
         if (a0 == "mcp") {
-            if ((Environment.GetEnvironmentVariable("MAPBOX_TEST_MCP_MODE") ?? "none") == "none") {
-                Console.Error.WriteLine("{\"code\":\"mcp_client_not_found\"}");
-                return 1;
-            }
-            Console.WriteLine("{\"results\":[{\"client\":\"claude-code\",\"server\":\"mapbox\",\"status\":\"would_install\"},{\"client\":\"claude-code\",\"server\":\"mapbox-devkit\",\"status\":\"would_install\"},{\"client\":\"vscode\",\"server\":\"mapbox\",\"status\":\"would_install\"}]}");
-            return 0;
+            string marker = Environment.GetEnvironmentVariable("MAPBOX_TEST_MCP_RAN");
+            if (!string.IsNullOrEmpty(marker)) { System.IO.File.WriteAllText(marker, ""); }
+            Console.Error.WriteLine("{\"code\":\"mcp_client_not_found\"}");
+            return 1;
         }
         Console.WriteLine("$VersionText");
         return 0;
@@ -282,11 +281,9 @@ case "`${1:-}" in
         echo '{"written":true}'
         ;;
     mcp)
-        if [ "`${MAPBOX_TEST_MCP_MODE:-none}" = none ]; then
-            echo '{"code":"mcp_client_not_found"}' >&2
-            exit 1
-        fi
-        echo '{"results":[{"client":"claude-code","server":"mapbox","status":"would_install"},{"client":"claude-code","server":"mapbox-devkit","status":"would_install"},{"client":"vscode","server":"mapbox","status":"would_install"}]}'
+        [ -z "`${MAPBOX_TEST_MCP_RAN:-}" ] || : >"`$MAPBOX_TEST_MCP_RAN"
+        echo '{"code":"mcp_client_not_found"}' >&2
+        exit 1
         ;;
     agent-skills)
         sub="`$2"
@@ -556,7 +553,7 @@ function New-CaseEnv([string]$Name) {
     Clear-Env 'MAPBOX_CLI_NO_AGENT_SETUP'
     Clear-Env 'MAPBOX_TEST_INSTALL_MODE'
     Clear-Env 'MAPBOX_TEST_UPDATE_MODE'
-    Clear-Env 'MAPBOX_TEST_MCP_MODE'
+    $env:MAPBOX_TEST_MCP_RAN = Join-Path $script:CaseDir 'mcp-ran'
     # What install.ps1 reads to decide where it is running. Set explicitly so
     # the same case means the same thing on Windows and on the machine this is
     # written on.
@@ -1070,23 +1067,29 @@ try {
     Start-Case 'MCP, no console: not asked, not added'
     New-CaseEnv 'mcp-no-console'
     $env:MAPBOX_CLI_BASE_URL = "$($open.BaseUrl)/agent-channel"
-    $env:MAPBOX_TEST_MCP_MODE = 'fresh'
     Invoke-Installer
     Expect-Status 0 'exits 0'
     Expect-NoOut 'Add the Mapbox MCP servers' 'does not ask'
-    Expect-Out 'Mapbox MCP servers not added to Claude Code, VS Code.' 'names each client once'
+    Expect-Out 'Skipped the Mapbox MCP servers.' 'says so'
+    Expect-Equal 'False' "$(Test-Path -LiteralPath $env:MAPBOX_TEST_MCP_RAN)" 'and never runs mapbox mcp, which is the slow part'
     Expect-Out 'mapbox mcp install --global' 'gives the manual command'
 
     Start-Case 'MAPBOX_CLI_NO_AGENT_SETUP skips the MCP question too'
     New-CaseEnv 'mcp-opt-out'
     $env:MAPBOX_CLI_BASE_URL = "$($open.BaseUrl)/agent-channel"
-    $env:MAPBOX_TEST_MCP_MODE = 'fresh'
     $env:MAPBOX_CLI_NO_AGENT_SETUP = '1'
     Invoke-Installer
     Expect-Status 0 'exits 0'
     # Not just 'MCP': -like ignores case, and this case's own directory,
     # printed in the PATH note above, is named mcp-opt-out.
     Expect-NoOut 'Mapbox MCP servers' 'says nothing about it'
+
+    Start-Case 'MCP, no coding agent found: nothing said'
+    New-CaseEnv 'mcp-no-agent'
+    Invoke-Installer
+    Expect-Status 0 'exits 0'
+    Expect-NoOut 'Mapbox MCP servers' 'says nothing when there is nothing to add them to'
+    Expect-Equal 'False' "$(Test-Path -LiteralPath $env:MAPBOX_TEST_MCP_RAN)" 'and never runs mapbox mcp'
 } finally {
     if ($open) { Stop-ChannelServer $open }
     if ($gated) { Stop-ChannelServer $gated }

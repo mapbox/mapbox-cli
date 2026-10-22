@@ -226,6 +226,7 @@ case "\${1:-}" in
         exit 1
         ;;
     mcp)
+        : >"\${HOME}/.mcp-ran"
         echo '{"code":"mcp_client_not_found"}' >&2
         exit 1
         ;;
@@ -284,8 +285,7 @@ make_channel "${CHANNEL}/v0.1.0-dev.abc1234" v0.1.0-dev.abc1234
 # and MAPBOX_TEST_UPDATE_MODE (clean | dirty, read only once install
 # reports already_installed). Defaults match the plain first-install case.
 # MAPBOX_TEST_MCP_MODE (none | fresh | registered | fail) drives `mcp`;
-# none, no MCP client found, is the default so cases about the skill see
-# only the skill's question.
+# none is a machine with no client mapbox can register a server with.
 AGENT_CHANNEL="${ROOT}/agent-channel"
 mkdir -p "${AGENT_CHANNEL}/latest/build"
 cat >"${AGENT_CHANNEL}/latest/build/mapbox" <<'EOF'
@@ -327,20 +327,14 @@ case "${1:-}" in
         esac
         ;;
     mcp)
+        : >"${HOME}/.mcp-ran"
         mcp_mode="${MAPBOX_TEST_MCP_MODE:-none}"
         if [ "$mcp_mode" = none ]; then
             echo '{"code":"mcp_client_not_found"}' >&2
             exit 1
         fi
-        is_dry=no
-        for a in "$@"; do [ "$a" = "--dry-run" ] && is_dry=yes; done
-        if [ "$is_dry" = yes ]; then
-            if [ "$mcp_mode" = registered ]; then
-                status=already_installed
-            else
-                status=would_install
-            fi
-            echo '{"results":[{"client":"claude-code","server":"mapbox","status":"'"$status"'"},{"client":"claude-code","server":"mapbox-devkit","status":"'"$status"'"},{"client":"vscode","server":"mapbox","status":"'"$status"'"}]}'
+        if [ "$mcp_mode" = registered ]; then
+            echo '{"results":[{"client":"claude-code","server":"mapbox","status":"already_installed"},{"client":"claude-code","server":"mapbox-devkit","status":"already_installed"},{"client":"vscode","server":"mapbox","status":"already_installed"}]}'
         elif [ "$mcp_mode" = fail ]; then
             echo '{"results":[{"client":"claude-code","server":"mapbox","status":"installed"},{"client":"vscode","error":"--add-mcp rejected {\\"name\\":\\"mapbox\\"}","server":"mapbox","status":"failed"}]}'
             exit 1
@@ -674,6 +668,9 @@ new_case_env() { # case-name
     unset MAPBOX_CLI_NO_AGENT_SETUP MAPBOX_TEST_INSTALL_MODE MAPBOX_TEST_UPDATE_MODE MAPBOX_TEST_MCP_MODE
     export MAPBOX_CLI_BASE_URL MAPBOX_INSTALL_DIR PATH
 }
+
+# Whether the installer ran `mapbox mcp` at all: the fake marks it in HOME.
+mcp_ran() { if [ -f "${HOME}/.mcp-ran" ]; then echo yes; else echo no; fi; }
 
 shim() { # shim-name [name-on-path]
     cp "${SHIMS}/$1" "${CASE_SHIMS}/${2:-$1}"
@@ -1322,6 +1319,7 @@ export MAPBOX_INSTALL_TILESETS=no
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
 expect_no_out 'coding agent' 'says nothing about a step that has nothing to do'
+expect_no_out 'MCP' 'nor about the MCP servers'
 
 start 'MAPBOX_CLI_NO_AGENT_SETUP opts out even though an agent was detected'
 new_case_env agent-opt-out
@@ -1349,7 +1347,7 @@ start 'a terminal, answered no'
 new_case_env agent-tty-no
 export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
 export MAPBOX_INSTALL_TILESETS=no
-run_interactive n && status=0 || status=$?
+run_interactive "$(printf 'n\nn')" && status=0 || status=$?
 expect_status 0 "$status" 'a declined setup is not an install failure'
 expect_out 'Coding agents found: claude.' 'names the agent'
 expect_out 'Set up the mapbox CLI skill' 'asks'
@@ -1365,7 +1363,7 @@ new_case_env agent-tty-yes-fresh
 export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
 export MAPBOX_INSTALL_TILESETS=no
 export MAPBOX_TEST_INSTALL_MODE=ok
-run_interactive y && status=0 || status=$?
+run_interactive "$(printf 'y\nn')" && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
 expect_out 'Wrote the mapbox CLI skill for: claude.' 'reports the skill written'
 expect_out 'Installed the Mapbox Agent Skills library for: claude.' 'reports the library installed'
@@ -1376,7 +1374,7 @@ export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
 export MAPBOX_INSTALL_TILESETS=no
 export MAPBOX_TEST_INSTALL_MODE=already_installed
 export MAPBOX_TEST_UPDATE_MODE=clean
-run_interactive y && status=0 || status=$?
+run_interactive "$(printf 'y\nn')" && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
 expect_out 'Updated the Mapbox Agent Skills library for: claude.' 'updates in place'
 expect_no_out 'have local changes and were left alone' 'nothing was skipped'
@@ -1387,7 +1385,7 @@ export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
 export MAPBOX_INSTALL_TILESETS=no
 export MAPBOX_TEST_INSTALL_MODE=already_installed
 export MAPBOX_TEST_UPDATE_MODE=dirty
-run_interactive y && status=0 || status=$?
+run_interactive "$(printf 'y\nn')" && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
 expect_out 'Some Mapbox Agent Skills have local changes and were left alone.' \
     'reports the local edit rather than discarding it'
@@ -1408,8 +1406,9 @@ export MAPBOX_TEST_MCP_MODE=fresh
 run_piped && status=0 || status=$?
 expect_status 0 "$status" 'exits 0 rather than blocking (124 would be a hang)'
 expect_no_out 'Add the Mapbox MCP servers' 'does not ask'
-expect_out 'Mapbox MCP servers not added to Claude Code, VS Code.' 'names each client once'
-expect_says "$(grep -c '^  - Mapbox MCP servers not added' "$OUT")" 1 'top level when no question was asked'
+expect_says "$(mcp_ran)" no 'and never runs mapbox mcp, which is the slow part'
+expect_out 'Skipped the Mapbox MCP servers.' 'says so'
+expect_says "$(grep -c '^  - Skipped the Mapbox MCP servers' "$OUT")" 1 'top level when no question was asked'
 expect_out 'mapbox mcp install --global' 'gives the manual command'
 
 start 'MCP, a terminal, answered yes'
@@ -1419,7 +1418,7 @@ export MAPBOX_INSTALL_TILESETS=no
 export MAPBOX_TEST_MCP_MODE=fresh
 run_interactive "$(printf 'n\ny')" && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
-expect_out 'Add the Mapbox MCP servers to Claude Code, VS Code?' 'asks, separately from the skill'
+expect_out 'Add the Mapbox MCP servers to your coding agents?' 'asks, separately from the skill'
 expect_out 'This runs mapbox mcp install --global' 'names the command it runs'
 expect_out 'This runs mapbox mcp install --global, now or any time later.' 'says it can be run later instead'
 expect_out 'Add them now? [y/N]' 'asks about now'
@@ -1462,17 +1461,50 @@ export MAPBOX_INSTALL_TILESETS=no
 export MAPBOX_TEST_MCP_MODE=fresh
 run_interactive "$(printf 'n\nn')" && status=0 || status=$?
 expect_status 0 "$status" 'a declined setup is not an install failure'
-expect_out 'Mapbox MCP servers not added to Claude Code, VS Code.' 'says so'
+expect_out 'Skipped the Mapbox MCP servers.' 'says so'
 expect_no_out 'Added the Mapbox MCP servers' 'adds nothing'
+expect_says "$(mcp_ran)" no 'and never runs mapbox mcp'
 
-start 'MCP, everything already registered: not asked again'
+start 'MCP, everything already registered: asked, and a yes says so'
 new_case_env mcp-registered
 export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
 export MAPBOX_INSTALL_TILESETS=no
 export MAPBOX_TEST_MCP_MODE=registered
-run_interactive n && status=0 || status=$?
+run_interactive "$(printf 'n\ny')" && status=0 || status=$?
 expect_status 0 "$status" 'exits 0'
-expect_no_out 'MCP' 'says nothing when there is nothing to add'
+expect_out 'Add the Mapbox MCP servers to your coding agents?' 'asks: only a yes runs the check'
+expect_out 'Mapbox MCP was already in Claude Code, VS Code' 'reports what was already there'
+expect_no_out 'Added Mapbox' 'claims to add nothing'
+
+start 'MCP, only VS Code, which takes no skill: still offered'
+new_case_env mcp-vscode-only
+export MAPBOX_INSTALL_TILESETS=no
+mkdir -p "${HOME}/.vscode"
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_no_out 'Coding agents found' 'the skill step found nothing'
+expect_out 'Skipped the Mapbox MCP servers.' 'but the MCP step still runs'
+expect_says "$(mcp_ran)" no 'without running mapbox mcp'
+
+start 'MCP, only VS Code, opted out: nothing said'
+new_case_env mcp-vscode-opt-out
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_CLI_NO_AGENT_SETUP=1
+mkdir -p "${HOME}/.vscode"
+run_piped && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_no_out 'MCP' 'the opt-out covers it too'
+
+start 'MCP, an agent found but no client mapbox can register with: a yes says so'
+new_case_env mcp-no-client
+export MAPBOX_CLI_BASE_URL="file://${AGENT_CHANNEL}"
+export MAPBOX_INSTALL_TILESETS=no
+export MAPBOX_TEST_MCP_MODE=none
+run_interactive "$(printf 'n\ny')" && status=0 || status=$?
+expect_status 0 "$status" 'exits 0'
+expect_out 'No Claude Code, Codex, VS Code or Cursor here to add them to.' 'says there was nothing to add them to'
+expect_no_out 'Could not add' 'not as a failure'
+expect_no_out 'to see why and try again' 'with nothing to retry'
 
 start 'MCP, a failed registration is reported, not fatal'
 new_case_env mcp-fail

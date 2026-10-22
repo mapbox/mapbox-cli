@@ -23,10 +23,11 @@ that may never merge. They are not releases and are not listed here.
 ## Unreleased
 
 - `install.sh`/`install.ps1`: the MCP question no longer waits several
-  seconds before it appears. The installer now asks whenever a supported
-  coding agent's CLI is on `PATH`, and only checks what is already
-  registered after a yes. A reinstall therefore asks again even when every
-  server is registered; a yes then reports each one as already there.
+  seconds before it appears. The installer asks whenever it found a coding
+  agent, and only after a yes does it look for Claude Code, Codex, VS Code
+  and Cursor and check what each already has. A reinstall therefore asks
+  again even when every server is registered; a yes then reports each one
+  as already there.
 
 ## 1.1.0 - 2026-10-22
 

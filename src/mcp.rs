@@ -899,61 +899,6 @@ mod tests {
         assert_eq!(flags.len(), CLIENTS.len());
     }
 
-    /// The installers decide whether to offer `mcp install` by looking each
-    /// client up on PATH themselves, from a copy of this table, so a client
-    /// added here and not there would never be offered.
-    #[test]
-    fn installers_know_every_mcp_client() {
-        let read = |path: &str| {
-            std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
-                .unwrap_or_else(|e| panic!("{path}: {e}"))
-        };
-        // Only the lookup itself, so a row left in a comment or a matching
-        // string elsewhere in the script can't stand in for it.
-        let between = |text: &str, path: &str, start: &str, end: &str| -> String {
-            let from = text
-                .find(start)
-                .unwrap_or_else(|| panic!("{path} has no {start}"));
-            let len = text[from..]
-                .find(end)
-                .unwrap_or_else(|| panic!("{path} has no {end}"));
-            text[from..from + len].to_string()
-        };
-        let sh = between(
-            &read("scripts/install.sh"),
-            "install.sh",
-            "mcp_clients_present() {",
-            "\n}\n",
-        );
-        let ps1 = between(
-            &read("scripts/install.ps1"),
-            "install.ps1",
-            "$clientLabels = @{",
-            "$mcpClients = $mcpFound -join",
-        );
-        for c in CLIENTS {
-            let row = format!("'{}|{}|{}'", c.binary_env, c.default_binary, c.label);
-            assert!(sh.contains(&row), "install.sh has no {row}");
-            let row = format!(
-                "Id = '{}'; Var = '{}'; Bin = '{}'",
-                c.flag, c.binary_env, c.default_binary
-            );
-            assert!(ps1.contains(&row), "install.ps1 has no {row}");
-            let label = format!("'{}' = '{}'", c.flag, c.label);
-            assert!(ps1.contains(&label), "install.ps1 has no {label}");
-        }
-        assert_eq!(
-            sh.matches("_CLI|").count(),
-            CLIENTS.len(),
-            "install.sh lists a client src/mcp.rs doesn't have"
-        );
-        assert_eq!(
-            ps1.matches("; Var = '").count(),
-            CLIENTS.len(),
-            "install.ps1 lists a client src/mcp.rs doesn't have"
-        );
-    }
-
     #[test]
     fn every_verb_client_has_an_add_arm() {
         for client in CLIENTS.iter().filter(|c| c.kind == ClientKind::Verb) {

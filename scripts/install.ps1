@@ -751,6 +751,7 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
             )
         }
 
+        $agentsFound = $false
         if ($AgentSetupAllowed) {
             # A child writing to stderr is a terminating NativeCommandError in
             # Windows PowerShell under $ErrorActionPreference = 'Stop' (set
@@ -765,6 +766,7 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
             try {
                 $checkOut = (& $destination generate-skills --global --dry-run -o json 2>$null) -join ''
                 if ($LASTEXITCODE -eq 0) {
+                    $agentsFound = $true
                     $agentNames = Get-AgentName $checkOut
                     Write-Ok "Coding agents found: $agentNames."
                     $doAgentSetup = $false
@@ -838,16 +840,17 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
         #
         # A separate question from the skill above: this registers a hosted
         # server in the coding agent's own config, next to servers the user
-        # added, rather than writing a directory this CLI owns. Same opt-out
-        # and same no-console rule as the skill.
+        # added, rather than writing a directory this CLI owns. Asked only
+        # when the skill step above found a coding agent, with the same
+        # no-console rule.
         #
-        # Whether to ask is a PATH lookup and nothing more, for the reason
-        # install.sh gives: checking what is already registered runs each
-        # client's own CLI, which took seconds with nothing on screen.
-        # `mapbox mcp install` does that check itself once someone says yes,
-        # so a reinstall asks again and a yes reports what was already there,
-        # and a no is reported as skipped rather than "not added".
-        if ($AgentSetupAllowed) {
+        # Nothing here checks which clients are installed or what they
+        # already have, for the reason install.sh gives: that check runs each
+        # client's own CLI and took seconds with nothing on screen. `mapbox
+        # mcp install` tries each client itself once someone says yes, so a
+        # reinstall asks again, a yes reports what was already there, and a
+        # no is reported as skipped.
+        if ($agentsFound) {
             $previousErrorAction = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
             try {
@@ -855,87 +858,76 @@ Windows 11 on Arm has and Windows 10 on Arm does not.
                     'claude-code' = 'Claude Code'; 'codex' = 'Codex'
                     'vscode' = 'VS Code'; 'cursor' = 'Cursor'
                 }
-                # One row per client in src/mcp.rs's CLIENTS, honoring the
-                # same override variable it does;
-                # `installers_know_every_mcp_client` there holds this list to
-                # that table. Most machines have none of these.
-                $mcpFound = @()
-                foreach ($client in @(
-                        @{ Id = 'claude-code'; Var = 'MAPBOX_CLAUDE_CLI'; Bin = 'claude' },
-                        @{ Id = 'codex'; Var = 'MAPBOX_CODEX_CLI'; Bin = 'codex' },
-                        @{ Id = 'vscode'; Var = 'MAPBOX_CODE_CLI'; Bin = 'code' },
-                        @{ Id = 'cursor'; Var = 'MAPBOX_CURSOR_CLI'; Bin = 'cursor' })) {
-                    $bin = [Environment]::GetEnvironmentVariable($client.Var)
-                    if (-not $bin) { $bin = $client.Bin }
-                    if ($bin.Contains('\') -or $bin.Contains('/')) {
-                        # A path is taken literally, with the extensions
-                        # src/mcp.rs also tries on a name that has none.
-                        $hit = @('', '.cmd', '.bat', '.exe') |
-                            Where-Object { Test-Path -LiteralPath "$bin$_" -PathType Leaf } |
-                            Select-Object -First 1
-                    } else {
-                        $hit = Get-Command ([WildcardPattern]::Escape($bin)) -CommandType Application -ErrorAction SilentlyContinue
-                    }
-                    if ($hit) { $mcpFound += $clientLabels[$client.Id] }
+                $doMcpSetup = $false
+                if (-not [Console]::IsInputRedirected) {
+                    Write-AskTitle 'Add the Mapbox MCP servers to your coding agents?'
+                    Write-AskNote @('This runs ', 'mapbox mcp install --global', ', now or any time later.')
+                    $answer = Read-AskAnswer 'Add them now?'
+                    $Layout.Indent = '    '
+                    if ($answer -match '^(?i:y|yes)$') { $doMcpSetup = $true }
                 }
-                $mcpClients = $mcpFound -join ', '
-                if ($mcpClients) {
-                    $doMcpSetup = $false
-                    if (-not [Console]::IsInputRedirected) {
-                        Write-AskTitle "Add the Mapbox MCP servers to ${mcpClients}?"
-                        Write-AskNote @('This runs ', 'mapbox mcp install --global', ', now or any time later.')
-                        $answer = Read-AskAnswer 'Add them now?'
-                        $Layout.Indent = '    '
-                        if ($answer -match '^(?i:y|yes)$') { $doMcpSetup = $true }
+                if ($doMcpSetup) {
+                    # Each client's own CLI does the registering, and
+                    # Codex's can stop to print a sign-in URL, so
+                    # stderr - where mapbox forwards what they print -
+                    # is left on the console, live. No spinner: a
+                    # second writer to the console is not worth it
+                    # here without a terminal to test it on.
+                    Write-Part $Layout.Indent
+                    Write-Part '...' 'Cyan'
+                    Write-Host ' Adding the Mapbox MCP servers'
+                    # stderr is passed through as it arrives and kept
+                    # too, for the error code a failure carries.
+                    $mcpErr = ''
+                    $mcpOut = (& $destination mcp install --global -o json 2>&1 | ForEach-Object {
+                            if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                                $line = $_.ToString()
+                                [Console]::Error.WriteLine($line)
+                                $mcpErr += $line
+                            } else { $_ }
+                        }) -join ''
+                    $mcpOk = $LASTEXITCODE -eq 0
+                    # One line per server and outcome, clients joined,
+                    # so a server added just now reads differently from
+                    # one that was already there.
+                    $serverLabels = @{ 'mapbox' = 'Mapbox MCP'; 'mapbox-devkit' = 'Mapbox DevKit MCP' }
+                    $rows = @()
+                    try { $rows = @(($mcpOut | ConvertFrom-Json).results) } catch { $rows = @() }
+                    $groups = [ordered]@{}
+                    foreach ($row in $rows) {
+                        $what = if ($serverLabels.ContainsKey($row.server)) { $serverLabels[$row.server] } else { $row.server }
+                        $who = if ($clientLabels.ContainsKey($row.client)) { $clientLabels[$row.client] } else { $row.client }
+                        $key = "$($row.status)|$what"
+                        if (-not $groups.Contains($key)) { $groups[$key] = @() }
+                        $groups[$key] += $who
                     }
-                    if ($doMcpSetup) {
-                        # Each client's own CLI does the registering, and
-                        # Codex's can stop to print a sign-in URL, so
-                        # stderr - where mapbox forwards what they print -
-                        # is left on the console, live. No spinner: a
-                        # second writer to the console is not worth it
-                        # here without a terminal to test it on.
-                        Write-Part $Layout.Indent
-                        Write-Part '...' 'Cyan'
-                        Write-Host ' Adding the Mapbox MCP servers'
-                        $mcpOut = (& $destination mcp install --global -o json) -join ''
-                        $mcpOk = $LASTEXITCODE -eq 0
-                        # One line per server and outcome, clients joined,
-                        # so a server added just now reads differently from
-                        # one that was already there.
-                        $serverLabels = @{ 'mapbox' = 'Mapbox MCP'; 'mapbox-devkit' = 'Mapbox DevKit MCP' }
-                        $rows = @()
-                        try { $rows = @(($mcpOut | ConvertFrom-Json).results) } catch { $rows = @() }
-                        $groups = [ordered]@{}
-                        foreach ($row in $rows) {
-                            $what = if ($serverLabels.ContainsKey($row.server)) { $serverLabels[$row.server] } else { $row.server }
-                            $who = if ($clientLabels.ContainsKey($row.client)) { $clientLabels[$row.client] } else { $row.client }
-                            $key = "$($row.status)|$what"
-                            if (-not $groups.Contains($key)) { $groups[$key] = @() }
-                            $groups[$key] += $who
+                    foreach ($key in $groups.Keys) {
+                        $status, $what = $key -split '\|', 2
+                        $who = $groups[$key] -join ', '
+                        switch ($status) {
+                            'installed' { Write-Ok "Added $what to $who" }
+                            'already_installed' { Write-Skip "$what was already in $who" }
+                            'installed_login_incomplete' { Write-Warn "Added $what to $who, but sign-in did not finish" }
+                            'client_not_found' { Write-Warn "Skipped $what for ${who}: CLI not on PATH" }
+                            'config_unreadable' { Write-Warn "Skipped $what for ${who}: config could not be read" }
+                            default { Write-Warn "Could not add $what to $who" }
                         }
-                        foreach ($key in $groups.Keys) {
-                            $status, $what = $key -split '\|', 2
-                            $who = $groups[$key] -join ', '
-                            switch ($status) {
-                                'installed' { Write-Ok "Added $what to $who" }
-                                'already_installed' { Write-Skip "$what was already in $who" }
-                                'installed_login_incomplete' { Write-Warn "Added $what to $who, but sign-in did not finish" }
-                                'client_not_found' { Write-Warn "Skipped $what for ${who}: CLI not on PATH" }
-                                'config_unreadable' { Write-Warn "Skipped $what for ${who}: config could not be read" }
-                                default { Write-Warn "Could not add $what to $who" }
-                            }
-                        }
-                        if (-not $mcpOk) {
+                    }
+                    if (-not $mcpOk) {
+                        if ($mcpErr -like '*"code":"mcp_client_not_found"*') {
+                            # The agent found above takes skills but not
+                            # an MCP server this CLI can register.
+                            Write-Skip 'No Claude Code, Codex, VS Code or Cursor here to add them to.'
+                        } else {
                             if ($rows.Count -eq 0) { Write-Warn 'Could not add the Mapbox MCP servers.' }
                             Write-Detail "Run 'mapbox mcp install --global' to see why and try again."
                         }
-                    } else {
-                        Write-Skip "Skipped the Mapbox MCP servers for $mcpClients. Run this any time:"
-                        Write-Detail 'mapbox mcp install --global'
                     }
-                    $Layout.Indent = '  '
+                } else {
+                    Write-Skip 'Skipped the Mapbox MCP servers. Run this any time:'
+                    Write-Detail 'mapbox mcp install --global'
                 }
+                $Layout.Indent = '  '
             } finally {
                 $ErrorActionPreference = $previousErrorAction
             }

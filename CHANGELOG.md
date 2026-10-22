@@ -22,6 +22,8 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+## 1.1.1 - 2026-10-22
+
 - `install.sh`/`install.ps1`: the MCP question no longer waits several
   seconds before it appears. The installer asks whenever it found a coding
   agent or VS Code, and only after a yes does it look for Claude Code, Codex, VS Code

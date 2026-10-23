@@ -23,11 +23,8 @@ that may never merge. They are not releases and are not listed here.
 ## Unreleased
 
 - The telemetry event of a command that uses no token, such as `--version`,
-  `doctor` or `generate-skills`, now reports the token an API command would
-  use (`--token`, then `MAPBOX_ACCESS_TOKEN` unless `--use-login`, then the
-  login for `--profile`): its kind and account, never the token. Before, such
-  events had no account even while logged in. Output and exit codes are
-  unchanged.
+  now reports the token kind and account an API command would use. Output
+  and exit codes are unchanged.
 
 ## 1.1.1 - 2026-10-22
 

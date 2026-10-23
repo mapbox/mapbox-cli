@@ -234,10 +234,10 @@ struct Header {
     /// out of a maintainer-only manifest file. Absent
     /// whenever that file is missing or malformed, which is why the digest
     /// above is the primary signal and this is the convenience. Says nothing
-    /// about a `custom-openapi/` spec, which the digest also covers — including
-    /// `custom-openapi/statistics/`, folded in by hand in `spec_digest()`
+    /// about a `custom-openapi/` spec, which the digest also covers. The
+    /// statistics spec is folded into the digest by hand in `spec_digest()`,
     /// since it's `include_str!`'d directly by `account_usage.rs` rather
-    /// than reachable through `CUSTOM_SPEC_ENTRIES`.
+    /// than reachable through the spec tables.
     spec_commit: Option<&'static str>,
     /// Set only when `--service` narrowed the skill, since a reader otherwise
     /// has no way to tell a partial skill from a complete one.

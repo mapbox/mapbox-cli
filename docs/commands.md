@@ -4982,6 +4982,7 @@ list-tokens` for ids.
 | --- | --- |
 | `--period-start <YYYY-MM-DD>` | Start of the usage period, inclusive. Defaults to 30 days ago. |
 | `--period-end <YYYY-MM-DD>` | End of the usage period, inclusive. Defaults to today. At most 31 days after `--period-start`. |
+| `--dimensions <list>` | Also break each product's usage down by these, comma-separated: `browsers`, `countries`, `hosts`. Shows in `-o json` only; without it each product's `dimensions` is `{}`. |
 | `--product <name>` | Only show this product. Matches the API's own name for it case-insensitively, exactly or as a substring (e.g. `"search box"` matches `"Search Box API - Requests"`) — run without it first to see which names had usage. Client-side: the API has no such filter itself. |
 | `--daily` | List each product's usage day by day instead of a sparkline. Only changes `-o text`; `-o json` always has the daily figures. |
 
@@ -5019,7 +5020,7 @@ Vector Tiles API       6,300  ▁▁▁▁▁▁▇▁▁▁▁▁▁▄▁▁�
 31 active days · generated 2026-09-08 09:49 UTC
 
 Tips:
-  `-o json` for the exact per-day numbers and the per-browser/country/host breakdown.
+  `-o json` for the exact per-day numbers; add `--dimensions browsers,countries,hosts` for the per-browser/country/host breakdown.
   `--daily` for the day-by-day numbers here instead of a sparkline.
   `--product "Directions API"` narrows to one product.
 ```
@@ -5048,6 +5049,11 @@ Tips:
 </td></tr>
 </table>
 
+The JSON was captured before the API made the breakdown opt-in. Today each
+product's `dimensions` is filled in only for the keys `--dimensions` names,
+and is `{}` without it. The response also carries `next_period_start`, which
+the API currently always sends as `null`.
+
 `-o text`'s table is this CLI's own summary (`render_text` in
 `src/account_usage.rs`), not `render_human` in `src/output/render.rs`: the
 response nests a `daily` array and a `dimensions` object under each product,
@@ -5067,7 +5073,7 @@ Rows stack one per line, and the tallest bar stops at `▇` rather than `█`,
 which leaves a gap under the row above so the products don't run
 together. At a terminal the bars are in the accent color over a muted
 baseline. Exact per-day numbers and the per-browser/country/host
-breakdown are left to `-o json`; `--product` narrows the whole response,
+breakdown (with `--dimensions`) are left to `-o json`; `--product` narrows the whole response,
 both columns, to one product's row. A 403 covers two different causes the
 API doesn't otherwise distinguish: the token missing `statistics:read` — a
 login from before the scope was added, most likely, and fixed by logging in
@@ -5098,7 +5104,7 @@ Directions API — total 67,840,000
 31 active days · generated 2026-09-08 09:49 UTC
 
 Tips:
-  `-o json` for the per-browser/country/host breakdown.
+  `-o json --dimensions browsers,countries,hosts` for the per-browser/country/host breakdown.
 ```
 
 `-o json` is unaffected by `--daily` — the day-by-day figures are already

@@ -158,8 +158,15 @@ fn dispatch(
         }
     }
 
-    for param in &op.path_params {
-        if let Some(val) = matches.get_one::<String>(&param.arg_name) {
+    let omittable = crate::schema::omittable_tail(&op.path_params, &op.path_template);
+    for (param, omittable) in op.path_params.iter().zip(omittable) {
+        // An absent one is sent as `""`, which `omittable_tail` vouches for;
+        // anything else absent falls through to the missing-parameter error.
+        let val = matches
+            .get_one::<String>(&param.arg_name)
+            .map(String::as_str)
+            .or(omittable.then_some(""));
+        if let Some(val) = val {
             let safe = path_segment_for(&op.service, param, val)?;
             path = substitute_path_param(&path, &param.name, &safe, param.required);
         }

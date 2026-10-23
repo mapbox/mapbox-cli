@@ -165,6 +165,34 @@ fn help_text(param: &spec::Parameter) -> String {
         .to_string()
 }
 
+/// The API's value for a spec-optional path parameter that clap cannot take
+/// `""` for, so a caller who wants the default knows what to write. The
+/// specs say these in prose (`static get-image`'s description, `tilesize`'s
+/// `default: 512`), which the parser does not read for a path parameter.
+const PATH_PARAM_DEFAULTS: &[(&str, &str)] =
+    &[("bearing", "0"), ("pitch", "0"), ("tilesize", "512")];
+
+/// A positional's help, plus how to skip it when the spec calls it optional
+/// but clap still needs something written in its place.
+fn path_help_text(param: &spec::Parameter, path_template: &str, omittable: bool) -> String {
+    let help = help_text(param);
+    let how_to_skip = if param.required || omittable {
+        None
+    } else if schema::omits_with_empty(param, path_template) {
+        Some("Pass \"\" to leave it out".to_string())
+    } else {
+        PATH_PARAM_DEFAULTS
+            .iter()
+            .find(|(name, _)| *name == param.name)
+            .map(|(_, default)| format!("Pass {default} for the API's default"))
+    };
+    match how_to_skip {
+        Some(note) if help.is_empty() => note,
+        Some(note) => format!("{help}. {note}"),
+        None => help,
+    }
+}
+
 /// The coordinate-shaped parameters whose value legitimately starts with `-`
 /// without being a bare number.
 ///
@@ -235,11 +263,12 @@ fn build_operation_command(op: &spec::Operation) -> Command {
         });
     }
 
-    for param in &op.path_params {
+    let omittable = schema::omittable_tail(&op.path_params, &op.path_template);
+    for (param, omittable) in op.path_params.iter().zip(omittable) {
         let mut arg = Arg::new(param.arg_name.clone())
-            .required(true)
+            .required(!omittable)
             .allow_hyphen_values(takes_hyphen_leading_value(param))
-            .help(help_text(param));
+            .help(path_help_text(param, &op.path_template, omittable));
 
         // Positionals get the same treatment as flags: clap renders the
         // possible values into the help itself, so the hand-rolled suffix
@@ -2520,6 +2549,29 @@ mod tests {
         let mut expected: Vec<&str> = WRITES.iter().chain(&READS).copied().collect();
         expected.sort_unstable();
         assert_eq!(seen, expected, "auth lost a subcommand");
+    }
+
+    /// Each default names a parameter that still needs one: spec-optional,
+    /// and something clap will not let a caller leave blank. One that the
+    /// specs dropped, or that became omittable, would print advice nobody
+    /// needs.
+    #[test]
+    fn every_path_param_default_is_still_needed() {
+        let specs = bundled_specs();
+        for (name, _) in PATH_PARAM_DEFAULTS {
+            let needed = specs.iter().flat_map(|svc| &svc.operations).any(|op| {
+                op.path_params.iter().any(|param| {
+                    param.name == *name
+                        && !param.required
+                        && !schema::omits_with_empty(param, &op.path_template)
+                })
+            });
+            assert!(
+                needed,
+                "PATH_PARAM_DEFAULTS lists `{name}`, which no spec-optional path \
+                 parameter needs any more — remove it"
+            );
+        }
     }
 
     /// The same trap `no_generated_flag_shadows_a_global` catches, one level

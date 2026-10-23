@@ -26,6 +26,12 @@ that may never merge. They are not releases and are not listed here.
   API for the per-browser, per-country and per-host breakdown, which it now
   sends only on request. Without the flag the request is unchanged, and each
   product's `dimensions` in `-o json` is `{}`.
+- `static get-image`, `static get-tile` and `tilesets get-tile` no longer
+  need their trailing optional positionals: `<highRes>`, `<format>` and
+  `<quality>` can be left off instead of passed as `""`. Writing `""` still
+  works, so existing scripts are unaffected. `--schema` now reports these
+  arguments as not required.
+- `feedback` moved from the Search help group to Maps and data.
 
 ## 1.1.1 - 2026-10-22
 

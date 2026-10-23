@@ -448,17 +448,17 @@ fn declared_command<'a>(app: &'a Command, service: &str, path: &[String]) -> Opt
 fn api_command(app: &Command, svc: &ServiceSpec, op: &Operation) -> CommandEntry {
     let declared = declared_command(app, &svc.name, &op.command_path);
 
+    let omittable = omittable_tail(&op.path_params, &op.path_template);
     let mut arguments: Vec<Argument> = op
         .path_params
         .iter()
-        .map(|param| Argument {
-            // Every path positional is required, whatever the spec says,
-            // because `build_operation_command` makes it so: the value has to
-            // be written even where the spec calls the segment optional. What
-            // the spec's `required: false` buys is the right to write nothing
-            // *as* that value, which `omit_with_empty` reports rather than
-            // contradicting clap here.
-            required: true,
+        .enumerate()
+        .map(|(index, param)| Argument {
+            // Clap's answer, not the spec's: a spec-optional positional can
+            // only be left off at the end of the line, so one earlier on is
+            // still required here and `omit_with_empty` reports whether `""`
+            // stands in for it.
+            required: !omittable[index],
             location: Some("path"),
             omit_with_empty: omits_with_empty(param, &op.path_template),
             // Named as well as filled, the same reason `username_argument`
@@ -582,7 +582,7 @@ fn parameter(param: &Parameter, kind: ArgKind) -> Argument {
 /// (`bearing`, `pitch`) or for an enum that does not list `""` among its
 /// values (`tilesize`) — those are spec-optional and, through this CLI,
 /// impossible to omit. And the URL that results has to be a URL.
-fn omits_with_empty(param: &Parameter, path_template: &str) -> bool {
+pub(crate) fn omits_with_empty(param: &Parameter, path_template: &str) -> bool {
     if param.required {
         return false;
     }
@@ -594,6 +594,22 @@ fn omits_with_empty(param: &Parameter, path_template: &str) -> bool {
     };
 
     clap_accepts_empty && leaves_a_usable_url(path_template, &param.name)
+}
+
+/// Which path positionals may be left off the command line altogether.
+///
+/// Clap can only drop a positional when every one after it can go too, so
+/// this is the run at the end that [`omits_with_empty`] allows: the executor
+/// sends an absent one exactly as it sends `""`.
+pub(crate) fn omittable_tail(path_params: &[Parameter], path_template: &str) -> Vec<bool> {
+    let mut omittable = vec![false; path_params.len()];
+    for (index, param) in path_params.iter().enumerate().rev() {
+        if !omits_with_empty(param, path_template) {
+            break;
+        }
+        omittable[index] = true;
+    }
+    omittable
 }
 
 /// Whether taking this placeholder out of the template leaves a path the API
@@ -1346,6 +1362,28 @@ mod tests {
             },
             "/static/{overlay}/x"
         ));
+    }
+
+    /// Only the run at the end can be left off: clap cannot skip a
+    /// positional with a required one after it.
+    #[test]
+    fn only_the_trailing_run_of_omittable_positionals_is_optional() {
+        let required = |name| Parameter {
+            required: true,
+            ..optional(name)
+        };
+        let params = [
+            optional("overlay"),
+            required("zoom"),
+            required("w"),
+            required("h"),
+            optional("highRes"),
+            optional("format"),
+        ];
+        assert_eq!(
+            omittable_tail(&params, "/static/{overlay}/{zoom}/{w}x{h}{highRes}{format}"),
+            [false, false, false, false, true, true]
+        );
     }
 
     /// A schema is JSON even when the caller asked for text, and indented

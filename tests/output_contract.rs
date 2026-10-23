@@ -1047,7 +1047,45 @@ fn a_missing_argument_error_names_the_arguments() {
         .to_string();
 
     assert!(message.contains("<lon>"), "{message}");
-    assert!(message.contains("<format>"), "{message}");
+    assert!(message.contains("<height>"), "{message}");
+}
+
+/// A spec-optional positional at the end of the line can be left off, and
+/// goes out the way `""` would: no placeholder and no stray separator. The
+/// proxy is a dead port, so `--debug` shows the URL without it reaching
+/// Mapbox.
+#[test]
+fn a_trailing_optional_positional_can_be_left_off() {
+    let out = command()
+        .env("HTTPS_PROXY", "http://127.0.0.1:9")
+        .env_remove("https_proxy")
+        .env_remove("ALL_PROXY")
+        .env_remove("all_proxy")
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
+        .args([
+            "--debug",
+            "--token",
+            "pk.test",
+            "-u",
+            "mapbox",
+            "static",
+            "get-image",
+            "streets-v12",
+            "",
+            "24.94",
+            "60.17",
+            "12",
+            "0",
+            "0",
+            "600",
+            "400",
+        ])
+        .output()
+        .expect("run mapbox");
+
+    let err = stderr(&out);
+    assert!(err.contains("/static/24.94,60.17,12,0,0/600x400?"), "{err}");
 }
 
 /// A live 401, carrying the advice a caller acts on: what to do, a command

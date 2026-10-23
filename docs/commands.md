@@ -2697,9 +2697,11 @@ Tiles merged into this one command group (#116); `get-image` and `get-tile`
 are what were `static-images get-static-image` and `static-tiles
 get-static-tile`.
 
-`<format>` takes a **leading dot** — `.png`, `.jpeg`, `.webp`, or `""` for
-the style default. `<highRes>` is `@2x` or `""`. `<overlay>` (`get-image`
-only) is a marker/path/GeoJSON expression, or `""` for none.
+`<format>` takes a **leading dot** — `.png`, `.jpeg`, `.webp`, or left off
+for the style default. `<highRes>` is `@2x`, or left off. Both come last, so
+either can be left off the end of the line; `""` still works in their place.
+`<overlay>` (`get-image` only) is a marker/path/GeoJSON expression, or `""`
+for none.
 
 `""` for the overlay drops the segment entirely rather than sending an empty
 one, so a plain map image needs no overlay expression.
@@ -2710,11 +2712,11 @@ A map image centered on a point.
 
 #### Parameters
 
-Eleven positionals, in order: `<style-id> <overlay> <lon> <lat> <zoom>
-<bearing> <pitch> <width> <height> <highRes> <format>`.
+Nine positionals, then two optional ones, in order: `<style-id> <overlay>
+<lon> <lat> <zoom> <bearing> <pitch> <width> <height> [highRes] [format]`.
 
 `<bearing>` and `<pitch>` default to `0` at the API, but the CLI requires
-both as integers — pass `0 0` rather than `"" ""`.
+both as numbers — pass `0 0` rather than `"" ""`.
 
 | Parameter | Effect |
 | --- | --- |
@@ -2726,7 +2728,7 @@ both as integers — pass `0 0` rather than `"" ""`.
 #### Examples
 
 ```sh
-mapbox static get-image streets-v12 "" 24.94 60.16 12 0 0 600 400 "" .png \
+mapbox static get-image streets-v12 "" 24.94 60.16 12 0 0 600 400 \
   --username mapbox > map.png
 
 mapbox static get-image streets-v12 "pin-s+555555(24.94,60.16)" \
@@ -2762,9 +2764,10 @@ One raster tile rendered from a style, rather than from a tileset.
 
 #### Parameters
 
-Seven positionals: `<style-id> <tilesize> <z> <x> <y> <highRes> <format>`.
+Five positionals, then two optional ones: `<style-id> <tilesize> <z> <x> <y>
+[highRes] [format]`.
 
-`<tilesize>` is `512` (the default) or `256`. 512 px tiles at zoom *z* cover
+`<tilesize>` is `512` (the API's default) or `256`, and has to be written. 512 px tiles at zoom *z* cover
 the same ground as 256 px tiles at *z+1*, so 256 needs four times as many
 requests for the same area.
 
@@ -2774,7 +2777,7 @@ requests for the same area.
 #### Examples
 
 ```sh
-mapbox static get-tile streets-v12 512 2 1 1 "" .png \
+mapbox static get-tile streets-v12 512 2 1 1 \
   --username mapbox > tile.png
 mapbox static get-tile streets-v12 256 12 2048 1361 "@2x" .png \
   --username mapbox > tile@2x.png
@@ -3301,13 +3304,13 @@ tile. `<z> <x> <y>` are the tile coordinates.
 
 `<format>` is `png`, `pngraw`, `jpg`, `jpeg` or `webp`. `<quality>` is
 appended to it rather than being a separate URL segment, so `jpg` with `70`
-fetches `.jpg70`; pass `""` for the format's default. Both are positional,
-in that order.
+fetches `.jpg70`; leave it off for the format's default. Both are
+positional, in that order.
 
 #### Examples
 
 ```sh
-mapbox tilesets get-tile mapbox.satellite 2 1 1 png "" > tile.png
+mapbox tilesets get-tile mapbox.satellite 2 1 1 png > tile.png
 mapbox tilesets get-tile mapbox.satellite 12 2048 1361 jpg 70 > tile.jpg70
 ```
 
@@ -3331,7 +3334,7 @@ it to a file, e.g. `... > out.jpg`.
 </td><td>
 
 ```
-$ mapbox tilesets get-tile mapbox.satellite 2 1 1 png "" > tile.png
+$ mapbox tilesets get-tile mapbox.satellite 2 1 1 png > tile.png
 $ file tile.png
 tile.png: JPEG image data
 ```

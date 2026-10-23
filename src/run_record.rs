@@ -93,7 +93,8 @@ pub(crate) struct Token {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TokenCandidates {
     pub flag: Option<String>,
-    /// `MAPBOX_ACCESS_TOKEN`, the one variable a service command reads.
+    /// `MAPBOX_ACCESS_TOKEN`, the one variable a service command reads. May
+    /// also hold the typed flag, which `flag` already outranks it with.
     pub environment: Option<String>,
     pub use_login: bool,
     pub profile: Option<String>,
@@ -296,6 +297,12 @@ pub fn set_token(source: auth::TokenSource, token: &str) {
     with_record(|record| record.token = Some(token));
 }
 
+/// The request went out with the CLI's own token, not the user's, so the
+/// run names no token: standing in the user's would say it sent theirs.
+pub fn set_sent_with_cli_token() {
+    with_record(|record| record.token_candidates = None);
+}
+
 fn token_fact(source: auth::TokenSource, token: &str) -> Token {
     let kind = match token.split('.').next() {
         Some("pk") => "pk",
@@ -315,10 +322,10 @@ fn token_fact(source: auth::TokenSource, token: &str) -> Token {
 /// read it; for any other, a guess could name the wrong account.
 fn unparsed_token_candidates(argv: &[OsString]) -> Option<TokenCandidates> {
     let chooses_token = |word: &str| {
-        ["--token", "--profile", "--use-login"]
-            .iter()
-            .any(|long| word == *long || word.starts_with(&format!("{long}=")))
-            || (word.starts_with('-') && !word.starts_with("--") && word.contains('t'))
+        ["--token", "--profile", "--use-login"].iter().any(|long| {
+            word.strip_prefix(long)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('='))
+        }) || (word.starts_with('-') && !word.starts_with("--") && word.contains('t'))
     };
     if argv
         .iter()

@@ -1621,7 +1621,10 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                     mode,
                 );
                 match attempt {
-                    CliAttempt::Done(result) => return result,
+                    CliAttempt::Done(result) => {
+                        run_record::set_sent_with_cli_token();
+                        return result;
+                    }
                     CliAttempt::Unusable { error, why, sent } => {
                         // The user already confirmed the request that was
                         // refused; sending it again with their own token is

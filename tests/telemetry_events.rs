@@ -693,6 +693,21 @@ fn a_run_without_a_request_names_the_token_an_api_call_would_use() {
     }
 }
 
+/// `report` goes with the CLI's own token when it can; a login standing in
+/// for it would say the run sent the user's.
+#[test]
+fn a_run_sent_with_the_clis_token_reports_no_auth() {
+    let home = scratch("would-use-cli-token");
+    log_in(&home, LOGIN_TOKEN);
+    let (out, event) = run_sent(&home, &["-o", "json", "report", "--dry-run", "A test"]);
+    let plan: Value = serde_json::from_slice(&out.stdout).expect("a JSON plan");
+    assert_eq!(
+        plan["token"], "cli",
+        "the run should have used the CLI's token"
+    );
+    assert_eq!(event["auth"], Value::Null);
+}
+
 #[test]
 fn no_token_anywhere_reports_no_auth() {
     let home = scratch("would-use-none");

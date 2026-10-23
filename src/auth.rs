@@ -1092,6 +1092,10 @@ pub fn logout(profile: Option<&str>, mode: Mode) -> Result<()> {
         // Wait for another run's login refresh to finish, so it can't write
         // the login back after it is removed.
         let _lock = CredentialLock::acquire(profile).ok();
+        // Read before it is gone: the run's account is the one logged out.
+        if let Some(creds) = load_credentials_readonly(profile) {
+            crate::run_record::set_token(TokenSource::Login, &creds.access_token);
+        }
         crate::run_record::set_auth_step("remove_credentials");
         std::fs::remove_file(&path)?;
     }

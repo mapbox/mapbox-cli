@@ -954,6 +954,7 @@ fn cli() -> u8 {
 
     if let Err(e) = commands::check_query(&matches) {
         run_record::set_unparsed(&app, &raw_argv, e.kind());
+        run_record::set_token_candidates(&matches);
         return report_parse_result(e, &raw_argv);
     }
 

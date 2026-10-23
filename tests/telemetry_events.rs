@@ -693,6 +693,38 @@ fn a_run_without_a_request_names_the_token_an_api_call_would_use() {
     }
 }
 
+/// A query `commands search` refuses after clap parsed it still reads its
+/// token from the parse, so `--profile` doesn't cost it the account.
+#[test]
+fn a_refused_search_query_still_names_the_profiles_account() {
+    let home = scratch("would-use-search");
+    std::fs::write(
+        config_dir(&home).join("credentials-work.json"),
+        format!(r#"{{"access_token":"{WORK_TOKEN}"}}"#),
+    )
+    .expect("write a login");
+    let (out, event) = run_sent(&home, &["--profile", "work", "commands", "search", "?!"]);
+    assert_eq!(out.status.code(), Some(2), "the query should be refused");
+    assert_eq!(event["usageError"], "InvalidValue");
+    assert_eq!(event["auth"], auth("login", "sk", "work-user"));
+}
+
+/// `logout` reports the account it logged out, read before the login is
+/// removed.
+#[test]
+fn logout_names_the_account_it_logged_out() {
+    let home = scratch("would-use-logout");
+    log_in(&home, LOGIN_TOKEN);
+    let (out, event) = run_sent(&home, &["auth", "logout"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!config_dir(&home).join("credentials.json").exists());
+    assert_eq!(event["auth"], auth("login", "tk", "login-user"));
+}
+
 /// `report` goes with the CLI's own token when it can; a login standing in
 /// for it would say the run sent the user's.
 #[test]

@@ -248,14 +248,7 @@ pub fn set_parsed(
         fields = body_fields(specs, &path);
     }
     let options = options(matches, leaf_matches);
-    let candidates = TokenCandidates {
-        flag: auth::typed_token(matches),
-        // `get_one` is the typed flag or, failing that, the variable clap
-        // binds it to; the typed one already outranks it as `flag`.
-        environment: matches.get_one::<String>("token").cloned(),
-        use_login: matches.get_flag("use-login"),
-        profile: matches.get_one::<String>("profile").cloned(),
-    };
+    let candidates = parsed_token_candidates(matches);
     with_record(|record| {
         record.command = path;
         record.invocation = Some(invocation);
@@ -315,6 +308,24 @@ fn token_fact(source: auth::TokenSource, token: &str) -> Token {
         kind,
         account: auth::token_account(token),
     }
+}
+
+fn parsed_token_candidates(matches: &ArgMatches) -> TokenCandidates {
+    TokenCandidates {
+        flag: auth::typed_token(matches),
+        // `get_one` is the typed flag or, failing that, the variable clap
+        // binds it to; the typed one already outranks it as `flag`.
+        environment: matches.get_one::<String>("token").cloned(),
+        use_login: matches.get_flag("use-login"),
+        profile: matches.get_one::<String>("profile").cloned(),
+    }
+}
+
+/// For a run [`set_unparsed`] recorded although clap did parse it, so its
+/// token is read from the answer rather than guessed from argv.
+pub fn set_token_candidates(matches: &ArgMatches) {
+    let candidates = parsed_token_candidates(matches);
+    with_record(|record| record.token_candidates = Some(candidates));
 }
 
 /// Without clap's answer, only a command line that names none of the

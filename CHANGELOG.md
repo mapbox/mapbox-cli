@@ -41,7 +41,9 @@ that may never merge. They are not releases and are not listed here.
   `--snapping-include-static-closures` take a value: `true` or `false` per
   coordinate, semicolon-separated (`true;false`). They were switches that
   sent a single `true`, which the API rejects with a 422 for any route, so
-  no working command changes.
+  no working command changes. In `--schema` they change from a boolean
+  flag to a string option; this is a fix rather than a breaking change for
+  the same reason.
 - `--help` shows each parameter's whole description rather than its first
   sentence, so the allowed values and what else a parameter needs
   ("Requires `overview=full`") are no longer cut off.

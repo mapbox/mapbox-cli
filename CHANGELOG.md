@@ -42,6 +42,13 @@ that may never merge. They are not releases and are not listed here.
   coordinate, semicolon-separated (`true;false`). They were switches that
   sent a single `true`, which the API rejects with a 422 for any route, so
   no working command changes.
+- `--help` shows each parameter's whole description rather than its first
+  sentence, so the allowed values and what else a parameter needs
+  ("Requires `overview=full`") are no longer cut off.
+- An API command's `--help` shows the opening of its description as plain
+  text, followed by a `Docs:` link, instead of the whole Markdown page with
+  its headings, tables and curl examples (`geocoder batch` was 113 lines).
+  `--schema` still carries the full description.
 - `feedback` moved from the Search help group to Maps and data.
 
 ## 1.1.1 - 2026-10-22

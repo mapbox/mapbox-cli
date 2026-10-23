@@ -1086,12 +1086,11 @@ pub fn parse_spec(service_name: &str, yaml: &str) -> Result<ServiceSpec> {
         .unwrap_or(service_name)
         .to_string();
 
-    // Flattened to one line (unlike a parameter's description): this
-    // renders as a service's `long_about`, where the spec's own line
-    // wrapping doesn't help.
+    // The opening prose, as Markdown: a first paragraph alone stopped
+    // `accounts` at "There are three kinds of tokens:", before the list.
     let description = doc["info"]["description"]
         .as_str()
-        .map(|text| first_paragraph(text).replace('\n', " "));
+        .map(|text| crate::markdown::intro(text).to_string());
 
     let base_url = doc["servers"]
         .as_sequence()
@@ -1669,8 +1668,6 @@ fn parse_parameter(val: &Value) -> Option<Parameter> {
     // extreme: `geocoder --types` alone is 4.6 KB of feature-type
     // reference, and the schema gets read on every call. A paragraph
     // avoids both problems, and leaves the appendices out.
-    // `crate::first_sentence` shortens it further for `--help`, which
-    // still renders exactly as it always has.
     let description = val["description"].as_str().map(first_paragraph);
 
     let schema = &val["schema"];

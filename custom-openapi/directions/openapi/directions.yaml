@@ -292,12 +292,6 @@ paths:
         - name: "alley_bias"
           in: query
           required: false
-          # Content before the profile note, not after: `first_sentence` in
-          # `src/main.rs` cuts a `--help` line at the first `.`, and
-          # `` `mapbox/driving` only. `` — a real sentence on its own — was
-          # eating everything that followed it. `--schema` and
-          # `docs/commands.md` show the description in full either way —
-          # this ordering is only for the one-line case.
           description: >-
             Bias the route against (negative) or toward (positive) alleys,
             -1 to 1. `mapbox/driving` only.

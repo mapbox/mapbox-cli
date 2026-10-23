@@ -1050,6 +1050,52 @@ fn a_missing_argument_error_names_the_arguments() {
     assert!(message.contains("<height>"), "{message}");
 }
 
+/// A parameter's help is its whole description: the sentences after the
+/// first are where a spec lists the values and what else the parameter
+/// needs. Whitespace is folded, since clap wraps the text at its own width.
+#[test]
+fn help_shows_a_parameter_s_whole_description() {
+    let help = |args: &[&str]| {
+        let out = run(args);
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+        stdout(&out)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+
+    let matrix = help(&["matrix", "--help"]);
+    assert!(
+        matrix.contains("Options are duration (the default) and distance"),
+        "{matrix}"
+    );
+    let directions = help(&["directions", "--help"]);
+    assert!(
+        directions.contains("Requires overview=full"),
+        "{directions}"
+    );
+    let feedback = help(&["feedback", "create", "--help"]);
+    assert!(
+        feedback.contains("Required, here or in --data"),
+        "{feedback}"
+    );
+}
+
+/// A spec's description stops at its reference material, keeps a list its
+/// opening introduces, and ends with the page that has the rest.
+#[test]
+fn help_keeps_a_spec_description_s_opening_prose() {
+    let forward = stdout(&run(&["geocoder", "forward", "--help"]));
+    assert!(!forward.contains("Structured Input"), "{forward}");
+    assert!(
+        forward.contains("Docs: https://docs.mapbox.com/api/search/geocoding-v6/"),
+        "{forward}"
+    );
+
+    let accounts = stdout(&run(&["accounts", "--help"]));
+    assert!(accounts.contains("- Temporary tokens (tk)"), "{accounts}");
+}
+
 /// The URL a command would request, read off `--debug`. The proxy is a dead
 /// port, so nothing reaches Mapbox.
 fn debug_url(args: &[&str]) -> String {

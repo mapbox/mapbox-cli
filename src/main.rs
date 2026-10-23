@@ -40,6 +40,7 @@ mod help_layout;
 mod history;
 mod http;
 mod link;
+mod markdown;
 mod mcp;
 mod output;
 mod remedy;
@@ -129,11 +130,8 @@ fn looks_like_a_flag(raw: &str) -> bool {
     }
 }
 
-/// A parameter's description, cut to its first sentence for a line of help.
-///
-/// The spec text is kept whole by `parse_spec` — `--schema` publishes it and
-/// a cut there lands inside identifiers and decimals. Help has a line to
-/// work with, so it shortens here, at the only place that wants it.
+/// A description cut to its first sentence, for a table cell that has one
+/// line to work with.
 ///
 /// A sentence ends at a full stop followed by white space, or at the end.
 /// Cutting at any `.` stopped help inside `{owner}.{tileset}`, `-85.0511`
@@ -156,13 +154,38 @@ fn ends_with_abbreviation(text: &str) -> bool {
     ["e.g.", "i.e."].iter().any(|abbr| text.ends_with(abbr))
 }
 
+/// A spec description followed by the page that has the rest of it: help
+/// keeps only the opening prose (see [`markdown::intro`]).
+fn with_docs_link(text: String, service: &str) -> String {
+    match remedy::docs_for_service(service) {
+        Some(url) => format!("{text}\n\nDocs: {url}"),
+        None => text,
+    }
+}
+
+/// A parameter's whole description, as one line of help.
+///
+/// Whole rather than its first sentence: the second is where a spec says
+/// which values are allowed and what else the parameter needs ("Requires
+/// `overview=full`", "Required, here or in `--data`"), and help cut there
+/// left a caller to find that out from the API's error. The spec's own line
+/// breaks are folded, since clap wraps the text itself.
 fn help_text(param: &spec::Parameter) -> String {
     param
         .description
         .as_deref()
-        .map(first_sentence)
+        .map(help_line)
         .unwrap_or_default()
-        .to_string()
+}
+
+/// Rendered, and without the closing full stop that clap's own help lines
+/// leave off.
+fn help_line(text: &str) -> String {
+    let text = markdown::render(text);
+    match text.strip_suffix('.') {
+        Some(stripped) => stripped.to_string(),
+        None => text,
+    }
 }
 
 /// The API's value for a spec-optional path parameter that clap cannot take
@@ -251,6 +274,7 @@ fn build_operation_command(op: &spec::Operation) -> Command {
     }
 
     if let Some(desc) = &op.description {
+        let desc = with_docs_link(markdown::render(markdown::intro(desc)), &op.service);
         // Marked here too, not only in `about`. Clap renders `long_about`
         // for `--help` and `about` for `-h`, so a command with a spec
         // description — all 54 of them have one — showed the marker in its
@@ -259,7 +283,7 @@ fn build_operation_command(op: &spec::Operation) -> Command {
         cmd = cmd.long_about(if op.deprecated {
             format!("[deprecated] {desc}")
         } else {
-            desc.clone()
+            desc
         });
     }
 
@@ -417,9 +441,8 @@ fn build_operation_command(op: &spec::Operation) -> Command {
         let help = variadic
             .description
             .as_deref()
-            .map(first_sentence)
-            .unwrap_or_default()
-            .to_string();
+            .map(help_line)
+            .unwrap_or_default();
         cmd = cmd.arg(
             Arg::new(variadic.arg_name.clone())
                 .required(true)
@@ -532,7 +555,7 @@ fn build_service_command(svc: &ServiceSpec) -> Command {
         .subcommand_required(true);
 
     if let Some(desc) = &svc.description {
-        cmd = cmd.long_about(desc.clone());
+        cmd = cmd.long_about(with_docs_link(markdown::render(desc), &svc.name));
     }
 
     attach_operations(cmd, &svc.name, &exposed, 0)
@@ -2358,7 +2381,17 @@ mod tests {
     /// keeps the paragraph, and this is where it gets cut back — and the
     /// sentence ends at a full stop, not at a dot inside an id or a number.
     #[test]
-    fn help_shortens_a_description_to_its_first_sentence() {
+    fn help_is_the_whole_description_on_one_line() {
+        assert_eq!(
+            help_line("A layer to add to the map\nbefore rendering. Maximum one per request."),
+            "A layer to add to the map before rendering. Maximum one per request"
+        );
+        assert_eq!(help_line("  no full stop here "), "no full stop here");
+        assert_eq!(help_line(""), "");
+    }
+
+    #[test]
+    fn first_sentence_stops_at_a_real_full_stop() {
         assert_eq!(
             first_sentence("Tileset ID in the format `username.id`. Order matters."),
             "Tileset ID in the format `username.id`"
@@ -2559,6 +2592,38 @@ mod tests {
         let mut expected: Vec<&str> = WRITES.iter().chain(&READS).copied().collect();
         expected.sort_unstable();
         assert_eq!(seen, expected, "auth lost a subcommand");
+    }
+
+    /// The specs' descriptions are Markdown written for docs.mapbox.com, and
+    /// none of that markup may reach `--help`: no heading, table, fence,
+    /// `<Note>`, bold marker or bare link syntax, on any command or service.
+    #[test]
+    fn no_markdown_reaches_help() {
+        let specs = bundled_specs();
+        let parsing = help_layout::for_parsing(help_layout::apply(build_app(&specs)));
+        let mut paths: Vec<Vec<String>> = leaf_commands(&parsing, &[])
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        paths.extend(specs.iter().map(|svc| vec![svc.name.clone()]));
+
+        let mut problems = vec![];
+        for path in paths {
+            let argv: Vec<&str> = std::iter::once("mapbox")
+                .chain(path.iter().map(String::as_str))
+                .chain(["--help"])
+                .collect();
+            let Err(help) = parsing.clone().try_get_matches_from(&argv) else {
+                continue;
+            };
+            let help = help.render().to_string();
+            for marker in ["## ", "**", "```", "<Note", "](", "| --- |", "|---"] {
+                if help.contains(marker) {
+                    problems.push(format!("`{}` shows `{marker}`", path.join(" ")));
+                }
+            }
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 
     /// Each default names a parameter that still needs one: spec-optional,

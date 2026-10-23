@@ -111,10 +111,6 @@ paths:
             the feedback.
           schema:
             type: string
-        # "ISO 8601" trails each of these six rather than leads them:
-        # `first_sentence` in `src/main.rs` cuts a `--help` line at the
-        # first `.`, and "ISO 8601." on its own left `--help` showing just
-        # that. `--schema` and `docs/commands.md` still show each in full.
         - name: "created_before"
           in: query
           required: false

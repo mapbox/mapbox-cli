@@ -31,6 +31,17 @@ that may never merge. They are not releases and are not listed here.
   `<quality>` can be left off instead of passed as `""`. Writing `""` still
   works, so existing scripts are unaffected. `--schema` now reports these
   arguments as not required.
+- A flag for a true/false API parameter now takes `=false`:
+  `--attribution=false` sends `attribution=false`. Alone it still sends
+  `true`, as before. Where the API defaults to `true` (`--attribution`,
+  `--logo`, `--autocomplete`, `--dedupe`, `--continue-straight` on driving
+  profiles), this is the only way to turn the setting off. A workflow
+  step's `false` still leaves the flag out, as before.
+- `directions --snapping-include-closures` and
+  `--snapping-include-static-closures` take a value: `true` or `false` per
+  coordinate, semicolon-separated (`true;false`). They were switches that
+  sent a single `true`, which the API rejects with a 422 for any route, so
+  no working command changes.
 - `feedback` moved from the Search help group to Maps and data.
 
 ## 1.1.1 - 2026-10-22

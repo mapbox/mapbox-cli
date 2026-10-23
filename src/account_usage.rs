@@ -661,10 +661,9 @@ fn fetch(
     // out of the request instead. The pinning test below is the actual
     // guard against that drift.
     //
-    // Mirrors `executor::dispatch`'s `is_boolean` branch: today's three
-    // parameters are all strings, but a future boolean one must not silently
-    // vanish from the request the way a bare `get_one::<String>` would leave
-    // it.
+    // Today's three parameters are all strings, but a future boolean one
+    // would be a hand-declared switch in `command()`, which a bare
+    // `get_one::<String>` would silently drop from the request.
     for param in &operation().query_params {
         if param.is_boolean {
             if matches.get_flag(&param.arg_name) {

@@ -1050,12 +1050,9 @@ fn a_missing_argument_error_names_the_arguments() {
     assert!(message.contains("<height>"), "{message}");
 }
 
-/// A spec-optional positional at the end of the line can be left off, and
-/// goes out the way `""` would: no placeholder and no stray separator. The
-/// proxy is a dead port, so `--debug` shows the URL without it reaching
-/// Mapbox.
-#[test]
-fn a_trailing_optional_positional_can_be_left_off() {
+/// The URL a command would request, read off `--debug`. The proxy is a dead
+/// port, so nothing reaches Mapbox.
+fn debug_url(args: &[&str]) -> String {
     let out = command()
         .env("HTTPS_PROXY", "http://127.0.0.1:9")
         .env_remove("https_proxy")
@@ -1063,29 +1060,73 @@ fn a_trailing_optional_positional_can_be_left_off() {
         .env_remove("all_proxy")
         .env_remove("NO_PROXY")
         .env_remove("no_proxy")
-        .args([
-            "--debug",
-            "--token",
-            "pk.test",
-            "-u",
-            "mapbox",
-            "static",
-            "get-image",
-            "streets-v12",
-            "",
-            "24.94",
-            "60.17",
-            "12",
-            "0",
-            "0",
-            "600",
-            "400",
-        ])
+        .args(["--debug", "--token", "pk.test", "-u", "mapbox"])
+        .args(args)
         .output()
         .expect("run mapbox");
-
     let err = stderr(&out);
-    assert!(err.contains("/static/24.94,60.17,12,0,0/600x400?"), "{err}");
+    err.lines()
+        .find_map(|line| line.strip_prefix("[debug] GET "))
+        .unwrap_or_else(|| panic!("no request in {err}"))
+        .to_string()
+}
+
+const STATIC_IMAGE: &[&str] = &[
+    "static",
+    "get-image",
+    "streets-v12",
+    "",
+    "24.94",
+    "60.17",
+    "12",
+    "0",
+    "0",
+    "600",
+    "400",
+];
+
+/// A spec-optional positional at the end of the line can be left off, and
+/// goes out the way `""` would: no placeholder and no stray separator.
+#[test]
+fn a_trailing_optional_positional_can_be_left_off() {
+    let url = debug_url(STATIC_IMAGE);
+    assert!(url.contains("/static/24.94,60.17,12,0,0/600x400?"), "{url}");
+}
+
+/// `attribution` and `logo` default to true at the API, so a flag that could
+/// only send `true` could never take them off the image.
+#[test]
+fn a_boolean_flag_sends_false_when_told_to() {
+    let url = debug_url(&[STATIC_IMAGE, &["--attribution=false", "--logo"]].concat());
+    assert!(url.contains("attribution=false"), "{url}");
+    assert!(url.contains("logo=true"), "{url}");
+}
+
+/// With the `=` required, `false` after a space is not the flag's value, so
+/// the optional value cannot swallow the next positional either.
+#[test]
+fn a_boolean_flag_value_needs_the_equals_sign() {
+    let out = command()
+        .args(["geocoder", "forward", "--q", "x", "--autocomplete", "false"])
+        .output()
+        .expect("run mapbox");
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+}
+
+/// One value per coordinate: a single switch is a 422 at the API.
+#[test]
+fn directions_snapping_takes_a_list_per_coordinate() {
+    let url = debug_url(&[
+        "directions",
+        "mapbox/driving-traffic",
+        "24.94,60.17;24.95,60.18",
+        "--snapping-include-closures",
+        "true;true",
+    ]);
+    assert!(
+        url.contains("snapping_include_closures=true%3Btrue"),
+        "{url}"
+    );
 }
 
 /// A live 401, carrying the advice a caller acts on: what to do, a command

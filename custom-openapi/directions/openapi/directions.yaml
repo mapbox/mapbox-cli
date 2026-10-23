@@ -352,22 +352,29 @@ paths:
             type: number
             minimum: 0
             maximum: 100
+        # One value per coordinate, not one switch: a lone `true` with two
+        # coordinates is a 422 ("one entry per coordinate, separated by
+        # ';'"), verified against production on 2026-10-23.
         - name: "snapping_include_closures"
           in: query
           required: false
           description: >-
-            Allow snapping to roads carrying a live-traffic closure.
-            `mapbox/driving-traffic` only.
+            Whether each coordinate may snap to a road carrying a live-traffic closure —
+            `true` or `false` per coordinate, semicolon-separated, with an
+            empty entry to skip one (`true;;false`). `mapbox/driving-traffic`
+            only.
           schema:
-            type: boolean
+            type: string
         - name: "snapping_include_static_closures"
           in: query
           required: false
           description: >-
-            Allow snapping to roads carrying a long-term closure.
-            `mapbox/driving-traffic` only.
+            Whether each coordinate may snap to a road carrying a long-term closure —
+            `true` or `false` per coordinate, semicolon-separated, with an
+            empty entry to skip one (`true;;false`). `mapbox/driving-traffic`
+            only.
           schema:
-            type: boolean
+            type: string
         - name: "walking_speed"
           in: query
           required: false

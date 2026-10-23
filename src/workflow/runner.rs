@@ -678,13 +678,19 @@ fn find_arg<'a>(
         })
         .ok_or_else(|| format!("`{key}` is not an argument of this command"))?;
     let repeatable = matches!(arg.get_action(), ArgAction::Append);
-    let shape = if matches!(arg.get_action(), ArgAction::SetTrue | ArgAction::SetFalse) {
-        ArgShape::Flag
-    } else if arg.is_positional() {
-        ArgShape::Positional { repeatable }
-    } else {
-        ArgShape::Option { repeatable }
-    };
+    // A generated boolean flag also takes `=false`, but a step's `false`
+    // still leaves it out: an API that reads presence rather than value
+    // would take `x=false` as on, and leaving it out is what `false` has
+    // always meant here.
+    let takes_false = arg.is_require_equals_set() && arg.get_num_args() == Some((0..=1).into());
+    let shape =
+        if takes_false || matches!(arg.get_action(), ArgAction::SetTrue | ArgAction::SetFalse) {
+            ArgShape::Flag
+        } else if arg.is_positional() {
+            ArgShape::Positional { repeatable }
+        } else {
+            ArgShape::Option { repeatable }
+        };
     Ok((arg, shape))
 }
 

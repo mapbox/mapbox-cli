@@ -608,6 +608,13 @@ Three things worth knowing about the read forms:
   `@<path>` rather than `@-` to keep the prompt, or pass `--yes` to say the
   answer deliberately.
 
+A flag that stands for a true/false API parameter, such as `--steps` or
+`--attribution`, sends `true` when given alone. Write `--flag=false` to send
+`false`, which matters where the API defaults to `true` (`--attribution`,
+`--logo`, `--autocomplete`, `--dedupe`, `--continue-straight` on driving
+profiles). The `=` is required: `--flag false` leaves `false` as a separate
+argument.
+
 A command that changes something takes `--dry-run`, which prints the request
 it would send, on stdout, and sends nothing. Which commands those are is not
 a list anyone keeps: it is every `POST`, `PUT`, `PATCH` and `DELETE` — 15 of
@@ -962,7 +969,7 @@ is 2-25 `{longitude},{latitude}` pairs, semicolon-separated.
 | `--avoid-maneuver-radius <1-1000>` | Meters around the start to avoid a significant maneuver within. |
 | `--bearings <angle,degrees;...>` | Filter road segments by direction of travel, one entry per coordinate. |
 | `--layers <int;...>` | A road layer (Z-order) per waypoint, for multi-level roads. |
-| `--continue-straight` | Keep going straight at an intermediate waypoint rather than u-turning back to it. |
+| `--continue-straight` | Keep going straight at an intermediate waypoint rather than u-turning back to it. Already the default on `mapbox/driving` and `mapbox/driving-traffic`; `--continue-straight=false` turns it off there. |
 | `--exclude <types>` | Road types or `point(lon lat)` values to route around, comma-separated (`motorway`, `toll`, `ferry`, `unpaved`, `cash_only_tolls`, `country_border`, `state_border`, `tunnel`). |
 | `--geometries <geojson\|polyline\|polyline6>` | Route geometry format. Defaults to `polyline`. |
 | `--include <types>` | Special road types to allow, comma-separated (`hov2`, `hov3`, `hot`). |
@@ -984,7 +991,7 @@ is 2-25 `{longitude},{latitude}` pairs, semicolon-separated.
 | `--arrive-by <ISO 8601>` | `mapbox/driving` only. |
 | `--depart-at <ISO 8601>` | `mapbox/driving` and `mapbox/driving-traffic`. |
 | `--max-height <0-10>` / `--max-width <0-10>` / `--max-weight <0-100>` | `mapbox/driving` and `mapbox/driving-traffic`. Meters, meters, metric tons. |
-| `--snapping-include-closures` / `--snapping-include-static-closures` | `mapbox/driving-traffic` only. |
+| `--snapping-include-closures <bool;...>` / `--snapping-include-static-closures <bool;...>` | `true` or `false` per coordinate, semicolon-separated; an empty entry skips one. `mapbox/driving-traffic` only. |
 | `--walking-speed <0.14-6.94>` / `--walkway-bias <-1..1>` | `mapbox/walking` only. |
 
 #### Examples
@@ -1432,7 +1439,7 @@ geographic context and coordinates.
 | `--proximity <lon,lat>` | Bias results towards a point. |
 | `--bbox <minlon,minlat,maxlon,maxlat>` | Restrict to a box. |
 | `--language <tag>` | IETF language tag. |
-| `--autocomplete` | Partial-input matching. |
+| `--autocomplete` | Partial-input matching. On by default; `--autocomplete=false` turns it off. |
 | `--worldview <code>` | Which country's view of disputed borders. |
 | `--permanent` | The result may be stored. Billed differently. |
 | `--format <format>` | `geojson` (default), or `v5` for the older response shape. |
@@ -2720,7 +2727,7 @@ both as numbers — pass `0 0` rather than `"" ""`.
 
 | Parameter | Effect |
 | --- | --- |
-| `--attribution` / `--logo` | Keep or drop the Mapbox attribution and logo. |
+| `--attribution` / `--logo` | Both on by default; `--attribution=false` / `--logo=false` drop them. |
 | `--addlayer <json>` | Add one layer on top of the style. |
 | `--before-layer <id>` | Where to insert it. |
 | `--setfilter <json>` / `--layer-id <id>` | Filter an existing layer. |
@@ -3413,7 +3420,7 @@ the point.
 | `--limit <n>` | How many features. Default 5, max 50. |
 | `--layers <names>` | Only these source layers. |
 | `--geometry <type>` | Only `point`, `linestring` or `polygon`. |
-| `--dedupe` | Drop duplicate features. |
+| `--dedupe` | Drop duplicate features. On by default; `--dedupe=false` keeps them. |
 | `--bands <names>` | Raster-array bands to sample. |
 | `--language` / `--worldview` | As in geocoding. |
 

@@ -286,9 +286,19 @@ fn build_operation_command(op: &spec::Operation) -> Command {
 
     for param in &op.query_params {
         let arg = if param.is_boolean {
+            // Present means `true`, as before, and `--flag=false` sends
+            // `false`: several of these default to true at the API
+            // (`attribution`, `autocomplete`, `dedupe`), so a bare switch
+            // could only ever send the default. The `=` is required so the
+            // optional value cannot take the next positional for itself.
             Arg::new(param.arg_name.clone())
                 .long(param.arg_name.clone())
-                .action(ArgAction::SetTrue)
+                .num_args(0..=1)
+                .require_equals(true)
+                .default_missing_value("true")
+                .value_name("true|false")
+                .value_parser(PossibleValuesParser::new(["true", "false"]))
+                .hide_possible_values(true)
                 .help(help_text(param))
         } else {
             let mut arg = Arg::new(param.arg_name.clone())

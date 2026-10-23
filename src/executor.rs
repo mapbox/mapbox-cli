@@ -200,11 +200,7 @@ fn dispatch(
     }
 
     for param in &op.query_params {
-        if param.is_boolean {
-            if matches.get_flag(&param.arg_name) {
-                query.push((param.name.clone(), "true".to_string()));
-            }
-        } else if let Some(val) = matches.get_one::<String>(&param.arg_name) {
+        if let Some(val) = matches.get_one::<String>(&param.arg_name) {
             query.push((param.name.clone(), val.clone()));
         }
     }

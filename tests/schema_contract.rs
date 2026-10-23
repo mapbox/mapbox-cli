@@ -120,6 +120,32 @@ fn a_command_describes_itself_without_being_able_to_run() {
     assert_eq!(style_id["location"], "path");
 }
 
+/// What an agent needs to write `static get-image` without guessing: which
+/// positionals it may leave off, and that a boolean flag also takes `=false`.
+#[test]
+fn optional_positionals_and_false_flags_are_described() {
+    let value = schema(&["static", "get-image", "--schema"]);
+    let arguments = commands(&value)[0]["arguments"]
+        .as_array()
+        .expect("arguments");
+    let arg = |name: &str| {
+        arguments
+            .iter()
+            .find(|arg| arg["name"] == name)
+            .unwrap_or_else(|| panic!("`{name}` is described"))
+    };
+
+    // Last on the line, so it can go.
+    assert_eq!(arg("format")["required"], false);
+    assert_eq!(arg("format")["omit_with_empty"], true);
+    // Before a required positional, so `""` has to be written.
+    assert_eq!(arg("overlay")["required"], true);
+    assert_eq!(arg("overlay")["omit_with_empty"], true);
+
+    assert_eq!(arg("attribution")["kind"], "flag");
+    assert_eq!(arg("attribution")["accepts_false"], true);
+}
+
 #[test]
 fn the_account_the_url_needs_is_listed_as_an_argument() {
     // `{username}` has no parameter of its own — the executor fills it from

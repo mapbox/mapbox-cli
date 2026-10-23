@@ -186,11 +186,16 @@ pub(crate) struct Argument {
     pub(crate) fills: Option<String>,
     /// Whether passing an empty string leaves this positional out of the
     /// URL — usually a suffix (`.png` off the end of a tile name), sometimes
-    /// a whole segment. The argument must still be written: clap requires
-    /// every path positional, and the spec's optional ones are omitted by
-    /// value, not by absence.
+    /// a whole segment. Only the run of these at the end of the line may be
+    /// left off altogether (`required: false`); one before a required
+    /// positional still has to be written, as `""`.
     #[serde(skip_serializing_if = "is_false")]
     pub(crate) omit_with_empty: bool,
+    /// Whether this flag also takes `--name=false`. Present alone it sends
+    /// `true`; the spelling with `=false` is the only way to send `false`,
+    /// which matters where the API defaults to `true`.
+    #[serde(skip_serializing_if = "is_false")]
+    pub(crate) accepts_false: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) env: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -223,6 +228,7 @@ impl Argument {
             required_one_of: vec![],
             fills: None,
             omit_with_empty: false,
+            accepts_false: false,
             env: None,
             default: None,
         }
@@ -483,6 +489,7 @@ fn api_command(app: &Command, svc: &ServiceSpec, op: &Operation) -> CommandEntry
             flag: Some(format!("--{}", param.arg_name)),
             required: param.required,
             location: Some("query"),
+            accepts_false: param.is_boolean,
             ..parameter(param, kind)
         }
     }));

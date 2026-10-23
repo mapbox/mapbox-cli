@@ -347,13 +347,22 @@ pub(crate) fn deliver(record: &Record) {
     {
         return;
     }
-    let event = build(record);
+    // Only here, past the opt-out: an event nobody sends is no reason to
+    // read the login.
+    let would_use = match record.token {
+        Some(_) => None,
+        None => run_record::would_use_token(record),
+    };
+    let event = build(record, would_use.as_ref());
     if let Ok(line) = serde_json::to_string(&event) {
         telemetry_sink::deliver(&line);
     }
 }
 
-fn build(record: &Record) -> Event {
+/// `would_use` stands in for a run that resolved no token: what a service
+/// command would have sent, so `auth.account` names a logged-in user on
+/// every event rather than only on those that called an API.
+fn build(record: &Record, would_use: Option<&run_record::Token>) -> Event {
     let options = record.options.as_ref();
     Event {
         event: EVENT,
@@ -383,7 +392,7 @@ fn build(record: &Record) -> Event {
             Some(_) => "named",
         }),
         timeout_seconds: options.and_then(|o| o.timeout).map(|t| t.as_secs_f64()),
-        auth: record.token.as_ref().map(|token| Auth {
+        auth: record.token.as_ref().or(would_use).map(|token| Auth {
             source: token.source.as_str(),
             kind: token.kind,
             account: token.account.as_deref().map(|a| clip(a, MAX_NAME)),

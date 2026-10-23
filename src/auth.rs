@@ -1166,6 +1166,21 @@ pub(crate) fn resolve_source<'a>(
     stored.map(|token| (TokenSource::Login, token))
 }
 
+/// [`resolve_source`] for a parsed command line: the token a service command
+/// sends, and where it came from. `get_one` folds in the
+/// `MAPBOX_ACCESS_TOKEN` fallback declared on the arg, which `--use-login`
+/// asks to skip; a typed flag outranks it either way.
+pub(crate) fn resolve_token(
+    matches: &clap::ArgMatches,
+    use_login: bool,
+    stored: Option<&str>,
+) -> Option<(TokenSource, String)> {
+    let flag = typed_token(matches);
+    let environment = matches.get_one::<String>("token").map(String::as_str);
+    resolve_source(flag.as_deref(), environment, stored, use_login)
+        .map(|(source, token)| (source, token.to_string()))
+}
+
 /// A token's kind, from its prefix: `pk` public, `sk` secret, `tk` temporary.
 ///
 /// Read off the prefix rather than the payload because that is where the API

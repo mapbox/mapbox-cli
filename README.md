@@ -301,6 +301,8 @@ Each run also sends one event to Mapbox:
   after an upgrade, and whether it ran in CI or under a detected AI coding
   agent;
 - which kind of token the command used and the Mapbox account it belongs to.
+  A command that uses none reports the token an API command would use
+  instead, so a run while logged in names your account.
 
 It never includes a file path or free text you typed. It carries a random ID
 that is replaced on the first run a day after it was created. It is sent in

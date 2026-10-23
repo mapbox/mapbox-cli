@@ -22,6 +22,11 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- `mapbox usage --dimensions browsers,countries,hosts` asks the Statistics
+  API for the per-browser, per-country and per-host breakdown, which it now
+  sends only on request. Without the flag the request is unchanged, and each
+  product's `dimensions` in `-o json` is `{}`.
+
 ## 1.1.1 - 2026-10-22
 
 - The update check now runs in published builds. 0.3.0 through 1.1.0 were

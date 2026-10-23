@@ -1,0 +1,357 @@
+openapi: 3.0.3
+info:
+  title: Mapbox Statistics API
+  version: 1.0.0
+  description: |-
+    The Statistics API returns daily usage for an account's Mapbox products over a period of up to 31 days, optionally scoped to a single access token. Usage is broken down per product into daily totals and, when requested with the `dimensions` parameter, per-browser, per-country and per-host breakdowns, alongside the list of days on which the account (or token) had any billable activity.
+    Usage is aggregated per UTC calendar day. Data for a completed day is typically available within 3 hours after the end of that UTC day, so the current day may be partial or absent. For complete results, set `period_end` to yesterday or earlier.
+    Responses are cached for 30 minutes. Once `period_end` is before yesterday (UTC) the usage is no longer expected to change and responses are cached for 12 hours instead. Error responses are never cached.
+  x-mapbox-docs-path: accounts/statistics
+  x-mapbox-docs-products:
+  - accounts
+  x-mapbox-docs-description: Retrieve daily product usage for an account or a single access token.
+  license:
+    name: Mapbox Terms of Service
+    url: https://www.mapbox.com/legal/tos
+servers:
+- url: https://api.mapbox.com
+  description: Mapbox production API
+security:
+- access_token: []
+tags:
+- name: Statistics
+  description: Retrieve daily product usage for an account or token.
+paths:
+  /statistics/v1:
+    get:
+      tags:
+      - Statistics
+      summary: Retrieve usage statistics
+      description: |-
+        Returns daily usage for every Mapbox product the account (or, when `token_id` is given, the token) used during the requested period, plus the list of days with any billable activity. The requesting token must have the `statistics:read` scope. Products with no usage in the period are omitted.
+
+        The period is inclusive on both ends and may span at most 31 days. When `period_end` is omitted it defaults to today, unless `period_start` is more than 30 days in the past, in which case it defaults to `period_start` plus 30 days. When `period_start` is omitted it defaults to 30 days before `period_end`.
+
+        `data.period` is the range the response covers and `data.next_period_start` is the `period_start` to use on the next call, or `null` when the requested period is fully covered. The server may cover fewer days than requested; when it does, `daily`, `activeDays` and `dimensions` are all limited to the same days, so pages concatenate. Loop until `next_period_start` is `null`. Today the server always covers the whole period and `next_period_start` is always `null`.
+      operationId: getUsageStatistics
+      x-mapbox-docs-examples:
+      - example-id: token-statistics
+        title: Retrieve usage for a single token
+      parameters:
+      - name: token_id
+        in: query
+        required: false
+        description: Restrict the statistics to a single access token, identified by the `id` field of
+          a token object from the Tokens API (not the token string itself). When omitted, usage is combined
+          across every token on the account.
+        schema:
+          type: string
+        example: cijucimbe000brbkt48d0dhcx
+      - name: period_start
+        in: query
+        required: false
+        description: First day of the period (inclusive), as `YYYY-MM-DD` in UTC. Defaults to 30 days
+          before `period_end`.
+        schema:
+          $ref: '#/components/schemas/Date'
+      - name: period_end
+        in: query
+        required: false
+        description: Last day of the period (inclusive), as `YYYY-MM-DD` in UTC. Defaults to today, or
+          to `period_start` plus 30 days when `period_start` is more than 30 days in the past.
+        schema:
+          $ref: '#/components/schemas/Date'
+      - name: dimensions
+        in: query
+        required: false
+        description: Comma-separated subset of `browsers`, `countries` and `hosts`. Each product's `dimensions`
+          then carries a per-value daily breakdown for the listed dimensions only. When omitted, only
+          product totals are returned and `dimensions` is `{}`. Any other value returns `422`.
+        schema:
+          type: string
+          pattern: ^(browsers|countries|hosts)(,(browsers|countries|hosts))*$
+        example: browsers,countries,hosts
+      responses:
+        '200':
+          description: Daily usage for the requested period.
+          headers:
+            Cache-Control:
+              description: '`max-age=1800, s-maxage=1800` by default. `max-age=43200, s-maxage=43200`
+                when `period_end` is before yesterday (UTC).'
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatisticsResponse'
+              examples:
+                token-statistics:
+                  summary: Two days of Vector Tiles API usage for one token, with `dimensions=browsers,countries,hosts`
+                  value:
+                    data:
+                      period:
+                        start: '2024-01-01'
+                        end: '2024-01-02'
+                      next_period_start: null
+                      token_id: cijucimbe000brbkt48d0dhcx
+                      products:
+                        Vector Tiles API:
+                          daily:
+                          - date: '2024-01-01'
+                            usage: 100
+                          - date: '2024-01-02'
+                            usage: 100
+                          dimensions:
+                            browsers:
+                            - name: Chrome
+                              daily:
+                              - date: '2024-01-01'
+                                usage: 75
+                              - date: '2024-01-02'
+                                usage: 75
+                            - name: Firefox
+                              daily:
+                              - date: '2024-01-01'
+                                usage: 25
+                              - date: '2024-01-02'
+                                usage: 25
+                            countries:
+                            - name: US
+                              daily:
+                              - date: '2024-01-01'
+                                usage: 50
+                              - date: '2024-01-02'
+                                usage: 100
+                            - name: JP
+                              daily:
+                              - date: '2024-01-01'
+                                usage: 50
+                            hosts:
+                            - name: example.com
+                              daily:
+                              - date: '2024-01-01'
+                                usage: 50
+                              - date: '2024-01-02'
+                                usage: 50
+                            - name: test.com
+                              daily:
+                              - date: '2024-01-01'
+                                usage: 50
+                              - date: '2024-01-02'
+                                usage: 50
+                      activeDays:
+                      - '2024-01-01'
+                      - '2024-01-02'
+                    generated_at: '2024-01-31T10:30:00.000Z'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      x-mapbox-cli-command:
+      - usage
+      - get
+components:
+  securitySchemes:
+    access_token:
+      type: apiKey
+      in: query
+      name: access_token
+      description: A Mapbox access token supplied as the `access_token` query parameter. The token must
+        have the `statistics:read` scope.
+  responses:
+    Unauthorized:
+      description: The access token is missing or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Not Authorized - Invalid Token
+    Forbidden:
+      description: The access token does not have the `statistics:read` scope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: This API requires a token with statistics:read scope.
+    UnprocessableEntity:
+      description: 'The period is invalid: a date is not a valid `YYYY-MM-DD` calendar date, `period_end`
+        is before `period_start`, or the period is longer than 31 days. Or `dimensions` is not a comma-separated
+        subset of `browsers`, `countries`, `hosts`.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalid-date:
+              summary: Malformed or non-existent date
+              value:
+                message: Invalid start date format. Expected YYYY-MM-DD
+            end-before-start:
+              summary: End date before start date
+              value:
+                message: End date must be after start date
+            period-too-long:
+              summary: Period longer than 31 days
+              value:
+                message: Invalid time period. Limit is 31 days
+            invalid-dimensions:
+              summary: Unknown dimension
+              value:
+                message: Invalid dimensions. Expected a comma-separated list of browsers, countries, hosts
+    RateLimited:
+      description: The rate limit (20 requests per minute per IP address) has been exceeded.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Too Many Requests
+    InternalServerError:
+      description: The usage data could not be retrieved.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            message: Internal Server Error
+  schemas:
+    Date:
+      type: string
+      format: date
+      pattern: ^\d{4}-\d{2}-\d{2}$
+      description: A UTC calendar day as `YYYY-MM-DD`.
+      example: '2024-01-01'
+    DailyUsage:
+      type: object
+      description: Usage on one UTC calendar day.
+      properties:
+        date:
+          $ref: '#/components/schemas/Date'
+        usage:
+          type: number
+          description: Usage on that day in the product's billing unit (for example requests, map loads
+            or monthly active users).
+          example: 100
+      required:
+      - date
+      - usage
+    Dimension:
+      type: object
+      description: Daily usage attributed to one value of a dimension.
+      properties:
+        name:
+          type: string
+          description: 'The dimension value: a browser or SDK name, an ISO 3166-1 alpha-2 country code,
+            or a request host.'
+          example: Chrome
+        daily:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyUsage'
+      required:
+      - name
+      - daily
+    Product:
+      type: object
+      description: Usage of one Mapbox product over the period.
+      properties:
+        daily:
+          type: array
+          description: Daily usage within the period. Days with zero usage are omitted.
+          items:
+            $ref: '#/components/schemas/DailyUsage'
+        dimensions:
+          type: object
+          description: The same usage broken down per value of each dimension named in the `dimensions`
+            query parameter. Only the requested keys are present; `{}` when the parameter was omitted.
+          properties:
+            browsers:
+              type: array
+              items:
+                $ref: '#/components/schemas/Dimension'
+            countries:
+              type: array
+              items:
+                $ref: '#/components/schemas/Dimension'
+            hosts:
+              type: array
+              items:
+                $ref: '#/components/schemas/Dimension'
+      required:
+      - daily
+      - dimensions
+    StatisticsResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            period:
+              type: object
+              description: The resolved period after defaults are applied.
+              properties:
+                start:
+                  $ref: '#/components/schemas/Date'
+                end:
+                  $ref: '#/components/schemas/Date'
+              required:
+              - start
+              - end
+            next_period_start:
+              type: string
+              format: date
+              pattern: ^\d{4}-\d{2}-\d{2}$
+              nullable: true
+              description: The `period_start` to use on the next call to continue the requested period,
+                or `null` when this response covers all of it.
+              example: null
+            token_id:
+              type: string
+              nullable: true
+              description: The `token_id` the statistics are scoped to, or `null` when they cover the
+                whole account.
+              example: cijucimbe000brbkt48d0dhcx
+            products:
+              type: object
+              description: Usage keyed by product name, matching the line items on the account's invoice.
+                Products with no usage in the period are omitted.
+              additionalProperties:
+                $ref: '#/components/schemas/Product'
+            activeDays:
+              type: array
+              description: 'Days within the period on which the account (or token) had any billable activity:
+                usage of a metered product, or a new monthly active user. Days with no activity are omitted.'
+              items:
+                $ref: '#/components/schemas/Date'
+          required:
+          - period
+          - next_period_start
+          - token_id
+          - products
+          - activeDays
+        generated_at:
+          type: string
+          format: date-time
+          description: When the response was generated. A cached response keeps the `generated_at` of
+            the request that populated the cache.
+          example: '2024-01-31T10:30:00.000Z'
+      required:
+      - data
+      - generated_at
+    Error:
+      type: object
+      description: A standard error response.
+      properties:
+        message:
+          type: string
+          description: A human-readable description of the error.
+      required:
+      - message

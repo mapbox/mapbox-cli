@@ -179,6 +179,12 @@ pub fn command() -> Command {
         Arg::new("key")
             .required(true)
             .value_parser(PossibleValuesParser::new(KEYS))
+            // Defaults as `resolve` reads them.
+            .help(
+                "update-check: look for a newer version (default on); history: record \
+                 each run (on); log: keep diagnostic detail for recorded runs, needs \
+                 history (off); telemetry: send usage events to Mapbox (on)",
+            )
     };
 
     Command::new(COMMAND)

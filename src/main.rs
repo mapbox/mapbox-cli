@@ -62,14 +62,6 @@ use output::{CliError, Mode};
 use remedy::Remedy;
 use spec::ServiceSpec;
 
-/// Where this CLI's source and issue tracker live, written down once so that
-/// a repository rename is one edit rather than a grep.
-///
-/// The two installers keep a copy of their own each. They are downloaded and
-/// run on their own, with nothing of this crate beside them, so this is the
-/// single source for the Rust half rather than for all three.
-const REPO_URL: &str = repo_url!();
-
 /// Opens the top-level help when an agent is driving the CLI. Agents explore
 /// by chaining `--help` calls, one command at a time; `--schema` answers the
 /// same question for every command in one document.

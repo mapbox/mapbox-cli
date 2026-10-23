@@ -47,8 +47,7 @@ paths:
             live traffic), `mapbox/driving`, `mapbox/walking`, or
             `mapbox/cycling` are documented, but not necessarily
             exhaustive: some accounts have additional profiles of their
-            own. Sent exactly as typed; the API is the authority on
-            whether a value is valid, not this description.
+            own. Any other value is sent as typed.
           schema:
             type: string
             minLength: 1

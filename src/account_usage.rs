@@ -20,7 +20,6 @@ use crate::spec::{parse_spec, Operation};
 // `--help` points at the tracker rather than at one issue in it: issue
 // numbers do not survive a repository move, and a dead number in help text
 // printed by every shipped binary is worse than no number at all.
-use crate::REPO_URL;
 
 pub const COMMAND: &str = "usage";
 
@@ -74,13 +73,12 @@ fn operation() -> &'static Operation {
 pub fn command() -> Command {
     Command::new(COMMAND)
         .about("Show account and token usage by product and day")
-        .long_about(format!(
+        .long_about(
             "Show usage per Mapbox product, by day, for the account or one token.\n\n\
              Calls the Statistics API; the token needs the `statistics:read` scope. \
              `mapbox auth login` requests it by default; log in again if your stored \
-             token predates that.\n\n\
-             See {REPO_URL}/issues."
-        ))
+             token predates that.",
+        )
         .arg(
             Arg::new(TOKEN_ID_ARG)
                 .long(TOKEN_ID_ARG)

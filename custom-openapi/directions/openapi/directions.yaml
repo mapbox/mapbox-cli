@@ -58,8 +58,7 @@ paths:
             live traffic), `mapbox/driving`, `mapbox/walking`, or
             `mapbox/cycling` are documented, but not necessarily
             exhaustive: some accounts have additional profiles of their
-            own. Sent exactly as typed; the API is the authority on
-            whether a value is valid, not this description.
+            own. Any other value is sent as typed.
           schema:
             type: string
             minLength: 1
@@ -251,8 +250,8 @@ paths:
           required: false
           description: >-
             Zero-based indices into `coordinates` marking which ones get
-            their own arrival instruction — must include `0` and the last
-            index. Requires `steps=true`.
+            their own arrival instruction, semicolon-separated — must
+            include `0` and the last index. Requires `steps=true`.
           schema:
             type: string
           example: "0,2"

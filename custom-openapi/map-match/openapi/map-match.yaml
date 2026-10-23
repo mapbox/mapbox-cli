@@ -49,8 +49,7 @@ paths:
             live traffic), `mapbox/driving`, `mapbox/walking`, or
             `mapbox/cycling` are documented, but not necessarily
             exhaustive: some accounts have additional profiles of their
-            own. Sent exactly as typed; the API is the authority on
-            whether a value is valid, not this description.
+            own. Any other value is sent as typed.
           schema:
             type: string
             minLength: 1
@@ -95,9 +94,10 @@ paths:
           in: query
           required: false
           description: >-
-            Which side of the road to approach each waypoint from,
-            semicolon-separated — `unrestricted` or `curb` per coordinate.
-            Requires `--steps`.
+            Which side of the road to approach each waypoint from, one per
+            waypoint (every coordinate unless `--waypoints` picks some),
+            semicolon-separated — `unrestricted` or `curb`. Requires
+            `--steps`.
           schema:
             type: string
         - name: "geometries"

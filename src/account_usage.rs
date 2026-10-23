@@ -25,17 +25,16 @@ use crate::REPO_URL;
 pub const COMMAND: &str = "usage";
 
 /// Where the request goes and what it may carry — base URL, path, and the
-/// query parameter names — read from a spec this repo writes and versions
-/// itself, since openapi-specs publishes none for this API.
+/// query parameter names — read from the Statistics API team's spec in
+/// openapi-specs, vendored like every other.
 ///
-/// Deliberately not wired into `CUSTOM_SPEC_ENTRIES` — see `src/spec.rs`,
-/// `statistics` is the one exception among the entries there: the generic
-/// pipeline registers a subcommand for every entry unconditionally and only
-/// in a two-level `<service> <operation>` shape, so it can express neither
-/// this command's feature-flag gate nor its single-level surface. Only the
-/// request shape comes from the spec; the flags below stay hand-declared for
-/// their help text.
-pub(crate) const SPEC: &str = include_str!("../custom-openapi/statistics/openapi/statistics.yaml");
+/// Deliberately not wired into `MAPBOX_SPEC_ENTRIES`: the generic pipeline
+/// would register it as `<service> <operation>`, not this command's
+/// single-level surface or its own text rendering. Only the request shape
+/// comes from the spec; the flags below stay hand-declared for their help
+/// text. The maintainer sync reads this `include_str!` as well as
+/// `src/spec.rs`'s, so the file is regenerated with the rest.
+pub(crate) const SPEC: &str = include_str!("../openapi/api-analytics/statistics-api.yaml");
 
 const ACCESS_TOKEN: &str = "access_token";
 const REDACTED: &str = "<redacted>";
@@ -43,6 +42,7 @@ const REDACTED: &str = "<redacted>";
 const TOKEN_ID_ARG: &str = "token-id";
 const PERIOD_START_ARG: &str = "period-start";
 const PERIOD_END_ARG: &str = "period-end";
+const DIMENSIONS_ARG: &str = "dimensions";
 const PRODUCT_ARG: &str = "product";
 const DAILY_ARG: &str = "daily";
 
@@ -103,6 +103,15 @@ pub fn command() -> Command {
                 .help(
                     "End of the usage period, inclusive. Defaults to today. \
                      At most 31 days after --period-start.",
+                ),
+        )
+        .arg(
+            Arg::new(DIMENSIONS_ARG)
+                .long(DIMENSIONS_ARG)
+                .value_name("LIST")
+                .help(
+                    "Also break each product's usage down by these, comma-separated: \
+                     browsers, countries, hosts. Shows in -o json only.",
                 ),
         )
         .arg(
@@ -380,10 +389,14 @@ fn render_text(json: &Value, daily: bool, already_filtered: bool, color: bool) -
         lines.push(style::paint(&footer, &style::muted(), color));
     }
 
+    // The API sends the breakdown only when `dimensions` asks for it.
     let mut tips = vec![if daily {
-        "`-o json` for the per-browser/country/host breakdown.".to_string()
+        "`-o json --dimensions browsers,countries,hosts` for the per-browser/country/host \
+         breakdown."
+            .to_string()
     } else {
-        "`-o json` for the exact per-day numbers and the per-browser/country/host breakdown."
+        "`-o json` for the exact per-day numbers; add `--dimensions browsers,countries,hosts` \
+         for the per-browser/country/host breakdown."
             .to_string()
     }];
     if !daily {
@@ -728,7 +741,8 @@ fn remedy_for(status: u16) -> Remedy {
         ),
         422 => Remedy::default().with_fix(
             "--period-start/--period-end take YYYY-MM-DD, the end can't be before the start, \
-             and the two may span at most 31 days.",
+             and the two may span at most 31 days. --dimensions takes a comma-separated \
+             subset of browsers, countries, hosts.",
         ),
         429 => Remedy::default()
             .with_fix("Rate-limited at 20 requests per minute per IP. Wait and try again."),
@@ -773,7 +787,7 @@ mod tests {
         from_spec.sort_unstable();
         assert_eq!(
             from_spec,
-            ["period-end", "period-start", "token-id"],
+            ["dimensions", "period-end", "period-start", "token-id"],
             "the spec's query parameters and the flags `command()` declares have drifted"
         );
 
@@ -1460,6 +1474,8 @@ mod tests {
             "2026-01-01",
             "--period-end",
             "2026-01-31",
+            "--dimensions",
+            "browsers,hosts",
         ]);
         fetch(&base_url, &matches, Some("pk.test"), false, None).expect("a 200 parses");
 
@@ -1468,12 +1484,29 @@ mod tests {
             "token_id=tok123",
             "period_start=2026-01-01",
             "period_end=2026-01-31",
+            "dimensions=browsers%2Chosts",
         ] {
             assert!(
                 head.contains(expected),
                 "missing `{expected}` in request line: {head}"
             );
         }
+    }
+
+    /// The request a run without the newer `--dimensions` flag sends must be
+    /// the one it sent before the flag existed.
+    #[test]
+    fn no_dimensions_flag_sends_no_dimensions_param() {
+        let (server, base_url) = serve_once("200 OK", r#"{"data":{}}"#);
+
+        let matches = command().get_matches_from(["usage", "--period-start", "2026-01-01"]);
+        fetch(&base_url, &matches, Some("pk.test"), false, None).expect("a 200 parses");
+
+        let head = server.join().expect("the server thread");
+        assert!(
+            !head.contains("dimensions"),
+            "unexpected `dimensions` in request line: {head}"
+        );
     }
 
     /// The API answers 403, not 401, when the token itself is fine but is

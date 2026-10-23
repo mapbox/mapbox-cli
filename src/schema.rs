@@ -60,7 +60,20 @@ pub(crate) struct Schema {
     target: String,
     pub(crate) authentication: &'static str,
     pub(crate) global_options: Vec<Argument>,
+    /// The commands that hold others — `mapbox history`, `mapbox geocoder` —
+    /// with what their own help says. Only leaves are in `commands`, and the
+    /// group's text is often the part that applies to all of them: how long
+    /// history is kept, that `config` writes a file.
+    pub(crate) groups: Vec<Group>,
     pub(crate) commands: Vec<CommandEntry>,
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct Group {
+    pub(crate) command: String,
+    pub(crate) summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) description: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -317,7 +330,65 @@ pub(crate) fn build(app: &Command, specs: &[ServiceSpec], path: &[String]) -> Sc
         // Whole, at every level: a caller that asked about one command still
         // needs to know a token goes on the front of it.
         global_options: global_options(app),
+        groups: groups(app, specs, path),
         commands: commands(app, specs, path),
+    }
+}
+
+/// Every group on the way to the target or under it: `mapbox history list
+/// --schema` still gets `mapbox history`, whose text covers it.
+fn groups(app: &Command, specs: &[ServiceSpec], path: &[String]) -> Vec<Group> {
+    let mut out = vec![];
+    collect_groups(app, specs, &mut vec![], path, &mut out);
+    out
+}
+
+fn collect_groups(
+    cmd: &Command,
+    specs: &[ServiceSpec],
+    at: &mut Vec<String>,
+    target: &[String],
+    out: &mut Vec<Group>,
+) {
+    let children = || {
+        cmd.get_subcommands()
+            .filter(|sub| sub.get_name() != "help" && !sub.is_hide_set())
+    };
+    if !at.is_empty() && children().next().is_some() {
+        let related = at.starts_with(target) || target.starts_with(at);
+        if related {
+            out.push(group(cmd, specs, at));
+        }
+    }
+    for sub in children() {
+        at.push(sub.get_name().to_string());
+        collect_groups(sub, specs, at, target, out);
+        at.pop();
+    }
+}
+
+fn group(cmd: &Command, specs: &[ServiceSpec], at: &[String]) -> Group {
+    let service = (at.len() == 1)
+        .then(|| specs.iter().find(|svc| svc.name == at[0]))
+        .flatten();
+    Group {
+        command: std::iter::once("mapbox")
+            .chain(at.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" "),
+        // An API service's `about` is its spec's title ("Mapbox Tokens
+        // API"); the help listing's line says what the group is for.
+        summary: crate::help_layout::description(&at[0])
+            .filter(|_| at.len() == 1)
+            .map(String::from)
+            .or_else(|| cmd.get_about().map(ToString::to_string))
+            .unwrap_or_default(),
+        // A service's spec Markdown rather than the help rendered from it,
+        // the same as an API command's `description`.
+        description: match service {
+            Some(svc) => svc.description.clone(),
+            None => long_about(cmd),
+        },
     }
 }
 
@@ -887,6 +958,7 @@ fn long_about(cmd: &Command) -> Option<String> {
 /// command declares.
 fn clap_argument(arg: &Arg) -> Argument {
     let long = arg.get_long();
+    let help = arg.get_help().map(ToString::to_string);
     let is_flag = matches!(arg.get_action(), ArgAction::SetTrue | ArgAction::SetFalse);
 
     let kind = match (long.is_some(), is_flag) {
@@ -919,9 +991,9 @@ fn clap_argument(arg: &Arg) -> Argument {
                 .map(|value| value.get_name().to_string())
                 .collect()
         },
-        description: arg
-            .get_help()
-            .map(ToString::to_string)
+        description: help
+            .as_deref()
+            .map(without_hand_notes)
             .filter(|help| !help.is_empty()),
         // `--file` repeats by being written again; `tilesets-cli`'s
         // passthrough takes many values at once. Both mean "more than one".
@@ -929,17 +1001,55 @@ fn clap_argument(arg: &Arg) -> Argument {
             || arg
                 .get_num_args()
                 .is_some_and(|range| range.max_values() > 1),
-        env: arg.get_env().and_then(|env| env.to_str()).map(String::from),
+        env: arg
+            .get_env()
+            .and_then(|env| env.to_str())
+            .map(String::from)
+            .or_else(|| hand_note(help.as_deref(), "env")),
         default: arg
             .get_default_values()
             .first()
             .and_then(|value| value.to_str())
-            .map(String::from),
+            .map(String::from)
+            .or_else(|| hand_note(help.as_deref(), "default")),
         ..Argument::new(
             long.unwrap_or_else(|| arg.get_id().as_str()).to_string(),
             kind,
         )
     }
+}
+
+/// A `[env: X]` or `[default: X]` written into an argument's help by hand.
+///
+/// Some arguments read their variable or apply their default in code rather
+/// than through clap, so that an unusable `MAPBOX_OUTPUT=` or
+/// `MAPBOX_TIMEOUT=30s` warns instead of failing every command. Their help
+/// spells the note the way clap would, and this reads it back, so the
+/// schema's `env` and `default` hold for every argument rather than only
+/// those clap knows about.
+fn hand_note(help: Option<&str>, key: &str) -> Option<String> {
+    let open = format!("[{key}: ");
+    let start = help?.find(&open)? + open.len();
+    let rest = &help?[start..];
+    Some(rest[..rest.find(']')?].to_string())
+}
+
+/// `help` without the notes [`hand_note`] reads, which the schema reports
+/// as fields instead.
+fn without_hand_notes(help: &str) -> String {
+    let mut text = help.to_string();
+    for key in ["env", "default"] {
+        let open = format!("[{key}: ");
+        if let Some(start) = text.find(&open) {
+            if let Some(len) = text[start..].find(']') {
+                text.replace_range(start..=start + len, "");
+            }
+        }
+    }
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace(" .", ".")
 }
 
 #[cfg(test)]
@@ -1390,6 +1500,25 @@ mod tests {
         assert_eq!(
             omittable_tail(&params, "/static/{overlay}/{zoom}/{w}x{h}{highRes}{format}"),
             [false, false, false, false, true, true]
+        );
+    }
+
+    #[test]
+    fn a_hand_written_note_becomes_a_field() {
+        let help = "GitHub repository to install from [default: mapbox/mapbox-cli]. Reads \
+                    GH_TOKEN for a private one";
+        assert_eq!(
+            hand_note(Some(help), "default").as_deref(),
+            Some("mapbox/mapbox-cli")
+        );
+        assert_eq!(hand_note(Some(help), "env"), None);
+        assert_eq!(
+            without_hand_notes(help),
+            "GitHub repository to install from. Reads GH_TOKEN for a private one"
+        );
+        assert_eq!(
+            without_hand_notes("Seconds per request [env: MAPBOX_TIMEOUT]"),
+            "Seconds per request"
         );
     }
 

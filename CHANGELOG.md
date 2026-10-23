@@ -49,6 +49,16 @@ that may never merge. They are not releases and are not listed here.
   text, followed by a `Docs:` link, instead of the whole Markdown page with
   its headings, tables and curl examples (`geocoder batch` was 113 lines).
   `--schema` still carries the full description.
+- `--id` on a command that is not an API command (`history show`,
+  `auth profiles`, `config list` and the like) is now a usage error, exit
+  code 2. It used to be ignored: `history show --id x` printed the newest
+  run as if it were `x`.
+- `--schema`: `env` and `default` are filled for every argument, including
+  the ones read by hand (`--timeout`, `--output`, `--no-color`, `--profile`,
+  `workflow install --repo`/`--ref`), which only mentioned them in their
+  description. A new top-level `groups` list carries what a command group's
+  own help says, such as `mapbox history`, which `commands` (leaves only)
+  never included.
 - `feedback` moved from the Search help group to Maps and data.
 
 ## 1.1.1 - 2026-10-22

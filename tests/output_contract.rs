@@ -1096,6 +1096,21 @@ fn help_keeps_a_spec_description_s_opening_prose() {
     assert!(accounts.contains("- Temporary tokens (tk)"), "{accounts}");
 }
 
+/// Only the executor reads `--id`, so any other command refuses it rather
+/// than printing everything as if it had matched.
+#[test]
+fn id_is_refused_where_nothing_reads_it() {
+    for args in [
+        &["-o", "json", "history", "show", "--id", "nope"][..],
+        &["-o", "json", "config", "list", "--id", "nope"],
+    ] {
+        let out = run(args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stderr(&out));
+        assert!(stdout(&out).is_empty(), "{args:?}: {}", stdout(&out));
+        assert_eq!(json(&stderr(&out))["code"], "usage", "{args:?}");
+    }
+}
+
 /// The URL a command would request, read off `--debug`. The proxy is a dead
 /// port, so nothing reaches Mapbox.
 fn debug_url(args: &[&str]) -> String {

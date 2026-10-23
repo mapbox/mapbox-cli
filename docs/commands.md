@@ -566,7 +566,7 @@ either.
 | `--use-login` | Ignore `MAPBOX_ACCESS_TOKEN`; use stored credentials. |
 | `--profile <name>` | Which stored credentials to use. |
 | `--output`, `-o` | `auto` \| `text` \| `json`. |
-| `--id <value>` | On a command that returns a list, print just the row with that `id` or `name`. |
+| `--id <value>` | On an API command that returns a list, print just the row with that `id` or `name`. Any other command rejects it. |
 | `--quiet`, `-q` | Don't print the `mapbox · v<version>` banner, which goes to stderr and only when stderr is a terminal, the note after a download, or a workflow step's details. Also `MAPBOX_QUIET`. |
 | `--no-color` | Turn off color in help, errors and text output. Same as `NO_COLOR`; wins over `FORCE_COLOR`. |
 | `--timeout <seconds>` | How long one request may take, connection included. Defaults to 60 seconds, or 900 for a body read from `--file` or from a `--data @<path>`/`@-`. Also `MAPBOX_TIMEOUT`. |

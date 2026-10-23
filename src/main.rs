@@ -605,7 +605,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .value_name("PROFILE")
                 .help_heading(AUTH_OPTIONS)
                 .global(true)
-                .help("Credential profile to use (default: \"default\")")
+                .help("Credential profile to use [default: default]")
                 .required(false),
         )
         .arg(
@@ -695,7 +695,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .value_name("ID")
                 .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help("Show only the row with this id from a list"),
+                .help("Show only the row with this id from an API listing"),
         )
         .arg(
             Arg::new(output::ARG)
@@ -725,7 +725,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .action(ArgAction::SetTrue)
                 .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help("Turn off color, as NO_COLOR does"),
+                .help("Turn off color [env: NO_COLOR]"),
         )
         .arg(
             Arg::new(schema::ARG)
@@ -1395,6 +1395,21 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
     // mention.
     if let Some(path) = typed_path(matches) {
         deprecation::warn_command(&path);
+    }
+
+    // `--id` is global so that every API command takes it, but only the
+    // executor reads it. Anywhere else it was ignored, and `history show
+    // --id x` printed the newest run as if it were `x`.
+    if matches.get_one::<String>(output::FILTER_ARG).is_some()
+        && !matches
+            .subcommand_name()
+            .is_some_and(|name| specs.iter().any(|svc| svc.name == name))
+    {
+        return Err(CliError::new(
+            "usage",
+            "`--id` only applies to an API command that returns a list.",
+        )
+        .into());
     }
 
     match matches.subcommand() {

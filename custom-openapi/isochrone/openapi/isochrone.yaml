@@ -47,8 +47,7 @@ paths:
             live traffic), `mapbox/driving`, `mapbox/walking`, or
             `mapbox/cycling` are documented, but not necessarily
             exhaustive: some accounts have additional profiles of their
-            own. Sent exactly as typed; the API is the authority on
-            whether a value is valid, not this description.
+            own. Any other value is sent as typed.
           schema:
             type: string
             minLength: 1
@@ -113,14 +112,6 @@ paths:
         - name: "denoise"
           in: query
           required: false
-          # Spelled "0 to 1"/"1", not "0.0-1.0"/"1.0": `first_sentence` in
-          # `src/main.rs` cuts a `--help` line at the first `.`, and this
-          # value's own bounds are the first digits that would appear no
-          # matter where in the sentence they sit, so a literal decimal
-          # point anywhere before the end truncates it — not just at the
-          # front, the way `directions.yaml`'s own fix assumed. `--schema`
-          # and `docs/commands.md` still show the fuller description below
-          # in full, decimals included.
           description: >-
             A larger value removes more of the smaller contours, 0 to 1,
             defaulting to 1. A value of 1 returns only the largest contour

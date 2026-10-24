@@ -58,8 +58,7 @@ paths:
             live traffic), `mapbox/driving`, `mapbox/walking`, or
             `mapbox/cycling` are documented, but not necessarily
             exhaustive: some accounts have additional profiles of their
-            own. Sent exactly as typed; the API is the authority on
-            whether a value is valid, not this description.
+            own. Any other value is sent as typed.
           schema:
             type: string
             minLength: 1
@@ -251,8 +250,8 @@ paths:
           required: false
           description: >-
             Zero-based indices into `coordinates` marking which ones get
-            their own arrival instruction — must include `0` and the last
-            index. Requires `steps=true`.
+            their own arrival instruction, semicolon-separated — must
+            include `0` and the last index. Requires `steps=true`.
           schema:
             type: string
           example: "0,2"
@@ -292,12 +291,6 @@ paths:
         - name: "alley_bias"
           in: query
           required: false
-          # Content before the profile note, not after: `first_sentence` in
-          # `src/main.rs` cuts a `--help` line at the first `.`, and
-          # `` `mapbox/driving` only. `` — a real sentence on its own — was
-          # eating everything that followed it. `--schema` and
-          # `docs/commands.md` show the description in full either way —
-          # this ordering is only for the one-line case.
           description: >-
             Bias the route against (negative) or toward (positive) alleys,
             -1 to 1. `mapbox/driving` only.
@@ -352,22 +345,29 @@ paths:
             type: number
             minimum: 0
             maximum: 100
+        # One value per coordinate, not one switch: a lone `true` with two
+        # coordinates is a 422 ("one entry per coordinate, separated by
+        # ';'"), verified against production on 2026-10-23.
         - name: "snapping_include_closures"
           in: query
           required: false
           description: >-
-            Allow snapping to roads carrying a live-traffic closure.
-            `mapbox/driving-traffic` only.
+            Whether each coordinate may snap to a road carrying a live-traffic closure —
+            `true` or `false` per coordinate, semicolon-separated, with an
+            empty entry to skip one (`true;;false`). `mapbox/driving-traffic`
+            only.
           schema:
-            type: boolean
+            type: string
         - name: "snapping_include_static_closures"
           in: query
           required: false
           description: >-
-            Allow snapping to roads carrying a long-term closure.
-            `mapbox/driving-traffic` only.
+            Whether each coordinate may snap to a road carrying a long-term closure —
+            `true` or `false` per coordinate, semicolon-separated, with an
+            empty entry to skip one (`true;;false`). `mapbox/driving-traffic`
+            only.
           schema:
-            type: boolean
+            type: string
         - name: "walking_speed"
           in: query
           required: false

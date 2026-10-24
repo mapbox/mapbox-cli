@@ -678,13 +678,21 @@ fn find_arg<'a>(
         })
         .ok_or_else(|| format!("`{key}` is not an argument of this command"))?;
     let repeatable = matches!(arg.get_action(), ArgAction::Append);
-    let shape = if matches!(arg.get_action(), ArgAction::SetTrue | ArgAction::SetFalse) {
-        ArgShape::Flag
-    } else if arg.is_positional() {
-        ArgShape::Positional { repeatable }
-    } else {
-        ArgShape::Option { repeatable }
-    };
+    // A generated boolean flag also takes `=false`, but a step's `false`
+    // still leaves it out, so existing workflows send the same requests.
+    // Sending `x=false` instead would add a parameter to every request that
+    // wrote `false`, and nothing has checked each API accepts that. The cost
+    // is that a step cannot turn off a flag that defaults to true; the
+    // README says so.
+    let takes_false = arg.is_require_equals_set() && arg.get_num_args() == Some((0..=1).into());
+    let shape =
+        if takes_false || matches!(arg.get_action(), ArgAction::SetTrue | ArgAction::SetFalse) {
+            ArgShape::Flag
+        } else if arg.is_positional() {
+            ArgShape::Positional { repeatable }
+        } else {
+            ArgShape::Option { repeatable }
+        };
     Ok((arg, shape))
 }
 

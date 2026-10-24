@@ -6,8 +6,9 @@
 //! when they serve the same task:
 //!
 //! - **Maps and data**: create or fetch map content — styles, sprites,
-//!   fonts, tiles, static images.
-//! - **Search**: find places and addresses, and report problems with them.
+//!   fonts, tiles, static images — and read or submit reports of wrong map
+//!   data.
+//! - **Search**: find places and addresses.
 //! - **Navigation**: routes, travel times and reachable areas, and snapping
 //!   GPS traces to roads.
 //! - **Account**: credentials, tokens and usage — who you are and what you
@@ -33,9 +34,11 @@ use clap::{Arg, Command};
 const GROUPS: &[(&str, &[&str])] = &[
     (
         "Maps and data",
-        &["styles", "sprites", "fonts", "tilesets", "static"],
+        &[
+            "styles", "sprites", "fonts", "tilesets", "static", "feedback",
+        ],
     ),
-    ("Search", &["search", "geocoder", "places", "feedback"]),
+    ("Search", &["search", "geocoder", "places"]),
     (
         "Navigation",
         &["directions", "matrix", "isochrone", "map-match"],
@@ -84,7 +87,7 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (
         "feedback",
-        "Report wrong or missing map data, and list what was reported",
+        "Read and submit user reports of wrong or missing map data",
     ),
     ("directions", "Route between waypoints"),
     (

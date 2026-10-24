@@ -1047,7 +1047,147 @@ fn a_missing_argument_error_names_the_arguments() {
         .to_string();
 
     assert!(message.contains("<lon>"), "{message}");
-    assert!(message.contains("<format>"), "{message}");
+    assert!(message.contains("<height>"), "{message}");
+}
+
+/// A parameter's help is its whole description: the sentences after the
+/// first are where a spec lists the values and what else the parameter
+/// needs. Whitespace is folded, since clap wraps the text at its own width.
+#[test]
+fn help_shows_a_parameter_s_whole_description() {
+    let help = |args: &[&str]| {
+        let out = run(args);
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+        stdout(&out)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+
+    let matrix = help(&["matrix", "--help"]);
+    assert!(
+        matrix.contains("Options are duration (the default) and distance"),
+        "{matrix}"
+    );
+    let directions = help(&["directions", "--help"]);
+    assert!(
+        directions.contains("Requires overview=full"),
+        "{directions}"
+    );
+    let feedback = help(&["feedback", "create", "--help"]);
+    assert!(
+        feedback.contains("Required, here or in --data"),
+        "{feedback}"
+    );
+}
+
+/// A spec's description stops at its reference material, keeps a list its
+/// opening introduces, and ends with the page that has the rest.
+#[test]
+fn help_keeps_a_spec_description_s_opening_prose() {
+    let forward = stdout(&run(&["geocoder", "forward", "--help"]));
+    assert!(!forward.contains("Structured Input"), "{forward}");
+    assert!(
+        forward.contains("Docs: https://docs.mapbox.com/api/search/geocoding-v6/"),
+        "{forward}"
+    );
+
+    let accounts = stdout(&run(&["accounts", "--help"]));
+    assert!(accounts.contains("- Temporary tokens (tk)"), "{accounts}");
+}
+
+/// Only the executor reads `--id`, so any other command refuses it rather
+/// than printing everything as if it had matched.
+#[test]
+fn id_is_refused_where_nothing_reads_it() {
+    for args in [
+        &["-o", "json", "history", "show", "--id", "nope"][..],
+        &["-o", "json", "config", "list", "--id", "nope"],
+    ] {
+        let out = run(args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stderr(&out));
+        assert!(stdout(&out).is_empty(), "{args:?}: {}", stdout(&out));
+        assert_eq!(json(&stderr(&out))["code"], "usage", "{args:?}");
+    }
+}
+
+/// The URL a command would request, read off `--debug`. The proxy is a dead
+/// port, so nothing reaches Mapbox.
+fn debug_url(args: &[&str]) -> String {
+    let out = command()
+        .env("HTTPS_PROXY", "http://127.0.0.1:9")
+        .env_remove("https_proxy")
+        .env_remove("ALL_PROXY")
+        .env_remove("all_proxy")
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy")
+        .args(["--debug", "--token", "pk.test", "-u", "mapbox"])
+        .args(args)
+        .output()
+        .expect("run mapbox");
+    let err = stderr(&out);
+    err.lines()
+        .find_map(|line| line.strip_prefix("[debug] GET "))
+        .unwrap_or_else(|| panic!("no request in {err}"))
+        .to_string()
+}
+
+const STATIC_IMAGE: &[&str] = &[
+    "static",
+    "get-image",
+    "streets-v12",
+    "",
+    "24.94",
+    "60.17",
+    "12",
+    "0",
+    "0",
+    "600",
+    "400",
+];
+
+/// A spec-optional positional at the end of the line can be left off, and
+/// goes out the way `""` would: no placeholder and no stray separator.
+#[test]
+fn a_trailing_optional_positional_can_be_left_off() {
+    let url = debug_url(STATIC_IMAGE);
+    assert!(url.contains("/static/24.94,60.17,12,0,0/600x400?"), "{url}");
+}
+
+/// `attribution` and `logo` default to true at the API, so a flag that could
+/// only send `true` could never take them off the image.
+#[test]
+fn a_boolean_flag_sends_false_when_told_to() {
+    let url = debug_url(&[STATIC_IMAGE, &["--attribution=false", "--logo"]].concat());
+    assert!(url.contains("attribution=false"), "{url}");
+    assert!(url.contains("logo=true"), "{url}");
+}
+
+/// With the `=` required, `false` after a space is not the flag's value, so
+/// the optional value cannot swallow the next positional either.
+#[test]
+fn a_boolean_flag_value_needs_the_equals_sign() {
+    let out = command()
+        .args(["geocoder", "forward", "--q", "x", "--autocomplete", "false"])
+        .output()
+        .expect("run mapbox");
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+}
+
+/// One value per coordinate: a single switch is a 422 at the API.
+#[test]
+fn directions_snapping_takes_a_list_per_coordinate() {
+    let url = debug_url(&[
+        "directions",
+        "mapbox/driving-traffic",
+        "24.94,60.17;24.95,60.18",
+        "--snapping-include-closures",
+        "true;true",
+    ]);
+    assert!(
+        url.contains("snapping_include_closures=true%3Btrue"),
+        "{url}"
+    );
 }
 
 /// A live 401, carrying the advice a caller acts on: what to do, a command

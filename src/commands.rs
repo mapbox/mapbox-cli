@@ -646,7 +646,7 @@ mod tests {
         (
             "docs.tsv",
             include_str!("../tests/fixtures/commands_search/docs.tsv"),
-            22,
+            23,
             30,
         ),
     ];

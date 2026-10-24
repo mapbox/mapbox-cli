@@ -352,17 +352,18 @@ pub fn command() -> ClapCommand {
              belongs to the agent and may already list other servers, so this shells out to \
              the agent's own tooling (`claude mcp add`, `codex mcp add`, `code --add-mcp`) \
              rather than editing that store directly.\n\n\
-             Against the hosted Mapbox MCP endpoints only — no token, no npm package, no Node \
-             version to manage. `mapbox mcp list` names every server and client this command \
+             Uses the hosted Mapbox MCP endpoints: no Mapbox token to paste, no npm package, \
+             no Node version to manage. The server asks the agent to sign in on first use. \
+             `mapbox mcp list` names every server and client this command \
              knows about.",
         )
         .subcommand_required(true)
         .subcommand(
-            ClapCommand::new(LIST).about("List known MCP servers and clients, and what's already installed"),
+            ClapCommand::new(LIST).about("List known MCP servers and clients, and which are already registered"),
         )
         .subcommand(
             ClapCommand::new(INSTALL)
-                .about("Register a server with a client. With neither flag, every known server for every detected client")
+                .about("Register MCP servers with coding agents; with no flags, every known server with every detected agent")
                 .long_about(format!(
                     "Register the {} servers with a coding agent: {}. With neither flag, registers \
                      every known server with every detected client.",

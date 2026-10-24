@@ -120,6 +120,88 @@ fn a_command_describes_itself_without_being_able_to_run() {
     assert_eq!(style_id["location"], "path");
 }
 
+/// An argument that reads its variable or its default by hand still
+/// reports it in `env` and `default`, and the note its help spells it with
+/// is not left in the description.
+#[test]
+fn every_env_and_default_is_a_field() {
+    let value = schema(&["--schema"]);
+    let global = |name: &str| {
+        value["global_options"]
+            .as_array()
+            .expect("global options")
+            .iter()
+            .find(|arg| arg["name"] == name)
+            .unwrap_or_else(|| panic!("`{name}` is described"))
+            .clone()
+    };
+    assert_eq!(global("timeout")["env"], "MAPBOX_TIMEOUT");
+    assert_eq!(global("output")["env"], "MAPBOX_OUTPUT");
+    assert_eq!(global("no-color")["env"], "NO_COLOR");
+    assert_eq!(global("profile")["default"], "default");
+
+    let arguments = value["global_options"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(
+            commands(&value)
+                .iter()
+                .flat_map(|command| command["arguments"].as_array().into_iter().flatten()),
+        );
+    for arg in arguments {
+        let description = arg["description"].as_str().unwrap_or_default();
+        assert!(
+            !description.contains("[env: ") && !description.contains("[default: "),
+            "`{}` keeps a note the schema should report as a field: {description}",
+            arg["name"]
+        );
+    }
+}
+
+/// Only leaves are commands, so what a group's own help says lives in
+/// `groups` — including for a target below it.
+#[test]
+fn a_group_s_own_description_is_described() {
+    let value = schema(&["history", "list", "--schema"]);
+    let groups = value["groups"].as_array().expect("groups");
+    assert_eq!(groups.len(), 1, "{groups:?}");
+    assert_eq!(groups[0]["command"], "mapbox history");
+    assert!(
+        groups[0]["description"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("kept for 30 days"),
+        "{groups:?}"
+    );
+}
+
+/// What an agent needs to write `static get-image` without guessing: which
+/// positionals it may leave off, and that a boolean flag also takes `=false`.
+#[test]
+fn optional_positionals_and_false_flags_are_described() {
+    let value = schema(&["static", "get-image", "--schema"]);
+    let arguments = commands(&value)[0]["arguments"]
+        .as_array()
+        .expect("arguments");
+    let arg = |name: &str| {
+        arguments
+            .iter()
+            .find(|arg| arg["name"] == name)
+            .unwrap_or_else(|| panic!("`{name}` is described"))
+    };
+
+    // Last on the line, so it can go.
+    assert_eq!(arg("format")["required"], false);
+    assert_eq!(arg("format")["omit_with_empty"], true);
+    // Before a required positional, so `""` has to be written.
+    assert_eq!(arg("overlay")["required"], true);
+    assert_eq!(arg("overlay")["omit_with_empty"], true);
+
+    assert_eq!(arg("attribution")["kind"], "flag");
+    assert_eq!(arg("attribution")["accepts_false"], true);
+}
+
 #[test]
 fn the_account_the_url_needs_is_listed_as_an_argument() {
     // `{username}` has no parameter of its own — the executor fills it from

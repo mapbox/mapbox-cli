@@ -119,6 +119,12 @@ terminal-colorsaurus = "1"
 # a signal handler takes `unsafe` this crate does not have. Installed by
 # that command only; every other command keeps the default.
 ctrlc = { version = "3", features = ["termination"] }
+# Reads the specs' Markdown descriptions for `--help`: the opening prose
+# only, with its inline markup rendered rather than printed. A parser rather
+# than pattern matching, because stripping markers by hand is what turned
+# the code spans `and` and `x` into "and or x". Default features off: they
+# are the HTML renderer and a command-line binary.
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 # For `workflow run`: passing a SIGTERM on to the running step, which a

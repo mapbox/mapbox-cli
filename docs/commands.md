@@ -566,7 +566,7 @@ either.
 | `--use-login` | Ignore `MAPBOX_ACCESS_TOKEN`; use stored credentials. |
 | `--profile <name>` | Which stored credentials to use. |
 | `--output`, `-o` | `auto` \| `text` \| `json`. |
-| `--id <value>` | On a command that returns a list, print just the row with that `id` or `name`. |
+| `--id <value>` | On an API command that returns a list, print just the row with that `id` or `name`. Any other command rejects it. |
 | `--quiet`, `-q` | Don't print the `mapbox · v<version>` banner, which goes to stderr and only when stderr is a terminal, the note after a download, or a workflow step's details. Also `MAPBOX_QUIET`. |
 | `--no-color` | Turn off color in help, errors and text output. Same as `NO_COLOR`; wins over `FORCE_COLOR`. |
 | `--timeout <seconds>` | How long one request may take, connection included. Defaults to 60 seconds, or 900 for a body read from `--file` or from a `--data @<path>`/`@-`. Also `MAPBOX_TIMEOUT`. |
@@ -607,6 +607,13 @@ Three things worth knowing about the read forms:
   body into it sends it unasked, exactly as `< file` always did. Use
   `@<path>` rather than `@-` to keep the prompt, or pass `--yes` to say the
   answer deliberately.
+
+A flag that stands for a true/false API parameter, such as `--steps` or
+`--attribution`, sends `true` when given alone. Write `--flag=false` to send
+`false`, which matters where the API defaults to `true` (`--attribution`,
+`--logo`, `--autocomplete`, `--dedupe`, `--continue-straight` on driving
+profiles). The `=` is required: `--flag false` leaves `false` as a separate
+argument.
 
 A command that changes something takes `--dry-run`, which prints the request
 it would send, on stdout, and sends nothing. Which commands those are is not
@@ -962,7 +969,7 @@ is 2-25 `{longitude},{latitude}` pairs, semicolon-separated.
 | `--avoid-maneuver-radius <1-1000>` | Meters around the start to avoid a significant maneuver within. |
 | `--bearings <angle,degrees;...>` | Filter road segments by direction of travel, one entry per coordinate. |
 | `--layers <int;...>` | A road layer (Z-order) per waypoint, for multi-level roads. |
-| `--continue-straight` | Keep going straight at an intermediate waypoint rather than u-turning back to it. |
+| `--continue-straight` | Keep going straight at an intermediate waypoint rather than u-turning back to it. Already the default on `mapbox/driving` and `mapbox/driving-traffic`; `--continue-straight=false` turns it off there. |
 | `--exclude <types>` | Road types or `point(lon lat)` values to route around, comma-separated (`motorway`, `toll`, `ferry`, `unpaved`, `cash_only_tolls`, `country_border`, `state_border`, `tunnel`). |
 | `--geometries <geojson\|polyline\|polyline6>` | Route geometry format. Defaults to `polyline`. |
 | `--include <types>` | Special road types to allow, comma-separated (`hov2`, `hov3`, `hot`). |
@@ -984,7 +991,7 @@ is 2-25 `{longitude},{latitude}` pairs, semicolon-separated.
 | `--arrive-by <ISO 8601>` | `mapbox/driving` only. |
 | `--depart-at <ISO 8601>` | `mapbox/driving` and `mapbox/driving-traffic`. |
 | `--max-height <0-10>` / `--max-width <0-10>` / `--max-weight <0-100>` | `mapbox/driving` and `mapbox/driving-traffic`. Meters, meters, metric tons. |
-| `--snapping-include-closures` / `--snapping-include-static-closures` | `mapbox/driving-traffic` only. |
+| `--snapping-include-closures <bool;...>` / `--snapping-include-static-closures <bool;...>` | `true` or `false` per coordinate, semicolon-separated; an empty entry skips one. `mapbox/driving-traffic` only. |
 | `--walking-speed <0.14-6.94>` / `--walkway-bias <-1..1>` | `mapbox/walking` only. |
 
 #### Examples
@@ -1432,7 +1439,7 @@ geographic context and coordinates.
 | `--proximity <lon,lat>` | Bias results towards a point. |
 | `--bbox <minlon,minlat,maxlon,maxlat>` | Restrict to a box. |
 | `--language <tag>` | IETF language tag. |
-| `--autocomplete` | Partial-input matching. |
+| `--autocomplete` | Partial-input matching. On by default; `--autocomplete=false` turns it off. |
 | `--worldview <code>` | Which country's view of disputed borders. |
 | `--permanent` | The result may be stored. Billed differently. |
 | `--format <format>` | `geojson` (default), or `v5` for the older response shape. |
@@ -2697,9 +2704,11 @@ Tiles merged into this one command group (#116); `get-image` and `get-tile`
 are what were `static-images get-static-image` and `static-tiles
 get-static-tile`.
 
-`<format>` takes a **leading dot** — `.png`, `.jpeg`, `.webp`, or `""` for
-the style default. `<highRes>` is `@2x` or `""`. `<overlay>` (`get-image`
-only) is a marker/path/GeoJSON expression, or `""` for none.
+`<format>` takes a **leading dot** — `.png`, `.jpeg`, `.webp`, or left off
+for the style default. `<highRes>` is `@2x`, or left off. Both come last, so
+either can be left off the end of the line; `""` still works in their place.
+`<overlay>` (`get-image` only) is a marker/path/GeoJSON expression, or `""`
+for none.
 
 `""` for the overlay drops the segment entirely rather than sending an empty
 one, so a plain map image needs no overlay expression.
@@ -2710,15 +2719,15 @@ A map image centered on a point.
 
 #### Parameters
 
-Eleven positionals, in order: `<style-id> <overlay> <lon> <lat> <zoom>
-<bearing> <pitch> <width> <height> <highRes> <format>`.
+Nine positionals, then two optional ones, in order: `<style-id> <overlay>
+<lon> <lat> <zoom> <bearing> <pitch> <width> <height> [highRes] [format]`.
 
 `<bearing>` and `<pitch>` default to `0` at the API, but the CLI requires
-both as integers — pass `0 0` rather than `"" ""`.
+both as numbers — pass `0 0` rather than `"" ""`.
 
 | Parameter | Effect |
 | --- | --- |
-| `--attribution` / `--logo` | Keep or drop the Mapbox attribution and logo. |
+| `--attribution` / `--logo` | Both on by default; `--attribution=false` / `--logo=false` drop them. |
 | `--addlayer <json>` | Add one layer on top of the style. |
 | `--before-layer <id>` | Where to insert it. |
 | `--setfilter <json>` / `--layer-id <id>` | Filter an existing layer. |
@@ -2726,7 +2735,7 @@ both as integers — pass `0 0` rather than `"" ""`.
 #### Examples
 
 ```sh
-mapbox static get-image streets-v12 "" 24.94 60.16 12 0 0 600 400 "" .png \
+mapbox static get-image streets-v12 "" 24.94 60.16 12 0 0 600 400 \
   --username mapbox > map.png
 
 mapbox static get-image streets-v12 "pin-s+555555(24.94,60.16)" \
@@ -2762,9 +2771,10 @@ One raster tile rendered from a style, rather than from a tileset.
 
 #### Parameters
 
-Seven positionals: `<style-id> <tilesize> <z> <x> <y> <highRes> <format>`.
+Five positionals, then two optional ones: `<style-id> <tilesize> <z> <x> <y>
+[highRes] [format]`.
 
-`<tilesize>` is `512` (the default) or `256`. 512 px tiles at zoom *z* cover
+`<tilesize>` is `512` (the API's default) or `256`, and has to be written. 512 px tiles at zoom *z* cover
 the same ground as 256 px tiles at *z+1*, so 256 needs four times as many
 requests for the same area.
 
@@ -2774,7 +2784,7 @@ requests for the same area.
 #### Examples
 
 ```sh
-mapbox static get-tile streets-v12 512 2 1 1 "" .png \
+mapbox static get-tile streets-v12 512 2 1 1 \
   --username mapbox > tile.png
 mapbox static get-tile streets-v12 256 12 2048 1361 "@2x" .png \
   --username mapbox > tile@2x.png
@@ -3301,13 +3311,13 @@ tile. `<z> <x> <y>` are the tile coordinates.
 
 `<format>` is `png`, `pngraw`, `jpg`, `jpeg` or `webp`. `<quality>` is
 appended to it rather than being a separate URL segment, so `jpg` with `70`
-fetches `.jpg70`; pass `""` for the format's default. Both are positional,
-in that order.
+fetches `.jpg70`; leave it off for the format's default. Both are
+positional, in that order.
 
 #### Examples
 
 ```sh
-mapbox tilesets get-tile mapbox.satellite 2 1 1 png "" > tile.png
+mapbox tilesets get-tile mapbox.satellite 2 1 1 png > tile.png
 mapbox tilesets get-tile mapbox.satellite 12 2048 1361 jpg 70 > tile.jpg70
 ```
 
@@ -3331,7 +3341,7 @@ it to a file, e.g. `... > out.jpg`.
 </td><td>
 
 ```
-$ mapbox tilesets get-tile mapbox.satellite 2 1 1 png "" > tile.png
+$ mapbox tilesets get-tile mapbox.satellite 2 1 1 png > tile.png
 $ file tile.png
 tile.png: JPEG image data
 ```
@@ -3410,7 +3420,7 @@ the point.
 | `--limit <n>` | How many features. Default 5, max 50. |
 | `--layers <names>` | Only these source layers. |
 | `--geometry <type>` | Only `point`, `linestring` or `polygon`. |
-| `--dedupe` | Drop duplicate features. |
+| `--dedupe` | Drop duplicate features. On by default; `--dedupe=false` keeps them. |
 | `--bands <names>` | Raster-array bands to sample. |
 | `--language` / `--worldview` | As in geocoding. |
 

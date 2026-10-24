@@ -537,19 +537,19 @@ pub fn args() -> Vec<Arg> {
             .value_parser(PossibleValuesParser::new(flags))
             .conflicts_with(DIR_ARG)
             .help(
-                "Agent to write skills for, repeatable. Defaults to whichever \
-                 agents are installed",
+                "Agent whose skills to use, repeatable. Defaults to every \
+                 agent whose home directory is present",
             ),
         Arg::new(GLOBAL_ARG)
             .long(GLOBAL_ARG)
             .action(ArgAction::SetTrue)
             .conflicts_with(DIR_ARG)
-            .help("Write to the agent's home directory, for every project, rather than this one"),
+            .help("Use the agent's home directory, for every project, rather than this one"),
         Arg::new(DIR_ARG)
             .long(DIR_ARG)
             .value_name("DIR")
             .value_parser(clap::value_parser!(PathBuf))
-            .help("Write to this directory instead, and nowhere else"),
+            .help("Use this directory instead, and nowhere else"),
     ]
 }
 

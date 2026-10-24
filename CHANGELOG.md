@@ -29,6 +29,42 @@ that may never merge. They are not releases and are not listed here.
   API for the per-browser, per-country and per-host breakdown, which it now
   sends only on request. Without the flag the request is unchanged, and each
   product's `dimensions` in `-o json` is `{}`.
+- `static get-image`, `static get-tile` and `tilesets get-tile` no longer
+  need their trailing optional positionals: `<highRes>`, `<format>` and
+  `<quality>` can be left off instead of passed as `""`. Writing `""` still
+  works, so existing scripts are unaffected. `--schema` now reports these
+  arguments as not required.
+- A flag for a true/false API parameter now takes `=false`:
+  `--attribution=false` sends `attribution=false`. Alone it still sends
+  `true`, as before. Where the API defaults to `true` (`--attribution`,
+  `--logo`, `--autocomplete`, `--dedupe`, `--continue-straight` on driving
+  profiles), this is the only way to turn the setting off. A workflow
+  step's `false` still leaves the flag out, as before.
+- `directions --snapping-include-closures` and
+  `--snapping-include-static-closures` take a value: `true` or `false` per
+  coordinate, semicolon-separated (`true;false`). They were switches that
+  sent a single `true`, which the API rejects with a 422 for any route, so
+  no working command changes. In `--schema` they change from a boolean
+  flag to a string option; this is a fix rather than a breaking change for
+  the same reason.
+- `--help` shows each parameter's whole description rather than its first
+  sentence, so the allowed values and what else a parameter needs
+  ("Requires `overview=full`") are no longer cut off.
+- An API command's `--help` shows the opening of its description as plain
+  text, followed by a `Docs:` link, instead of the whole Markdown page with
+  its headings, tables and curl examples (`geocoder batch` was 113 lines).
+  `--schema` still carries the full description.
+- `--id` on a command that is not an API command (`history show`,
+  `auth profiles`, `config list` and the like) is now a usage error, exit
+  code 2. It used to be ignored: `history show --id x` printed the newest
+  run as if it were `x`.
+- `--schema`: `env` and `default` are filled for every argument, including
+  the ones read by hand (`--timeout`, `--output`, `--no-color`, `--profile`,
+  `workflow install --repo`/`--ref`), which only mentioned them in their
+  description. A new top-level `groups` list carries what a command group's
+  own help says, such as `mapbox history`, which `commands` (leaves only)
+  never included.
+- `feedback` moved from the Search help group to Maps and data.
 
 ## 1.1.1 - 2026-10-22
 

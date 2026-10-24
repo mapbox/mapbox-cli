@@ -203,7 +203,7 @@ fn ref_arg() -> Arg {
         .long(REF_ARG)
         .value_name("REF")
         .default_value(DEFAULT_REF)
-        .help("Branch, tag or commit to install from. A commit SHA pins the install")
+        .help("Branch, tag or commit of the skills repository. A commit SHA pins it")
 }
 
 /// The archive URL for one ref.

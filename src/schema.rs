@@ -60,7 +60,20 @@ pub(crate) struct Schema {
     target: String,
     pub(crate) authentication: &'static str,
     pub(crate) global_options: Vec<Argument>,
+    /// The commands that hold others — `mapbox history`, `mapbox geocoder` —
+    /// with what their own help says. Only leaves are in `commands`, and the
+    /// group's text is often the part that applies to all of them: how long
+    /// history is kept, that `config` writes a file.
+    pub(crate) groups: Vec<Group>,
     pub(crate) commands: Vec<CommandEntry>,
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct Group {
+    pub(crate) command: String,
+    pub(crate) summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) description: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -186,11 +199,16 @@ pub(crate) struct Argument {
     pub(crate) fills: Option<String>,
     /// Whether passing an empty string leaves this positional out of the
     /// URL — usually a suffix (`.png` off the end of a tile name), sometimes
-    /// a whole segment. The argument must still be written: clap requires
-    /// every path positional, and the spec's optional ones are omitted by
-    /// value, not by absence.
+    /// a whole segment. Only the run of these at the end of the line may be
+    /// left off altogether (`required: false`); one before a required
+    /// positional still has to be written, as `""`.
     #[serde(skip_serializing_if = "is_false")]
     pub(crate) omit_with_empty: bool,
+    /// Whether this flag also takes `--name=false`. Present alone it sends
+    /// `true`; the spelling with `=false` is the only way to send `false`,
+    /// which matters where the API defaults to `true`.
+    #[serde(skip_serializing_if = "is_false")]
+    pub(crate) accepts_false: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) env: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -223,6 +241,7 @@ impl Argument {
             required_one_of: vec![],
             fills: None,
             omit_with_empty: false,
+            accepts_false: false,
             env: None,
             default: None,
         }
@@ -311,7 +330,65 @@ pub(crate) fn build(app: &Command, specs: &[ServiceSpec], path: &[String]) -> Sc
         // Whole, at every level: a caller that asked about one command still
         // needs to know a token goes on the front of it.
         global_options: global_options(app),
+        groups: groups(app, specs, path),
         commands: commands(app, specs, path),
+    }
+}
+
+/// Every group on the way to the target or under it: `mapbox history list
+/// --schema` still gets `mapbox history`, whose text covers it.
+fn groups(app: &Command, specs: &[ServiceSpec], path: &[String]) -> Vec<Group> {
+    let mut out = vec![];
+    collect_groups(app, specs, &mut vec![], path, &mut out);
+    out
+}
+
+fn collect_groups(
+    cmd: &Command,
+    specs: &[ServiceSpec],
+    at: &mut Vec<String>,
+    target: &[String],
+    out: &mut Vec<Group>,
+) {
+    let children = || {
+        cmd.get_subcommands()
+            .filter(|sub| sub.get_name() != "help" && !sub.is_hide_set())
+    };
+    if !at.is_empty() && children().next().is_some() {
+        let related = at.starts_with(target) || target.starts_with(at);
+        if related {
+            out.push(group(cmd, specs, at));
+        }
+    }
+    for sub in children() {
+        at.push(sub.get_name().to_string());
+        collect_groups(sub, specs, at, target, out);
+        at.pop();
+    }
+}
+
+fn group(cmd: &Command, specs: &[ServiceSpec], at: &[String]) -> Group {
+    let service = (at.len() == 1)
+        .then(|| specs.iter().find(|svc| svc.name == at[0]))
+        .flatten();
+    Group {
+        command: std::iter::once("mapbox")
+            .chain(at.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" "),
+        // An API service's `about` is its spec's title ("Mapbox Tokens
+        // API"); the help listing's line says what the group is for.
+        summary: crate::help_layout::description(&at[0])
+            .filter(|_| at.len() == 1)
+            .map(String::from)
+            .or_else(|| cmd.get_about().map(ToString::to_string))
+            .unwrap_or_default(),
+        // A service's spec Markdown rather than the help rendered from it,
+        // the same as an API command's `description`.
+        description: match service {
+            Some(svc) => svc.description.clone(),
+            None => long_about(cmd),
+        },
     }
 }
 
@@ -448,17 +525,17 @@ fn declared_command<'a>(app: &'a Command, service: &str, path: &[String]) -> Opt
 fn api_command(app: &Command, svc: &ServiceSpec, op: &Operation) -> CommandEntry {
     let declared = declared_command(app, &svc.name, &op.command_path);
 
+    let omittable = omittable_tail(&op.path_params, &op.path_template);
     let mut arguments: Vec<Argument> = op
         .path_params
         .iter()
-        .map(|param| Argument {
-            // Every path positional is required, whatever the spec says,
-            // because `build_operation_command` makes it so: the value has to
-            // be written even where the spec calls the segment optional. What
-            // the spec's `required: false` buys is the right to write nothing
-            // *as* that value, which `omit_with_empty` reports rather than
-            // contradicting clap here.
-            required: true,
+        .enumerate()
+        .map(|(index, param)| Argument {
+            // Clap's answer, not the spec's: a spec-optional positional can
+            // only be left off at the end of the line, so one earlier on is
+            // still required here and `omit_with_empty` reports whether `""`
+            // stands in for it.
+            required: !omittable[index],
             location: Some("path"),
             omit_with_empty: omits_with_empty(param, &op.path_template),
             // Named as well as filled, the same reason `username_argument`
@@ -483,6 +560,7 @@ fn api_command(app: &Command, svc: &ServiceSpec, op: &Operation) -> CommandEntry
             flag: Some(format!("--{}", param.arg_name)),
             required: param.required,
             location: Some("query"),
+            accepts_false: param.is_boolean,
             ..parameter(param, kind)
         }
     }));
@@ -582,7 +660,7 @@ fn parameter(param: &Parameter, kind: ArgKind) -> Argument {
 /// (`bearing`, `pitch`) or for an enum that does not list `""` among its
 /// values (`tilesize`) — those are spec-optional and, through this CLI,
 /// impossible to omit. And the URL that results has to be a URL.
-fn omits_with_empty(param: &Parameter, path_template: &str) -> bool {
+pub(crate) fn omits_with_empty(param: &Parameter, path_template: &str) -> bool {
     if param.required {
         return false;
     }
@@ -594,6 +672,22 @@ fn omits_with_empty(param: &Parameter, path_template: &str) -> bool {
     };
 
     clap_accepts_empty && leaves_a_usable_url(path_template, &param.name)
+}
+
+/// Which path positionals may be left off the command line altogether.
+///
+/// Clap can only drop a positional when every one after it can go too, so
+/// this is the run at the end that [`omits_with_empty`] allows: the executor
+/// sends an absent one exactly as it sends `""`.
+pub(crate) fn omittable_tail(path_params: &[Parameter], path_template: &str) -> Vec<bool> {
+    let mut omittable = vec![false; path_params.len()];
+    for (index, param) in path_params.iter().enumerate().rev() {
+        if !omits_with_empty(param, path_template) {
+            break;
+        }
+        omittable[index] = true;
+    }
+    omittable
 }
 
 /// Whether taking this placeholder out of the template leaves a path the API
@@ -864,6 +958,7 @@ fn long_about(cmd: &Command) -> Option<String> {
 /// command declares.
 fn clap_argument(arg: &Arg) -> Argument {
     let long = arg.get_long();
+    let help = arg.get_help().map(ToString::to_string);
     let is_flag = matches!(arg.get_action(), ArgAction::SetTrue | ArgAction::SetFalse);
 
     let kind = match (long.is_some(), is_flag) {
@@ -896,9 +991,9 @@ fn clap_argument(arg: &Arg) -> Argument {
                 .map(|value| value.get_name().to_string())
                 .collect()
         },
-        description: arg
-            .get_help()
-            .map(ToString::to_string)
+        description: help
+            .as_deref()
+            .map(without_hand_notes)
             .filter(|help| !help.is_empty()),
         // `--file` repeats by being written again; `tilesets-cli`'s
         // passthrough takes many values at once. Both mean "more than one".
@@ -906,17 +1001,55 @@ fn clap_argument(arg: &Arg) -> Argument {
             || arg
                 .get_num_args()
                 .is_some_and(|range| range.max_values() > 1),
-        env: arg.get_env().and_then(|env| env.to_str()).map(String::from),
+        env: arg
+            .get_env()
+            .and_then(|env| env.to_str())
+            .map(String::from)
+            .or_else(|| hand_note(help.as_deref(), "env")),
         default: arg
             .get_default_values()
             .first()
             .and_then(|value| value.to_str())
-            .map(String::from),
+            .map(String::from)
+            .or_else(|| hand_note(help.as_deref(), "default")),
         ..Argument::new(
             long.unwrap_or_else(|| arg.get_id().as_str()).to_string(),
             kind,
         )
     }
+}
+
+/// A `[env: X]` or `[default: X]` written into an argument's help by hand.
+///
+/// Some arguments read their variable or apply their default in code rather
+/// than through clap, so that an unusable `MAPBOX_OUTPUT=` or
+/// `MAPBOX_TIMEOUT=30s` warns instead of failing every command. Their help
+/// spells the note the way clap would, and this reads it back, so the
+/// schema's `env` and `default` hold for every argument rather than only
+/// those clap knows about.
+fn hand_note(help: Option<&str>, key: &str) -> Option<String> {
+    let open = format!("[{key}: ");
+    let start = help?.find(&open)? + open.len();
+    let rest = &help?[start..];
+    Some(rest[..rest.find(']')?].to_string())
+}
+
+/// `help` without the notes [`hand_note`] reads, which the schema reports
+/// as fields instead.
+fn without_hand_notes(help: &str) -> String {
+    let mut text = help.to_string();
+    for key in ["env", "default"] {
+        let open = format!("[{key}: ");
+        if let Some(start) = text.find(&open) {
+            if let Some(len) = text[start..].find(']') {
+                text.replace_range(start..=start + len, "");
+            }
+        }
+    }
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace(" .", ".")
 }
 
 #[cfg(test)]
@@ -1346,6 +1479,47 @@ mod tests {
             },
             "/static/{overlay}/x"
         ));
+    }
+
+    /// Only the run at the end can be left off: clap cannot skip a
+    /// positional with a required one after it.
+    #[test]
+    fn only_the_trailing_run_of_omittable_positionals_is_optional() {
+        let required = |name| Parameter {
+            required: true,
+            ..optional(name)
+        };
+        let params = [
+            optional("overlay"),
+            required("zoom"),
+            required("w"),
+            required("h"),
+            optional("highRes"),
+            optional("format"),
+        ];
+        assert_eq!(
+            omittable_tail(&params, "/static/{overlay}/{zoom}/{w}x{h}{highRes}{format}"),
+            [false, false, false, false, true, true]
+        );
+    }
+
+    #[test]
+    fn a_hand_written_note_becomes_a_field() {
+        let help = "GitHub repository to install from [default: mapbox/mapbox-cli]. Reads \
+                    GH_TOKEN for a private one";
+        assert_eq!(
+            hand_note(Some(help), "default").as_deref(),
+            Some("mapbox/mapbox-cli")
+        );
+        assert_eq!(hand_note(Some(help), "env"), None);
+        assert_eq!(
+            without_hand_notes(help),
+            "GitHub repository to install from. Reads GH_TOKEN for a private one"
+        );
+        assert_eq!(
+            without_hand_notes("Seconds per request [env: MAPBOX_TIMEOUT]"),
+            "Seconds per request"
+        );
     }
 
     /// A schema is JSON even when the caller asked for text, and indented

@@ -935,6 +935,9 @@ fn describe(arg: &Argument) -> String {
     if arg.omit_with_empty {
         parts.push("Pass an empty string to leave it out of the URL.".to_string());
     }
+    if arg.accepts_false {
+        parts.push(format!("Write `{}=false` to send false.", spelling(arg)));
+    }
     if !arg.conflicts_with.is_empty() {
         let others: Vec<String> = arg
             .conflicts_with
@@ -1057,6 +1060,7 @@ fn clone_argument(arg: &Argument) -> Argument {
         required_one_of: arg.required_one_of.clone(),
         fills: arg.fills.clone(),
         omit_with_empty: arg.omit_with_empty,
+        accepts_false: arg.accepts_false,
         env: arg.env.clone(),
         default: arg.default.clone(),
     }

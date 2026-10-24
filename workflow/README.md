@@ -78,6 +78,8 @@ result: |                         # optional; what text mode prints instead of t
 
 A step is a `command` or a `script`, never both.
 
+A flag set to `false` in a step's `args` is left out of the command, the same as not naming it. So a step cannot turn off a flag that defaults to true, such as `static get-image`'s `attribution`; a script step can, by running `$MAPBOX_CLI static get-image ... --attribution=false`.
+
 ### Versions
 
 A workflow's `version` is its own, not the CLI's: workflows are released on their own schedule. It is optional, and a workflow without one installs and runs the same. `list`, `show` and `install` report it. A release is tagged `workflow-<name>-<version>`, such as `workflow-copy-style-0.1.0`, and installed with `--ref` set to that tag.

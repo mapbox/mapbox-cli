@@ -36,12 +36,15 @@ paths:
     post:
       operationId: batch
       summary: Full detail for one or more places.
+      # `places` has no subcommand, so this, not `info.description`, is
+      # what `mapbox places --help` shows. It always sends the batch
+      # request, one id or many, so there is no get/batch choice to offer.
       description: >-
-        Each `mapbox_id` comes from a Search Box API result (`search
-        forward`/`reverse`/`category`) — this API does not look places up
-        by name or location itself. Always sends a batch request, one id
-        or many, so a single id reads the same way, no `get`/`batch`
-        choice to make. Up to 100 ids in one call.
+        Full detail for one or more places — hours, phone, website,
+        photos, address, coordinates — by the `mapbox_id`s a Search Box
+        result returned (`search forward`, `reverse` or `category`). Up to
+        100 ids per call. Public Preview, with a 1000-records-per-account
+        monthly quota.
       parameters:
         - name: "access_token"
           in: query

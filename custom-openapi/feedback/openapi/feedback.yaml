@@ -26,8 +26,8 @@ paths:
         Every feedback item on the account, oldest received first by
         default — filterable by id, status, category, a free-text search
         phrase, trace id, or a time window on when it was created,
-        received, or last updated. Paginated with `--after`/`start_cursor`/
-        `end_cursor` the way every other listing on this CLI is.
+        received, or last updated. Paginated: pass a response's
+        `end_cursor` to `--after` for the next page.
       parameters:
         - name: "access_token"
           in: query
@@ -111,10 +111,6 @@ paths:
             the feedback.
           schema:
             type: string
-        # "ISO 8601" trails each of these six rather than leads them:
-        # `first_sentence` in `src/main.rs` cuts a `--help` line at the
-        # first `.`, and "ISO 8601." on its own left `--help` showing just
-        # that. `--schema` and `docs/commands.md` still show each in full.
         - name: "created_before"
           in: query
           required: false
@@ -207,11 +203,19 @@ paths:
                   description: >-
                     The feedback category. Not checked against a list;
                     `feedback list` shows the ones already in use.
+                # The API accepts any coordinates here and never returns the
+                # feature, so the order is GeoJSON's by definition rather than
+                # by test: on 2026-10-23 both [95, 24.94] and [24.94, 95] were
+                # accepted. docs.mapbox.com says [latitude, longitude].
                 feature:
                   type: object
                   description: >-
                     A GeoJSON Feature the feedback is about, with coordinates
                     in GeoJSON's [longitude, latitude] order.
+                # Verified against production on 2026-10-23: bare base64 is a
+                # 400 ("Image must be a base64 data URI of one of: image/png,
+                # image/jpeg, image/jpg"), a data URI is accepted.
+                # docs.mapbox.com says plain base64, which is wrong.
                 screenshot:
                   type: string
                   description: >-

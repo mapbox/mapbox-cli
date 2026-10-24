@@ -40,6 +40,7 @@ mod help_layout;
 mod history;
 mod http;
 mod link;
+mod markdown;
 mod mcp;
 mod output;
 mod remedy;
@@ -60,14 +61,6 @@ mod workflow;
 use output::{CliError, Mode};
 use remedy::Remedy;
 use spec::ServiceSpec;
-
-/// Where this CLI's source and issue tracker live, written down once so that
-/// a repository rename is one edit rather than a grep.
-///
-/// The two installers keep a copy of their own each. They are downloaded and
-/// run on their own, with nothing of this crate beside them, so this is the
-/// single source for the Rust half rather than for all three.
-const REPO_URL: &str = repo_url!();
 
 /// Opens the top-level help when an agent is driving the CLI. Agents explore
 /// by chaining `--help` calls, one command at a time; `--schema` answers the
@@ -129,11 +122,8 @@ fn looks_like_a_flag(raw: &str) -> bool {
     }
 }
 
-/// A parameter's description, cut to its first sentence for a line of help.
-///
-/// The spec text is kept whole by `parse_spec` — `--schema` publishes it and
-/// a cut there lands inside identifiers and decimals. Help has a line to
-/// work with, so it shortens here, at the only place that wants it.
+/// A description cut to its first sentence, for a table cell that has one
+/// line to work with.
 ///
 /// A sentence ends at a full stop followed by white space, or at the end.
 /// Cutting at any `.` stopped help inside `{owner}.{tileset}`, `-85.0511`
@@ -156,13 +146,66 @@ fn ends_with_abbreviation(text: &str) -> bool {
     ["e.g.", "i.e."].iter().any(|abbr| text.ends_with(abbr))
 }
 
+/// A spec description followed by the page that has the rest of it: help
+/// keeps only the opening prose (see [`markdown::intro`]).
+fn with_docs_link(text: String, service: &str) -> String {
+    match remedy::docs_for_service(service) {
+        Some(url) => format!("{text}\n\nDocs: {url}"),
+        None => text,
+    }
+}
+
+/// A parameter's whole description, as one line of help.
+///
+/// Whole rather than its first sentence: the second is where a spec says
+/// which values are allowed and what else the parameter needs ("Requires
+/// `overview=full`", "Required, here or in `--data`"), and help cut there
+/// left a caller to find that out from the API's error. The spec's own line
+/// breaks are folded, since clap wraps the text itself.
 fn help_text(param: &spec::Parameter) -> String {
     param
         .description
         .as_deref()
-        .map(first_sentence)
+        .map(help_line)
         .unwrap_or_default()
-        .to_string()
+}
+
+/// Rendered, and without the closing full stop that clap's own help lines
+/// leave off.
+fn help_line(text: &str) -> String {
+    let text = markdown::render(text);
+    match text.strip_suffix('.') {
+        Some(stripped) => stripped.to_string(),
+        None => text,
+    }
+}
+
+/// The API's value for a spec-optional path parameter that clap cannot take
+/// `""` for, so a caller who wants the default knows what to write. The
+/// specs say these in prose (`static get-image`'s description, `tilesize`'s
+/// `default: 512`), which the parser does not read for a path parameter.
+const PATH_PARAM_DEFAULTS: &[(&str, &str)] =
+    &[("bearing", "0"), ("pitch", "0"), ("tilesize", "512")];
+
+/// A positional's help, plus how to skip it when the spec calls it optional
+/// but clap still needs something written in its place.
+fn path_help_text(param: &spec::Parameter, path_template: &str, omittable: bool) -> String {
+    let help = help_text(param);
+    let how_to_skip = if param.required || omittable {
+        None
+    } else if schema::omits_with_empty(param, path_template) {
+        Some("Pass \"\" to leave it out".to_string())
+    } else {
+        PATH_PARAM_DEFAULTS
+            .iter()
+            .find(|(name, _)| *name == param.name)
+            .map(|(_, default)| format!("Pass {default} for the API's default"))
+    };
+    match how_to_skip {
+        Some(note) if help.is_empty() => note,
+        Some(note) => format!("{help}. {note}"),
+        None => help,
+    }
 }
 
 /// The coordinate-shaped parameters whose value legitimately starts with `-`
@@ -223,6 +266,7 @@ fn build_operation_command(op: &spec::Operation) -> Command {
     }
 
     if let Some(desc) = &op.description {
+        let desc = with_docs_link(markdown::render(markdown::intro(desc)), &op.service);
         // Marked here too, not only in `about`. Clap renders `long_about`
         // for `--help` and `about` for `-h`, so a command with a spec
         // description — all 54 of them have one — showed the marker in its
@@ -231,15 +275,16 @@ fn build_operation_command(op: &spec::Operation) -> Command {
         cmd = cmd.long_about(if op.deprecated {
             format!("[deprecated] {desc}")
         } else {
-            desc.clone()
+            desc
         });
     }
 
-    for param in &op.path_params {
+    let omittable = schema::omittable_tail(&op.path_params, &op.path_template);
+    for (param, omittable) in op.path_params.iter().zip(omittable) {
         let mut arg = Arg::new(param.arg_name.clone())
-            .required(true)
+            .required(!omittable)
             .allow_hyphen_values(takes_hyphen_leading_value(param))
-            .help(help_text(param));
+            .help(path_help_text(param, &op.path_template, omittable));
 
         // Positionals get the same treatment as flags: clap renders the
         // possible values into the help itself, so the hand-rolled suffix
@@ -257,9 +302,19 @@ fn build_operation_command(op: &spec::Operation) -> Command {
 
     for param in &op.query_params {
         let arg = if param.is_boolean {
+            // Present means `true`, as before, and `--flag=false` sends
+            // `false`: several of these default to true at the API
+            // (`attribution`, `autocomplete`, `dedupe`), so a bare switch
+            // could only ever send the default. The `=` is required so the
+            // optional value cannot take the next positional for itself.
             Arg::new(param.arg_name.clone())
                 .long(param.arg_name.clone())
-                .action(ArgAction::SetTrue)
+                .num_args(0..=1)
+                .require_equals(true)
+                .default_missing_value("true")
+                .value_name("true|false")
+                .value_parser(PossibleValuesParser::new(["true", "false"]))
+                .hide_possible_values(true)
                 .help(help_text(param))
         } else {
             let mut arg = Arg::new(param.arg_name.clone())
@@ -378,9 +433,8 @@ fn build_operation_command(op: &spec::Operation) -> Command {
         let help = variadic
             .description
             .as_deref()
-            .map(first_sentence)
-            .unwrap_or_default()
-            .to_string();
+            .map(help_line)
+            .unwrap_or_default();
         cmd = cmd.arg(
             Arg::new(variadic.arg_name.clone())
                 .required(true)
@@ -493,7 +547,7 @@ fn build_service_command(svc: &ServiceSpec) -> Command {
         .subcommand_required(true);
 
     if let Some(desc) = &svc.description {
-        cmd = cmd.long_about(desc.clone());
+        cmd = cmd.long_about(with_docs_link(markdown::render(desc), &svc.name));
     }
 
     attach_operations(cmd, &svc.name, &exposed, 0)
@@ -543,7 +597,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .value_name("PROFILE")
                 .help_heading(AUTH_OPTIONS)
                 .global(true)
-                .help("Credential profile to use (default: \"default\")")
+                .help("Credential profile to use [default: default]")
                 .required(false),
         )
         .arg(
@@ -633,7 +687,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .value_name("ID")
                 .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help("Show only the row with this id from a list"),
+                .help("Show only the row with this id from an API listing"),
         )
         .arg(
             Arg::new(output::ARG)
@@ -663,7 +717,7 @@ fn build_app(specs: &[ServiceSpec]) -> Command {
                 .action(ArgAction::SetTrue)
                 .help_heading(OUTPUT_OPTIONS)
                 .global(true)
-                .help("Turn off color, as NO_COLOR does"),
+                .help("Turn off color [env: NO_COLOR]"),
         )
         .arg(
             Arg::new(schema::ARG)
@@ -1334,6 +1388,21 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
     // mention.
     if let Some(path) = typed_path(matches) {
         deprecation::warn_command(&path);
+    }
+
+    // `--id` is global so that every API command takes it, but only the
+    // executor reads it. Anywhere else it was ignored, and `history show
+    // --id x` printed the newest run as if it were `x`.
+    if matches.get_one::<String>(output::FILTER_ARG).is_some()
+        && !matches
+            .subcommand_name()
+            .is_some_and(|name| specs.iter().any(|svc| svc.name == name))
+    {
+        return Err(CliError::new(
+            "usage",
+            "`--id` only applies to an API command that returns a list.",
+        )
+        .into());
     }
 
     match matches.subcommand() {
@@ -2320,7 +2389,17 @@ mod tests {
     /// keeps the paragraph, and this is where it gets cut back — and the
     /// sentence ends at a full stop, not at a dot inside an id or a number.
     #[test]
-    fn help_shortens_a_description_to_its_first_sentence() {
+    fn help_is_the_whole_description_on_one_line() {
+        assert_eq!(
+            help_line("A layer to add to the map\nbefore rendering. Maximum one per request."),
+            "A layer to add to the map before rendering. Maximum one per request"
+        );
+        assert_eq!(help_line("  no full stop here "), "no full stop here");
+        assert_eq!(help_line(""), "");
+    }
+
+    #[test]
+    fn first_sentence_stops_at_a_real_full_stop() {
         assert_eq!(
             first_sentence("Tileset ID in the format `username.id`. Order matters."),
             "Tileset ID in the format `username.id`"
@@ -2521,6 +2600,61 @@ mod tests {
         let mut expected: Vec<&str> = WRITES.iter().chain(&READS).copied().collect();
         expected.sort_unstable();
         assert_eq!(seen, expected, "auth lost a subcommand");
+    }
+
+    /// The specs' descriptions are Markdown written for docs.mapbox.com, and
+    /// none of that markup may reach `--help`: no heading, table, fence,
+    /// `<Note>`, bold marker or bare link syntax, on any command or service.
+    #[test]
+    fn no_markdown_reaches_help() {
+        let specs = bundled_specs();
+        let parsing = help_layout::for_parsing(help_layout::apply(build_app(&specs)));
+        let mut paths: Vec<Vec<String>> = leaf_commands(&parsing, &[])
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        paths.extend(specs.iter().map(|svc| vec![svc.name.clone()]));
+
+        let mut problems = vec![];
+        for path in paths {
+            let argv: Vec<&str> = std::iter::once("mapbox")
+                .chain(path.iter().map(String::as_str))
+                .chain(["--help"])
+                .collect();
+            let Err(help) = parsing.clone().try_get_matches_from(&argv) else {
+                continue;
+            };
+            let help = help.render().to_string();
+            for marker in ["## ", "**", "```", "<Note", "](", "| --- |", "|---"] {
+                if help.contains(marker) {
+                    problems.push(format!("`{}` shows `{marker}`", path.join(" ")));
+                }
+            }
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
+    /// Each default names a parameter that still needs one: spec-optional,
+    /// and something clap will not let a caller leave blank. One that the
+    /// specs dropped, or that became omittable, would print advice nobody
+    /// needs.
+    #[test]
+    fn every_path_param_default_is_still_needed() {
+        let specs = bundled_specs();
+        for (name, _) in PATH_PARAM_DEFAULTS {
+            let needed = specs.iter().flat_map(|svc| &svc.operations).any(|op| {
+                op.path_params.iter().any(|param| {
+                    param.name == *name
+                        && !param.required
+                        && !schema::omits_with_empty(param, &op.path_template)
+                })
+            });
+            assert!(
+                needed,
+                "PATH_PARAM_DEFAULTS lists `{name}`, which no spec-optional path \
+                 parameter needs any more — remove it"
+            );
+        }
     }
 
     /// The same trap `no_generated_flag_shadows_a_global` catches, one level

@@ -301,6 +301,7 @@ Each run also sends one event to Mapbox:
   after an upgrade, and whether it ran in CI or under a detected AI coding
   agent;
 - which kind of token the command used and the Mapbox account it belongs to.
+  A command that uses none reports the one an API command would use.
 
 It never includes a file path or free text you typed. It carries a random ID
 that is replaced on the first run a day after it was created. It is sent in
@@ -692,8 +693,9 @@ tools are used and how to improve our products.
   file paths or free text), the global options it used (such as `--output`,
   `--dry-run` or whether a named profile was used), how it ended and how
   long it took, how many requests it made with their HTTP status and sizes,
-  the kind of token it used and the Mapbox account that token belongs to,
-  the CLI's own public token the event itself was sent with, a random
+  the kind of token it used and the Mapbox account that token belongs to
+  (for a command that uses none, the one an API command would use), the
+  CLI's own public token the event itself was sent with, a random
   identifier that is replaced every day, which run started this one when it
   ran inside another, CLI version, how the CLI was installed, the version
   it was updated from and any newer one it offered, OS/architecture,

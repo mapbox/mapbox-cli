@@ -639,6 +639,136 @@ fn log_in(home: &Path, token: &str) {
     .expect("write a login");
 }
 
+/// Tokens whose payloads claim the accounts in their names.
+const LOGIN_TOKEN: &str = "tk.eyJ1IjoibG9naW4tdXNlciIsImEiOiJ4In0.SIG";
+const ENV_TOKEN: &str = "pk.eyJ1IjoiZW52LXVzZXIiLCJhIjoieCJ9.SIG";
+const WORK_TOKEN: &str = "sk.eyJ1Ijoid29yay11c2VyIiwiYSI6IngifQ.SIG";
+
+/// `auth` as a run's event reported it.
+fn auth_of(cmd: &mut Command) -> Value {
+    sent(cmd).1["auth"].clone()
+}
+
+fn auth(source: &str, kind: &str, account: &str) -> Value {
+    serde_json::json!({ "source": source, "type": kind, "account": account })
+}
+
+/// A run that sends no request names the token a service command would
+/// have sent, chosen in the same order, so every event of a logged-in user
+/// names their account.
+#[test]
+fn a_run_without_a_request_names_the_token_an_api_call_would_use() {
+    let home = scratch("would-use-token");
+    log_in(&home, LOGIN_TOKEN);
+    std::fs::write(
+        config_dir(&home).join("credentials-work.json"),
+        format!(r#"{{"access_token":"{WORK_TOKEN}"}}"#),
+    )
+    .expect("write a second login");
+
+    let login = auth("login", "tk", "login-user");
+    let env = auth("environment", "pk", "env-user");
+    let cases: [(&[&str], Option<&str>, Value); 7] = [
+        (&["config", "list"], None, login.clone()),
+        (&["--version"], None, login.clone()),
+        (&["styles", "--help"], None, login.clone()),
+        // The environment outranks a login, as it does for an API call…
+        (&["config", "list"], Some(ENV_TOKEN), env.clone()),
+        (&["--version"], Some(ENV_TOKEN), env),
+        // …unless `--use-login` skips it.
+        (&["config", "list", "--use-login"], Some(ENV_TOKEN), login),
+        (
+            &["config", "list", "--profile", "work"],
+            None,
+            auth("login", "sk", "work-user"),
+        ),
+    ];
+    for (args, environment, expected) in cases {
+        let mut cmd = command(&home);
+        cmd.args(args);
+        if let Some(token) = environment {
+            cmd.env("MAPBOX_ACCESS_TOKEN", token);
+        }
+        assert_eq!(auth_of(&mut cmd), expected, "{args:?} {environment:?}");
+    }
+}
+
+/// A query `commands search` refuses after clap parsed it still reads its
+/// token from the parse, so `--profile` doesn't cost it the account.
+#[test]
+fn a_refused_search_query_still_names_the_profiles_account() {
+    let home = scratch("would-use-search");
+    std::fs::write(
+        config_dir(&home).join("credentials-work.json"),
+        format!(r#"{{"access_token":"{WORK_TOKEN}"}}"#),
+    )
+    .expect("write a login");
+    let (out, event) = run_sent(&home, &["--profile", "work", "commands", "search", "?!"]);
+    assert_eq!(out.status.code(), Some(2), "the query should be refused");
+    assert_eq!(event["usageError"], "InvalidValue");
+    assert_eq!(event["auth"], auth("login", "sk", "work-user"));
+}
+
+/// `logout` reports the account it logged out, read before the login is
+/// removed.
+#[test]
+fn logout_names_the_account_it_logged_out() {
+    let home = scratch("would-use-logout");
+    log_in(&home, LOGIN_TOKEN);
+    let (out, event) = run_sent(&home, &["auth", "logout"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!config_dir(&home).join("credentials.json").exists());
+    assert_eq!(event["auth"], auth("login", "tk", "login-user"));
+}
+
+/// `report` goes with the CLI's own token when it can; a login standing in
+/// for it would say the run sent the user's.
+#[test]
+fn a_run_sent_with_the_clis_token_reports_no_auth() {
+    let home = scratch("would-use-cli-token");
+    log_in(&home, LOGIN_TOKEN);
+    let (out, event) = run_sent(&home, &["-o", "json", "report", "--dry-run", "A test"]);
+    let plan: Value = serde_json::from_slice(&out.stdout).expect("a JSON plan");
+    assert_eq!(
+        plan["token"], "cli",
+        "the run should have used the CLI's token"
+    );
+    assert_eq!(event["auth"], Value::Null);
+}
+
+#[test]
+fn no_token_anywhere_reports_no_auth() {
+    let home = scratch("would-use-none");
+    for args in [&["config", "list"][..], &["--version"]] {
+        assert_eq!(auth_of(command(&home).args(args)), Value::Null, "{args:?}");
+    }
+    // A profile that was never logged in, as an API call would find too.
+    log_in(&home, LOGIN_TOKEN);
+    assert_eq!(
+        auth_of(command(&home).args(["config", "list", "--profile", "work"])),
+        Value::Null
+    );
+}
+
+/// Help clap answers itself is not parsed, so a typed `--token` or
+/// `--profile` can't be read; guessing past it could name the wrong account.
+#[test]
+fn an_unparsed_run_that_chooses_its_token_reports_no_auth() {
+    let home = scratch("would-use-unparsed");
+    log_in(&home, LOGIN_TOKEN);
+    for args in [
+        &["styles", "--help", "--token", ENV_TOKEN][..],
+        &["styles", "--help", "-t", ENV_TOKEN],
+        &["--profile=work", "--version"],
+    ] {
+        assert_eq!(auth_of(command(&home).args(args)), Value::Null, "{args:?}");
+    }
+}
+
 /// The `access_token` the loopback server's one request carried.
 fn sent_with(received: &mpsc::Receiver<Received>) -> String {
     let request = received
@@ -652,8 +782,9 @@ fn sent_with(received: &mpsc::Receiver<Received>) -> String {
         .to_string()
 }
 
-/// Telemetry never reads the saved login, so sending creates no lock file
-/// and doesn't change the directory's permissions.
+/// Telemetry reads the saved login only for its account, never through the
+/// lock, so sending creates no lock file and doesn't change the directory's
+/// permissions.
 #[cfg(unix)]
 #[test]
 fn the_send_leaves_a_login_and_its_directory_alone() {

@@ -954,6 +954,7 @@ fn cli() -> u8 {
 
     if let Err(e) = commands::check_query(&matches) {
         run_record::set_unparsed(&app, &raw_argv, e.kind());
+        run_record::set_token_candidates(&matches);
         return report_parse_result(e, &raw_argv);
     }
 
@@ -1466,18 +1467,18 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
         // placeholders, a request body, and `--dry-run` — this GET always refreshes.
         Some((account_usage::COMMAND, usage_matches)) => {
             let stored_creds = auth::load_fresh_credentials(debug, profile);
-            let token: Option<String> = if use_login {
-                auth::typed_token(matches)
-            } else {
-                matches.get_one::<String>("token").cloned()
-            }
-            .or_else(|| stored_creds.as_ref().map(|c| c.access_token.clone()));
+            let resolved = auth::resolve_token(
+                matches,
+                use_login,
+                stored_creds.as_ref().map(|c| c.access_token.as_str()),
+            );
+            let token = resolved.as_ref().map(|(_, token)| token.clone());
 
             if use_login && token.is_none() {
                 return Err(no_stored_credentials(profile));
             }
-            if let Some(token) = &token {
-                run_record::set_resolved_token(matches, use_login, token);
+            if let Some((source, token)) = &resolved {
+                run_record::set_token(*source, token);
             }
 
             account_usage::run(
@@ -1621,7 +1622,10 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
                     mode,
                 );
                 match attempt {
-                    CliAttempt::Done(result) => return result,
+                    CliAttempt::Done(result) => {
+                        run_record::set_sent_with_cli_token();
+                        return result;
+                    }
                     CliAttempt::Unusable { error, why, sent } => {
                         // The user already confirmed the request that was
                         // refused; sending it again with their own token is
@@ -1640,15 +1644,12 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             } else {
                 auth::load_fresh_credentials(debug, profile)
             };
-            // `get_one` folds in the `MAPBOX_ACCESS_TOKEN` fallback declared on
-            // the arg; `--use-login` asks for that fallback to be skipped, so
-            // only a typed flag may still outrank the stored credentials.
-            let token: Option<String> = if use_login {
-                auth::typed_token(matches)
-            } else {
-                matches.get_one::<String>("token").cloned()
-            }
-            .or_else(|| stored_creds.as_ref().map(|c| c.access_token.clone()));
+            let resolved = auth::resolve_token(
+                matches,
+                use_login,
+                stored_creds.as_ref().map(|c| c.access_token.as_str()),
+            );
+            let token = resolved.as_ref().map(|(_, token)| token.clone());
 
             if let Some((failure, why)) = cli_failure {
                 if let Some(note) =
@@ -1660,8 +1661,8 @@ fn run(app: &Command, specs: &[ServiceSpec], matches: &ArgMatches, mode: Mode) -
             if use_login && token.is_none() {
                 return Err(no_stored_credentials(profile));
             }
-            if let Some(token) = &token {
-                run_record::set_resolved_token(matches, use_login, token);
+            if let Some((source, token)) = &resolved {
+                run_record::set_token(*source, token);
             }
             let username: Option<String> = matches
                 .get_one::<String>("username")

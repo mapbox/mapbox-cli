@@ -22,6 +22,9 @@ that may never merge. They are not releases and are not listed here.
 
 ## Unreleased
 
+- The telemetry event of a command that uses no token, such as `--version`,
+  now reports the token kind and account an API command would use. Output
+  and exit codes are unchanged.
 - `mapbox usage --dimensions browsers,countries,hosts` asks the Statistics
   API for the per-browser, per-country and per-host breakdown, which it now
   sends only on request. Without the flag the request is unchanged, and each

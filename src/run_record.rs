@@ -88,6 +88,18 @@ pub(crate) struct Token {
     pub account: Option<String>,
 }
 
+/// What a service command would choose its token from, kept for a run that
+/// resolved none itself. Raw, like `argv`.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TokenCandidates {
+    pub flag: Option<String>,
+    /// `MAPBOX_ACCESS_TOKEN`, the one variable a service command reads. May
+    /// also hold the typed flag, which `flag` already outranks it with.
+    pub environment: Option<String>,
+    pub use_login: bool,
+    pub profile: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Request {
     pub method: String,
@@ -130,6 +142,7 @@ pub(crate) struct Record {
     pub body_fields: Vec<String>,
     pub options: Option<Options>,
     pub token: Option<Token>,
+    pub token_candidates: Option<TokenCandidates>,
     pub requests: Vec<Request>,
     pub more_pages: bool,
     pub error: Option<Failure>,
@@ -153,6 +166,7 @@ static RECORD: Mutex<Record> = Mutex::new(Record {
     body_fields: Vec::new(),
     options: None,
     token: None,
+    token_candidates: None,
     requests: Vec::new(),
     more_pages: false,
     error: None,
@@ -234,6 +248,7 @@ pub fn set_parsed(
         fields = body_fields(specs, &path);
     }
     let options = options(matches, leaf_matches);
+    let candidates = parsed_token_candidates(matches);
     with_record(|record| {
         record.command = path;
         record.invocation = Some(invocation);
@@ -241,6 +256,7 @@ pub fn set_parsed(
         record.args = args;
         record.body_fields = fields;
         record.options = Some(options);
+        record.token_candidates = Some(candidates);
     });
 }
 
@@ -250,8 +266,10 @@ pub fn set_parsed(
 pub fn set_unparsed(app: &Command, argv: &[OsString], kind: clap::error::ErrorKind) {
     use clap::error::ErrorKind;
     let path = command_from_argv(app, argv);
+    let candidates = unparsed_token_candidates(argv);
     with_record(|record| {
         record.command = path;
+        record.token_candidates = candidates;
         match kind {
             ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
                 record.invocation = Some(Invocation::Help);
@@ -272,6 +290,12 @@ pub fn set_token(source: auth::TokenSource, token: &str) {
     with_record(|record| record.token = Some(token));
 }
 
+/// The request went out with the CLI's own token, not the user's, so the
+/// run names no token: standing in the user's would say it sent theirs.
+pub fn set_sent_with_cli_token() {
+    with_record(|record| record.token_candidates = None);
+}
+
 fn token_fact(source: auth::TokenSource, token: &str) -> Token {
     let kind = match token.split('.').next() {
         Some("pk") => "pk",
@@ -286,17 +310,65 @@ fn token_fact(source: auth::TokenSource, token: &str) -> Token {
     }
 }
 
-/// [`set_token`] for the service arms' resolution: a typed `--token`,
-/// then the environment unless `--use-login`, then the stored login.
-pub fn set_resolved_token(matches: &ArgMatches, use_login: bool, token: &str) {
-    let source = if auth::typed_token(matches).is_some() {
-        auth::TokenSource::Flag
-    } else if !use_login && matches.get_one::<String>("token").is_some() {
-        auth::TokenSource::Environment
-    } else {
-        auth::TokenSource::Login
+fn parsed_token_candidates(matches: &ArgMatches) -> TokenCandidates {
+    TokenCandidates {
+        flag: auth::typed_token(matches),
+        // `get_one` is the typed flag or, failing that, the variable clap
+        // binds it to; the typed one already outranks it as `flag`.
+        environment: matches.get_one::<String>("token").cloned(),
+        use_login: matches.get_flag("use-login"),
+        profile: matches.get_one::<String>("profile").cloned(),
+    }
+}
+
+/// For a run [`set_unparsed`] recorded although clap did parse it, so its
+/// token is read from the answer rather than guessed from argv.
+pub fn set_token_candidates(matches: &ArgMatches) {
+    let candidates = parsed_token_candidates(matches);
+    with_record(|record| record.token_candidates = Some(candidates));
+}
+
+/// Without clap's answer, only a command line that names none of the
+/// options that choose a token can be read the way a service command would
+/// read it; for any other, a guess could name the wrong account.
+fn unparsed_token_candidates(argv: &[OsString]) -> Option<TokenCandidates> {
+    let chooses_token = |word: &str| {
+        ["--token", "--profile", "--use-login"].iter().any(|long| {
+            word.strip_prefix(long)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('='))
+        }) || (word.starts_with('-') && !word.starts_with("--") && word.contains('t'))
     };
-    set_token(source, token);
+    if argv
+        .iter()
+        .skip(1)
+        .any(|word| chooses_token(&word.to_string_lossy()))
+    {
+        return None;
+    }
+    Some(TokenCandidates {
+        flag: None,
+        environment: std::env::var(auth::CLAP_TOKEN_ENV)
+            .ok()
+            .filter(|value| !value.is_empty()),
+        use_login: false,
+        profile: None,
+    })
+}
+
+/// The token a service command would have sent, for a run that resolved
+/// none: so that every event of a logged-in user names their account, not
+/// only the ones that called an API. Reads the stored login without
+/// refreshing it or taking its lock — a refresh never changes the account.
+pub(crate) fn would_use_token(record: &Record) -> Option<Token> {
+    let candidates = record.token_candidates.as_ref()?;
+    let stored = auth::load_credentials_readonly(candidates.profile.as_deref());
+    let (source, token) = auth::resolve_source(
+        candidates.flag.as_deref(),
+        candidates.environment.as_deref(),
+        stored.as_ref().map(|c| c.access_token.as_str()),
+        candidates.use_login,
+    )?;
+    Some(token_fact(source, token))
 }
 
 /// The error the run ended with, as it was reported to the user.

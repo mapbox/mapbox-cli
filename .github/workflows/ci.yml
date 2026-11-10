@@ -30,7 +30,7 @@ jobs:
       # All three: the crate has `#[cfg(not(unix))]` arms no Unix leg
       # compiles, so Windows is the only thing that checks them.
       matrix:
-        os: [ubuntu-latest, macos-14, windows-2022]
+        os: [ubuntu-latest, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
     # These legs take one to two minutes. Twenty is not a budget, it is a
     # tripwire: without one, a job that stops making progress runs to GitHub's
@@ -204,7 +204,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
+        os: [ubuntu-latest, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     permissions:
